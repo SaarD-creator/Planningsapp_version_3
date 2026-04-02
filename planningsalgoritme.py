@@ -1225,7 +1225,7 @@ def is_korte_pauze_toegestaan_col(col, student_naam=None):
     # Check of de student een vroege stopper is (eindigt vóór 15u)
     if student_naam:
         werk_uren = get_student_work_hours(student_naam)
-        if werk_uren and max(werk_uren) < 15:
+        if werk_uren and max(werk_uren) < 16:
             return True
             
     return col not in get_verboden_korte_pauze_kolommen()
