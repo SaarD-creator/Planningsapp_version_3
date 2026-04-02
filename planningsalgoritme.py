@@ -1214,9 +1214,20 @@ def get_verboden_korte_pauze_kolommen():
     """Geeft de kolomnummers van de eerste 12 kwartieren in ws_pauze (B t/m M)."""
     return list(range(2, 12))  # kolommen 2 t/m 11 (B t/m M)
 
-def is_korte_pauze_toegestaan_col(col):
+def is_korte_pauze_toegestaan_col(col, student_naam=None):
+    """
+    Controleert of een korte pauze in deze kolom mag.
+    Nieuw: als een student vóór 15:00 stopt, mag de pauze ALTIJD (ook in de vroege uren).
+    """
     if len(open_uren) <= 6:
         return True
+    
+    # Check of de student een vroege stopper is (eindigt vóór 15u)
+    if student_naam:
+        werk_uren = get_student_work_hours(student_naam)
+        if werk_uren and max(werk_uren) < 15:
+            return True
+            
     return col not in get_verboden_korte_pauze_kolommen()
 
 def normalize_attr(name):
