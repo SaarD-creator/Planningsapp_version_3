@@ -942,9 +942,11 @@ for col_idx, uur in enumerate(uren_rij1, start=2):
     c.alignment = center_align
     c.border = thin_border
 
-# Zet cel A1 ook in licht kleurtje
-a1 = ws_pauze.cell(1, 1, "")
+### Zet de datum van vandaag in cel A1 van de pauzeplanning
+a1 = ws_pauze.cell(1, 1, vandaag)
+a1.font = Font(bold=True)
 a1.fill = light_fill
+a1.alignment = center_align
 a1.border = thin_border
 
 # -----------------------------
