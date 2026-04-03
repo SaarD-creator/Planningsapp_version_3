@@ -128,27 +128,21 @@ for rij in range(2,500):
     })
 
 
-# Nieuwe dictionary voor uitgeschakelde uren per attractie
-uitgeschakelde_uren_per_attr = defaultdict(set)
-
-# Kolommen AJ (=10-11u) t.e.m. AR (=18-19u) zijn 36 t/m 44
+# Nieuwe dictionary voor uren dat een attractie DICHT is
+dichte_uren_per_attr = defaultdict(set)
+# AJ t/m AR (kolom 36 t/m 44)
 uur_kolommen = list(range(36, 45)) 
 
-for rij in range(24, 30):  # Rij 24 t.e.m. 29
-    attr_naam = ws.cell(rij, 45).value  # Kolom AS is 45
-    if not attr_naam:
-        continue
-    
-    attr_naam = str(attr_naam).strip()
-    
-    for col_idx in uur_kolommen:
-        val = ws.cell(rij, col_idx).value
-        if val in [1, True, "WAAR", "X"]:
-            # Map de kolomindex naar het juiste uur (vergelijkbaar met open_uren logica)
-            uur = 10 + (col_idx - 36) 
-            uitgeschakelde_uren_per_attr[attr_naam].add(uur)
-
-
+for rij in range(24, 30): # Rij 24 t/m 29
+    attr_naam_raw = ws.cell(rij, 45).value # Kolom AS
+    if attr_naam_raw:
+        # Belangrijk: Gebruik normalize_attr voor een eerlijke vergelijking [3]
+        attr_naam = normalize_attr(attr_naam_raw)
+        for col_idx in uur_kolommen:
+            val = ws.cell(rij, col_idx).value
+            if val in [1, True, "WAAR", "X"]:
+                uur = 10 + (col_idx - 36)
+                dichte_uren_per_attr[attr_naam].add(uur)
 
 # -----------------------------
 # Samenvoeg-attracties (per uur)
@@ -285,20 +279,19 @@ for nieuwe in samengevoegde_attracties:
 # -----------------------------
 
 actieve_attracties_per_uur = {}
-for uur in open_uren:
-    # Start met alle attracties die gepland moeten worden
-    actief = set(attracties_te_plannen)
-    
-    # NIEUW: Verwijder attracties die voor dit specifieke uur zijn uitgeschakeld
-    voor_verwijdering = set()
-    for attr in actief:
-        # Gebruik normalisatie om namen goed te kunnen vergelijken [3]
-        if uur in uitgeschakelde_uren_per_attr.get(attr, set()):
-            voor_verwijdering.add(attr)
-            
-    actief -= voor_verwijdering
-    actieve_attracties_per_uur[uur] = actief
+aantallen = {uur: {a: aantallen_raw.get(a, 1) for a in attracties_te_plannen} for uur in open_uren}
 
+for uur in open_uren:
+    actief = set()
+    for a in attracties_te_plannen:
+        # Check of deze attractie op dit uur uitgeschakeld is
+        if uur in dichte_uren_per_attr.get(normalize_attr(a), set()):
+            # Zet het aantal benodigde studenten op 0 voor dit uur
+            aantallen[uur][a] = 0
+        else:
+            actief.add(a)
+    
+    actieve_attracties_per_uur[uur] = actief
 
 
 
