@@ -148,33 +148,24 @@ for rij in range(24, 30): # Rij 24 t/m 29
 # Samenvoeg-attracties (per uur)
 # -----------------------------
 
-# Resultaat:
-# uur_samenvoegingen = {
-#   10: [ ["Attractie 3", "Attractie 5"] ],
-#   11: [ ["Attractie 2", "Attractie 7", "Attractie 9"] ],
-# }
 
+# In DEEL 1 bij "Samenvoeg-attracties (per uur)"
 uur_samenvoegingen = defaultdict(list)
+uur_kolommen = list(range(36, 45)) 
 
-# Kolommen AJ (=10-11u) t.e.m. AR (=18-19u)
-uur_kolommen = list(range(36, 45))  # AJ=36
-
-for rij in range(14, 22):  # 14 t.e.m. 21
-    # lees attracties in AS–AU
+for rij in range(14, 22):  # Rij 14 t/m 21 voor samenvoegingen
+    # Lees de groep (AS, AT, AU)
     groep = []
-    for col in range(45, 48):  # AS, AT, AU
+    for col in [3-5]: 
         val = ws.cell(rij, col).value
-        if val:
-            groep.append(str(val).strip())
-
-    if len(groep) < 2:
-        continue
-
-    # check per uur of hokje aan staat
-    for idx, kol in enumerate(uur_kolommen):
-        if ws.cell(rij, kol).value in [1, True, "WAAR", "X"]:
-            uur = 10 + idx
-            uur_samenvoegingen[uur].append(groep)
+        if val: groep.append(str(val).strip())
+    
+    if len(groep) > 1:
+        # Check per uur of de samenvoeging actief is (AJ t/m AR)
+        for col_idx in uur_kolommen:
+            if ws.cell(rij, col_idx).value in [1, True, "WAAR", "X"]:
+                uur = 10 + (col_idx - 36)
+                uur_samenvoegingen[uur].append(groep)
 
 
 # -----------------------------
@@ -279,18 +270,36 @@ for nieuwe in samengevoegde_attracties:
 # -----------------------------
 
 actieve_attracties_per_uur = {}
+# Initialiseer aantallen met de standaard waarden
 aantallen = {uur: {a: aantallen_raw.get(a, 1) for a in attracties_te_plannen} for uur in open_uren}
 
 for uur in open_uren:
+    # 1. Begin met de basis: alle attracties die niet handmatig zijn uitgeschakeld
     actief = set()
     for a in attracties_te_plannen:
-        # Check of deze attractie op dit uur uitgeschakeld is
+        # Check uitschakelen (jouw vorige toevoeging)
         if uur in dichte_uren_per_attr.get(normalize_attr(a), set()):
-            # Zet het aantal benodigde studenten op 0 voor dit uur
             aantallen[uur][a] = 0
         else:
-            actief.add(a)
-    
+            # Voeg alleen toe als het geen 'lege' samengevoegde naam is die we later opbouwen
+            if " + " not in a:
+                actief.add(a)
+
+    # 2. Verwerk de samenvoegingen voor DIT uur
+    huidige_groepen = uur_samenvoegingen.get(uur, [])
+    for groep in huidige_groepen:
+        samengevoegde_naam = " + ".join(groep)
+        
+        # Voeg de samengevoegde attractie toe aan de planning voor dit uur
+        actief.add(samengevoegde_naam)
+        aantallen[uur][samengevoegde_naam] = 1 # Samenvoeging is altijd 1 student
+        
+        # VERWIJDER de losse onderdelen zodat ze niet dubbel geteld worden
+        for onderdeel in groep:
+            if onderdeel in actief:
+                actief.remove(onderdeel)
+            aantallen[uur][onderdeel] = 0 # Geen studenten op de losse attracties
+
     actieve_attracties_per_uur[uur] = actief
 
 
