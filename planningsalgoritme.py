@@ -776,6 +776,9 @@ wb_out = Workbook()
 ws_out = wb_out.active
 ws_out.title = "Planning"
 
+black_fill = PatternFill(start_color="000000", fill_type="solid")
+white_font = Font(color="FFFFFF") # Optioneel: witte tekst voor contrast in zwarte vakjes
+
 # Witte fill voor headers en attracties
 white_fill = PatternFill(start_color="FFFFFF", fill_type="solid")
 pv_fill = PatternFill(start_color="FFF2CC", fill_type="solid")
@@ -837,34 +840,42 @@ for col_idx, uur in enumerate(sorted(open_uren), start=2):
 
 rij_out = 2
 for attr in alle_actieve_attracties:
-    # FIX: correcte berekening max_pos
+    # Bepaal het maximaal aantal posities voor deze attractie (vaak 1 of 2)
     max_pos = max(
         max(aantallen[uur].get(attr, 1) for uur in open_uren),
         max(per_hour_assigned_counts[uur].get(attr, 0) for uur in open_uren)
     )
-
-    for pos_idx in range(1, max_pos + 1):
-        naam_attr = attr if max_pos == 1 else f"{attr} {pos_idx}"
-        ws_out.cell(rij_out, 1, naam_attr).font = Font(bold=True)
-        ws_out.cell(rij_out, 1).fill = white_fill
+    
+    for pos in range(1, max_pos + 1):
+        ws_out.cell(rij_out, 1, f"{attr} {pos if max_pos > 1 else ''}")
         ws_out.cell(rij_out, 1).border = thin_border
-
-
+        
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
-            # Red spots nu wit maken
-            if attr in second_spot_blocked.get(uur, set()) and pos_idx == 2:
-                ws_out.cell(rij_out, col_idx, "").fill = white_fill
-                ws_out.cell(rij_out, col_idx).border = thin_border
+            cell = ws_out.cell(rij_out, col_idx)
+            cell.border = thin_border
+            
+            # --- DE NIEUWE LOGICA VOOR ZWARTE VAKJES ---
+            
+            # 1. Is de attractie dit uur überhaupt actief? 
+            # (Checkt: uitgeschakeld, nog niet samengevoegd, of juist los terwijl samenvoeging actief is)
+            is_actief = attr in actieve_attracties_per_uur.get(uur, set())
+            
+            # 2. Is dit de tweede plek en is deze geblokkeerd door studententekort?
+            is_blocked_2nd = (pos == 2 and attr in second_spot_blocked.get(uur, set()))
+            
+            if not is_actief or is_blocked_2nd:
+                # Maak het vakje zwart als de plek niet gebruikt mag worden
+                cell.fill = black_fill
             else:
+                # Normale verwerking: zet de naam van de student erin als die er is
                 namen = assigned_map.get((uur, attr), [])
-                naam = namen[pos_idx - 1] if pos_idx - 1 < len(namen) else ""
-                ws_out.cell(rij_out, col_idx, naam).alignment = center_align
-                ws_out.cell(rij_out, col_idx).border = thin_border
-                if naam and naam in student_kleuren:
-                    ws_out.cell(rij_out, col_idx).fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-
+                if pos <= len(namen):
+                    naam = namen[pos-1]
+                    cell.value = naam
+                    if naam in student_kleuren:
+                        cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+            
         rij_out += 1
-
 # Pauzevlinders
 rij_out += 1
 for pv_idx, pvnaam in enumerate(pauzevlinder_namen, start=1):
