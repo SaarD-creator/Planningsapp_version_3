@@ -270,35 +270,35 @@ for nieuwe in samengevoegde_attracties:
 # -----------------------------
 
 actieve_attracties_per_uur = {}
-# Initialiseer aantallen met de standaard waarden
+# Initialiseer aantallen met de standaard waarden uit aantallen_raw
 aantallen = {uur: {a: aantallen_raw.get(a, 1) for a in attracties_te_plannen} for uur in open_uren}
 
 for uur in open_uren:
-    # 1. Begin met de basis: alle attracties die niet handmatig zijn uitgeschakeld
+    # 1. Start met alle individuele attracties (zonder "+") die niet handmatig zijn uitgeschakeld
     actief = set()
     for a in attracties_te_plannen:
-        # Check uitschakelen (jouw vorige toevoeging)
+        if " + " in a: 
+            continue  # Deze voegen we pas toe als de samenvoeging voor dit uur actief is
+            
         if uur in dichte_uren_per_attr.get(normalize_attr(a), set()):
             aantallen[uur][a] = 0
         else:
-            # Voeg alleen toe als het geen 'lege' samengevoegde naam is die we later opbouwen
-            if " + " not in a:
-                actief.add(a)
+            actief.add(a)
 
-    # 2. Verwerk de samenvoegingen voor DIT uur
+    # 2. Pas de samenvoegingen voor DIT specifieke uur toe
     huidige_groepen = uur_samenvoegingen.get(uur, [])
     for groep in huidige_groepen:
         samengevoegde_naam = " + ".join(groep)
         
-        # Voeg de samengevoegde attractie toe aan de planning voor dit uur
+        # Voeg de samengevoegde attractie toe aan de actieve lijst
         actief.add(samengevoegde_naam)
         aantallen[uur][samengevoegde_naam] = 1 # Samenvoeging is altijd 1 student
         
-        # VERWIJDER de losse onderdelen zodat ze niet dubbel geteld worden
+        # Verwijder de losse onderdelen uit de actieve lijst en zet hun aantal op 0
         for onderdeel in groep:
             if onderdeel in actief:
                 actief.remove(onderdeel)
-            aantallen[uur][onderdeel] = 0 # Geen studenten op de losse attracties
+            aantallen[uur][onderdeel] = 0
 
     actieve_attracties_per_uur[uur] = actief
 
