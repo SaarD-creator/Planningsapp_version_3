@@ -841,42 +841,45 @@ for col_idx, uur in enumerate(sorted(open_uren), start=2):
 
 rij_out = 2 
 for attr in alle_actieve_attracties:
-    # Bereken max_pos (staat al in je script in bron [2])
+    # 1. Bepaal hoeveel rijen deze attractie nodig heeft (1 of 2)
     max_pos = max(
         max(aantallen[uur].get(attr, 1) for uur in open_uren),
         max(per_hour_assigned_counts[uur].get(attr, 0) for uur in open_uren)
     )
     
     for pos in range(1, max_pos + 1):
-        # Schrijf de attractienaam in kolom A
+        # Schrijf de attractienaam in de eerste kolom (A)
         display_name = f"{attr} {pos if max_pos > 1 else ''}".strip()
         ws_out.cell(rij_out, 1, display_name).border = thin_border
+        ws_out.cell(rij_out, 1).fill = white_fill
         
+        # Loop door alle uren van de dag
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
             cell = ws_out.cell(rij_out, col_idx)
             cell.border = thin_border
             
-            # --- DIT IS DE WIJZIGING ---
+            # --- LOGICA VOOR GRIJZE VAKJES ---
             
-            # 1. Check of de attractie dit uur handmatig is uitgeschakeld [4]
+            # A. Is de attractie handmatig uitgezet via de urentabel (kolom AJ-AR)? [2]
             is_dicht = uur in dichte_uren_per_attr.get(normalize_attr(attr), set())
             
-            # 2. Check of dit een 2e plek is die geblokkeerd is door studententekort [5]
+            # B. Is dit de 2e plek en is deze geblokkeerd door personeelstekort? [3]
             is_red_spot = (pos == 2 and attr in second_spot_blocked.get(uur, set()))
             
             if is_dicht or is_red_spot:
-                cell.fill = gray_fill
+                cell.fill = gray_fill  # Jouw gekozen kleur 808080 [4]
             else:
-                # De normale logica voor het plaatsen van de studentnaam
+                # De normale planning: zet de naam van de student erin
                 namen = assigned_map.get((uur, attr), [])
                 if pos <= len(namen):
                     naam = namen[pos-1]
                     cell.value = naam
+                    cell.alignment = center_align
                     if naam in student_kleuren:
                         cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-            # ---------------------------
             
-        rij_out += 1
+        rij_out += 1 # Ga naar de volgende regel voor de volgende positie/attractie
+
         
 # Pauzevlinders
 rij_out += 1
