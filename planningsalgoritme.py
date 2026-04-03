@@ -776,7 +776,7 @@ wb_out = Workbook()
 ws_out = wb_out.active
 ws_out.title = "Planning"
 
-black_fill = PatternFill(start_color="000000", fill_type="solid")
+black_fill = PatternFill(start_color="404040", fill_type="solid")
 white_font = Font(color="FFFFFF") # Optioneel: witte tekst voor contrast in zwarte vakjes
 
 # Witte fill voor headers en attracties
