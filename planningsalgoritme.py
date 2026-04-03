@@ -299,7 +299,7 @@ for uur in open_uren:
 # -----------------------------
 # Compute aantallen per hour + red spots
 # -----------------------------
-aantallen = {uur: {a: 1 for a in attracties_te_plannen} for uur in open_uren}
+
 red_spots = {uur: set() for uur in open_uren}          # attractie volledig verboden
 second_spot_blocked = {uur: set() for uur in open_uren}  # alleen plek 2 verboden
 
