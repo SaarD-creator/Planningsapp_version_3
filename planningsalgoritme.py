@@ -303,35 +303,40 @@ for uur in open_uren:
 
 
 
-# -----------------------------
-# Compute aantallen per hour + red spots
-# -----------------------------
-
-red_spots = {uur: set() for uur in open_uren}          # attractie volledig verboden
-second_spot_blocked = {uur: set() for uur in open_uren}  # alleen plek 2 verboden
+### -----------------------------
+### Compute aantallen per hour + red spots (GEÏNTEGREERD)
+### -----------------------------
+red_spots = {uur: set() for uur in open_uren}          
+second_spot_blocked = {uur: set() for uur in open_uren}  
 
 for uur in open_uren:
-    # Hoeveel studenten beschikbaar dit uur (excl. pauzevlinders op duty)
+    # 1. Hoeveel studenten zijn er dit uur echt beschikbaar? [1]
     student_count = sum(
         1 for s in studenten
         if uur in s["uren_beschikbaar"] and not (
             s["is_pauzevlinder"] and uur in required_pauze_hours
         )
     )
-    # Hoeveel attracties minimaal bemand moeten worden
-    base_spots = sum( 1 for a in actieve_attracties_per_uur[uur] if aantallen[uur].get(a, 0) >= 1 
-)
+    
+    # 2. Hoeveel attracties moeten dit uur minimaal 1 persoon hebben? [1]
+    # We kijken naar de actieve lijst van dat uur (rekening houdend met uitschakelingen/samenvoegingen)
+    base_spots = sum(1 for a in actieve_attracties_per_uur[uur] if aantallen[uur].get(a, 0) >= 1)
+    
+    # 3. Bereken het overschot
     extra_spots = student_count - base_spots
 
-    # Allocate 2e plekken volgens prioriteit
+    # 4. Verdeel de tweede plekken op basis van de prioriteitslijst uit Excel (BA5:BA11) [2]
     for attr in second_priority_order:
-        if attr in aantallen_raw and aantallen_raw[attr] == 2:
+        # Check of de attractie dit uur actief is én of hij normaal 2 personen nodig heeft [2, 3]
+        if attr in actieve_attracties_per_uur[uur] and aantallen_raw.get(attr) == 2:
             if extra_spots > 0:
+                # Er is nog een student over voor een tweede plek
                 aantallen[uur][attr] = 2
                 extra_spots -= 1
             else:
+                # Geen studenten meer over? Blokkeer de tweede plek voor dit uur
                 second_spot_blocked[uur].add(attr)
-
+                aantallen[uur][attr] = 1  # Forceer het aantal voor dit uur naar 1
 
 
 # -----------------------------
