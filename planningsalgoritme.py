@@ -128,6 +128,28 @@ for rij in range(2,500):
     })
 
 
+# Nieuwe dictionary voor uitgeschakelde uren per attractie
+uitgeschakelde_uren_per_attr = defaultdict(set)
+
+# Kolommen AJ (=10-11u) t.e.m. AR (=18-19u) zijn 36 t/m 44
+uur_kolommen = list(range(36, 45)) 
+
+for rij in range(24, 30):  # Rij 24 t.e.m. 29
+    attr_naam = ws.cell(rij, 45).value  # Kolom AS is 45
+    if not attr_naam:
+        continue
+    
+    attr_naam = str(attr_naam).strip()
+    
+    for col_idx in uur_kolommen:
+        val = ws.cell(rij, col_idx).value
+        if val in [1, True, "WAAR", "X"]:
+            # Map de kolomindex naar het juiste uur (vergelijkbaar met open_uren logica)
+            uur = 10 + (col_idx - 36) 
+            uitgeschakelde_uren_per_attr[attr_naam].add(uur)
+
+
+
 # -----------------------------
 # Samenvoeg-attracties (per uur)
 # -----------------------------
@@ -263,21 +285,18 @@ for nieuwe in samengevoegde_attracties:
 # -----------------------------
 
 actieve_attracties_per_uur = {}
-
-
-
-
 for uur in open_uren:
+    # Start met alle attracties die gepland moeten worden
     actief = set(attracties_te_plannen)
-
-    for groep in uur_samenvoegingen.get(uur, []):
-        nieuwe = " + ".join(groep)
-        # losse attracties verdwijnen
-        for a in groep:
-            actief.discard(a)
-        # samengevoegde verschijnt
-        actief.add(nieuwe)
-
+    
+    # NIEUW: Verwijder attracties die voor dit specifieke uur zijn uitgeschakeld
+    voor_verwijdering = set()
+    for attr in actief:
+        # Gebruik normalisatie om namen goed te kunnen vergelijken [3]
+        if uur in uitgeschakelde_uren_per_attr.get(attr, set()):
+            voor_verwijdering.add(attr)
+            
+    actief -= voor_verwijdering
     actieve_attracties_per_uur[uur] = actief
 
 
