@@ -270,38 +270,36 @@ for nieuwe in samengevoegde_attracties:
 # -----------------------------
 
 actieve_attracties_per_uur = {}
-# Initialiseer aantallen met de standaard waarden uit aantallen_raw
+# Gebruik de raw aantallen als basis
 aantallen = {uur: {a: aantallen_raw.get(a, 1) for a in attracties_te_plannen} for uur in open_uren}
 
 for uur in open_uren:
-    # 1. Start met alle individuele attracties (zonder "+") die niet handmatig zijn uitgeschakeld
     actief = set()
+    # 1. Voeg eerst alle individuele attracties toe die NIET dicht zijn
     for a in attracties_te_plannen:
-        if " + " in a: 
-            continue  # Deze voegen we pas toe als de samenvoeging voor dit uur actief is
-            
+        if " + " in a: continue # Sla samengevoegde namen hier nog even over
+        
         if uur in dichte_uren_per_attr.get(normalize_attr(a), set()):
             aantallen[uur][a] = 0
         else:
             actief.add(a)
 
-    # 2. Pas de samenvoegingen voor DIT specifieke uur toe
+    # 2. Verwerk de samenvoegingen voor dit specifieke uur
     huidige_groepen = uur_samenvoegingen.get(uur, [])
     for groep in huidige_groepen:
         samengevoegde_naam = " + ".join(groep)
         
-        # Voeg de samengevoegde attractie toe aan de actieve lijst
+        # Voeg de samengevoegde attractie toe aan de planning
         actief.add(samengevoegde_naam)
-        aantallen[uur][samengevoegde_naam] = 1 # Samenvoeging is altijd 1 student
+        aantallen[uur][samengevoegde_naam] = 1
         
-        # Verwijder de losse onderdelen uit de actieve lijst en zet hun aantal op 0
+        # VERWIJDER de onderdelen uit de actieve lijst (voorkomt dubbele telling)
         for onderdeel in groep:
             if onderdeel in actief:
                 actief.remove(onderdeel)
             aantallen[uur][onderdeel] = 0
 
     actieve_attracties_per_uur[uur] = actief
-
 
 
 
@@ -321,9 +319,7 @@ for uur in open_uren:
         )
     )
     # Hoeveel attracties minimaal bemand moeten worden
-    base_spots = sum(
-    1 for a in actieve_attracties_per_uur[uur]
-    if aantallen_raw.get(a, 0) >= 1
+    base_spots = sum( 1 for a in actieve_attracties_per_uur[uur] if aantallen[uur].get(a, 0) >= 1 )
 )
     extra_spots = student_count - base_spots
 
