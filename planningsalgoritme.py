@@ -156,7 +156,7 @@ uur_kolommen = list(range(36, 45))
 for rij in range(14, 22):  # Rij 14 t/m 21 voor samenvoegingen
     # Lees de groep (AS, AT, AU)
     groep = []
-    for col in [3-5]: 
+    for col in range(45, 48): 
         val = ws.cell(rij, col).value
         if val: groep.append(str(val).strip())
     
