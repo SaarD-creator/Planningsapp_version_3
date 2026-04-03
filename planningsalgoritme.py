@@ -319,7 +319,7 @@ for uur in open_uren:
         )
     )
     # Hoeveel attracties minimaal bemand moeten worden
-    base_spots = sum( 1 for a in actieve_attracties_per_uur[uur] if aantallen[uur].get(a, 0) >= 1 )
+    base_spots = sum( 1 for a in actieve_attracties_per_uur[uur] if aantallen[uur].get(a, 0) >= 1 
 )
     extra_spots = student_count - base_spots
 
