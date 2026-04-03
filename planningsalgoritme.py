@@ -1,3 +1,5 @@
+
+#uitschakelen attracties op bepaalde uren lijkt te werken!
 #samenvoegen attracties per uur werkttttt!!! Kleine bug is er uit gehaald
 #hele dag bij attractie werkt
 # probleem met twee
@@ -776,8 +778,7 @@ wb_out = Workbook()
 ws_out = wb_out.active
 ws_out.title = "Planning"
 
-black_fill = PatternFill(start_color="808080", fill_type="solid")
-white_font = Font(color="FFFFFF") # Optioneel: witte tekst voor contrast in zwarte vakjes
+gray_fill = PatternFill(start_color="808080", fill_type="solid")
 
 # Witte fill voor headers en attracties
 white_fill = PatternFill(start_color="FFFFFF", fill_type="solid")
@@ -838,44 +839,45 @@ for col_idx, uur in enumerate(sorted(open_uren), start=2):
     ws_out.cell(1, col_idx).alignment = center_align
     ws_out.cell(1, col_idx).border = thin_border
 
-rij_out = 2
+rij_out = 2 
 for attr in alle_actieve_attracties:
-    # Bepaal het maximaal aantal posities voor deze attractie (vaak 1 of 2)
+    # Bereken max_pos (staat al in je script in bron [2])
     max_pos = max(
         max(aantallen[uur].get(attr, 1) for uur in open_uren),
         max(per_hour_assigned_counts[uur].get(attr, 0) for uur in open_uren)
     )
     
     for pos in range(1, max_pos + 1):
-        ws_out.cell(rij_out, 1, f"{attr} {pos if max_pos > 1 else ''}")
-        ws_out.cell(rij_out, 1).border = thin_border
+        # Schrijf de attractienaam in kolom A
+        display_name = f"{attr} {pos if max_pos > 1 else ''}".strip()
+        ws_out.cell(rij_out, 1, display_name).border = thin_border
         
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
             cell = ws_out.cell(rij_out, col_idx)
             cell.border = thin_border
             
-            # --- DE NIEUWE LOGICA VOOR ZWARTE VAKJES ---
+            # --- DIT IS DE WIJZIGING ---
             
-            # 1. Is de attractie dit uur überhaupt actief? 
-            # (Checkt: uitgeschakeld, nog niet samengevoegd, of juist los terwijl samenvoeging actief is)
-            is_actief = attr in actieve_attracties_per_uur.get(uur, set())
+            # 1. Check of de attractie dit uur handmatig is uitgeschakeld [4]
+            is_dicht = uur in dichte_uren_per_attr.get(normalize_attr(attr), set())
             
-            # 2. Is dit de tweede plek en is deze geblokkeerd door studententekort?
-            is_blocked_2nd = (pos == 2 and attr in second_spot_blocked.get(uur, set()))
+            # 2. Check of dit een 2e plek is die geblokkeerd is door studententekort [5]
+            is_red_spot = (pos == 2 and attr in second_spot_blocked.get(uur, set()))
             
-            if not is_actief or is_blocked_2nd:
-                # Maak het vakje zwart als de plek niet gebruikt mag worden
-                cell.fill = black_fill
+            if is_dicht or is_red_spot:
+                cell.fill = gray_fill
             else:
-                # Normale verwerking: zet de naam van de student erin als die er is
+                # De normale logica voor het plaatsen van de studentnaam
                 namen = assigned_map.get((uur, attr), [])
                 if pos <= len(namen):
                     naam = namen[pos-1]
                     cell.value = naam
                     if naam in student_kleuren:
                         cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+            # ---------------------------
             
         rij_out += 1
+        
 # Pauzevlinders
 rij_out += 1
 for pv_idx, pvnaam in enumerate(pauzevlinder_namen, start=1):
