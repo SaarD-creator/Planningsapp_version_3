@@ -850,26 +850,26 @@ for attr in alle_actieve_attracties:
     for pos in range(1, max_pos + 1):
         # Schrijf de attractienaam in de eerste kolom (A)
         display_name = f"{attr} {pos if max_pos > 1 else ''}".strip()
-        ws_out.cell(rij_out, 1, display_name).border = thin_border
-        ws_out.cell(rij_out, 1).fill = white_fill
         
-        # Loop door alle uren van de dag
+        # --- HIER VOEG JE HET VETGEDRUKTE TOE ---
+        target_cell = ws_out.cell(rij_out, 1, display_name)
+        target_cell.font = Font(bold=True)  # Dit maakt de naam vetgedrukt
+        target_cell.border = thin_border
+        target_cell.fill = white_fill
+        
+        # Loop door alle uren voor de planning en de grijze vakjes
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
             cell = ws_out.cell(rij_out, col_idx)
             cell.border = thin_border
             
-            # --- LOGICA VOOR GRIJZE VAKJES ---
-            
-            # A. Is de attractie handmatig uitgezet via de urentabel (kolom AJ-AR)? [2]
+            # Logica voor de grijze vakjes (red spots / dichte uren)
             is_dicht = uur in dichte_uren_per_attr.get(normalize_attr(attr), set())
-            
-            # B. Is dit de 2e plek en is deze geblokkeerd door personeelstekort? [3]
             is_red_spot = (pos == 2 and attr in second_spot_blocked.get(uur, set()))
             
             if is_dicht or is_red_spot:
-                cell.fill = gray_fill  # Jouw gekozen kleur 808080 [4]
+                cell.fill = gray_fill
             else:
-                # De normale planning: zet de naam van de student erin
+                # Normale planning
                 namen = assigned_map.get((uur, attr), [])
                 if pos <= len(namen):
                     naam = namen[pos-1]
@@ -878,7 +878,7 @@ for attr in alle_actieve_attracties:
                     if naam in student_kleuren:
                         cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
             
-        rij_out += 1 # Ga naar de volgende regel voor de volgende positie/attractie
+        rij_out += 1
 
         
 # Pauzevlinders
