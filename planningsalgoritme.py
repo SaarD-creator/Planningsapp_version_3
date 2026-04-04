@@ -841,67 +841,67 @@ for col_idx, uur in enumerate(sorted(open_uren), start=2):
 
 rij_out = 2
 for attr in alle_actieve_attracties:
-    # 1. Bepaal hoeveel rijen deze attractie nodig heeft (1 of 2)
-    # Gebaseerd op de logica in bron [1]
+    # 1. Bepaal het maximaal aantal posities voor deze attractie (1 of 2) [2]
     max_pos = max(
         max(aantallen[uur].get(attr, 1) for uur in open_uren),
         max(per_hour_assigned_counts[uur].get(attr, 0) for uur in open_uren)
     )
 
     for pos_idx in range(1, max_pos + 1):
-        # BEHOUD ORIGINELE LAYOUT: Schrijf enkel de attractienaam in de eerste kolom
-        ws_out.cell(rij_out, 1, attr).font = Font(bold=True)
+        # --- LAYOUT HERSTELD: Gebruik spatie in plaats van haakjes ---
+        display_name = f"{attr} {pos_idx}" if max_pos > 1 else attr
+        ws_out.cell(rij_out, 1, display_name).font = Font(bold=True)
         ws_out.cell(rij_out, 1).fill = white_fill
         ws_out.cell(rij_out, 1).border = thin_border
 
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
             cell = ws_out.cell(rij_out, col_idx)
 
-            # Haal de ingeplande student op (Bron [2], [1])
+            # Haal de studentnaam op voor dit uur en deze positie [3]
             namen = assigned_map.get((uur, attr), [])
             naam = namen[pos_idx-1] if pos_idx-1 < len(namen) else ""
 
-            # --- NIEUWE LOGICA VOOR GRIJS KLEUREN ---
-            current_attr_norm = normalize_attr(attr) # Bron [3]
-            is_samengesteld = " + " in attr
-            groepen_dit_uur = uur_samenvoegingen.get(uur, []) # Bron [4]
+            # --- LOGICA VOOR GRIJS KLEUREN ---
+            current_attr_norm = normalize_attr(attr) [1]
+            is_samengesteld = " + " in attr [4]
+            groepen_dit_uur = uur_samenvoegingen.get(uur, []) [5]
             
             moet_grijs = False
 
-            # A. Check of de attractie op dit uur dicht is (Bron [5])
+            # A. Check of de attractie dit uur gesloten is [6]
             if uur in dichte_uren_per_attr.get(current_attr_norm, set()):
                 moet_grijs = True
 
-            # B. Check voor samengestelde attractierijen (bijv. 'A + B')
+            # B. Check voor samengestelde attracties (bv. 'A + B') [4, 7]
             elif is_samengesteld:
-                # De rij is grijs tenzij EXACT deze groep dit uur actief is
+                # Alleen wit als deze exacte groep dit uur actief is
                 onderdelen_set = {normalize_attr(x.strip()) for x in attr.split("+")}
                 actief_als_groep = any({normalize_attr(g) for g in groep} == onderdelen_set for groep in groepen_dit_uur)
                 if not actief_als_groep:
                     moet_grijs = True
 
-            # C. Check voor individuele attractierijen (bijv. 'A')
+            # C. Check voor individuele attracties (bv. 'A')
             else:
-                # De rij wordt grijs als de attractie dit uur is opgegaan in een samenvoeging
+                # Wordt grijs als de attractie dit uur deel uitmaakt van een samenvoeging
                 is_onderdeel_van_samenvoeging = any(current_attr_norm in [normalize_attr(g) for g in groep] for groep in groepen_dit_uur)
                 if is_onderdeel_van_samenvoeging:
                     moet_grijs = True
 
-            # D. Check of de tweede plek geblokkeerd is (Bron [6])
+            # D. Check of de tweede plek geblokkeerd is (red spots) [7, 8]
             if pos_idx == 2 and attr in second_spot_blocked.get(uur, set()):
                 moet_grijs = True
 
-            # --- De cel invullen en kleuren ---
+            # --- Cel invullen en opmaken ---
             cell.value = naam
             cell.alignment = center_align
             cell.border = thin_border
 
             if moet_grijs:
-                cell.fill = gray_fill # Grijs uit bron [7]
+                cell.fill = gray_fill [9]
             elif naam and naam in student_kleuren:
-                cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+                cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid") [10]
             else:
-                cell.fill = white_fill
+                cell.fill = white_fill [11]
 
         rij_out += 1
         
