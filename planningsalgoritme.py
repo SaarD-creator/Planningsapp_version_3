@@ -841,14 +841,14 @@ for col_idx, uur in enumerate(sorted(open_uren), start=2):
 
 rij_out = 2
 for attr in alle_actieve_attracties:
-    # 1. Bepaal het maximaal aantal posities voor deze attractie (1 of 2) [2]
+    # 1. Bepaal hoeveel rijen deze attractie nodig heeft (1 of 2 plekken)
     max_pos = max(
         max(aantallen[uur].get(attr, 1) for uur in open_uren),
         max(per_hour_assigned_counts[uur].get(attr, 0) for uur in open_uren)
     )
 
     for pos_idx in range(1, max_pos + 1):
-        # --- LAYOUT HERSTELD: Gebruik spatie in plaats van haakjes ---
+        # --- LAYOUT: Naam gevolgd door spatie en nummer (zonder haakjes) ---
         display_name = f"{attr} {pos_idx}" if max_pos > 1 else attr
         ws_out.cell(rij_out, 1, display_name).font = Font(bold=True)
         ws_out.cell(rij_out, 1).fill = white_fill
@@ -857,24 +857,24 @@ for attr in alle_actieve_attracties:
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
             cell = ws_out.cell(rij_out, col_idx)
 
-            # Haal de studentnaam op voor dit uur en deze positie [3]
+            # Haal de studentnaam op voor dit uur en deze positie
             namen = assigned_map.get((uur, attr), [])
             naam = namen[pos_idx-1] if pos_idx-1 < len(namen) else ""
 
             # --- LOGICA VOOR GRIJS KLEUREN ---
-            current_attr_norm = normalize_attr(attr) [1]
-            is_samengesteld = " + " in attr [4]
+            current_attr_norm = normalize_attr(attr)
+            is_samengesteld = " + " in attr
             groepen_dit_uur = uur_samenvoegingen.get(uur, [])
             
             moet_grijs = False
 
-            # A. Check of de attractie dit uur gesloten is [6]
+            # A. Check of de attractie dit uur gesloten is
             if uur in dichte_uren_per_attr.get(current_attr_norm, set()):
                 moet_grijs = True
 
-            # B. Check voor samengestelde attracties (bv. 'A + B') [4, 7]
+            # B. Check voor samengestelde attracties (bv. 'A + B')
             elif is_samengesteld:
-                # Alleen wit als deze exacte groep dit uur actief is
+                # De samengevoegde rij is grijs als deze specifieke groep dit uur NIET actief is
                 onderdelen_set = {normalize_attr(x.strip()) for x in attr.split("+")}
                 actief_als_groep = any({normalize_attr(g) for g in groep} == onderdelen_set for groep in groepen_dit_uur)
                 if not actief_als_groep:
@@ -882,12 +882,12 @@ for attr in alle_actieve_attracties:
 
             # C. Check voor individuele attracties (bv. 'A')
             else:
-                # Wordt grijs als de attractie dit uur deel uitmaakt van een samenvoeging
+                # De individuele rij wordt grijs als de attractie opgaat in een samenvoeging
                 is_onderdeel_van_samenvoeging = any(current_attr_norm in [normalize_attr(g) for g in groep] for groep in groepen_dit_uur)
                 if is_onderdeel_van_samenvoeging:
                     moet_grijs = True
 
-            # D. Check of de tweede plek geblokkeerd is (red spots) [7, 8]
+            # D. Check of de tweede plek geblokkeerd is (red spots)
             if pos_idx == 2 and attr in second_spot_blocked.get(uur, set()):
                 moet_grijs = True
 
@@ -897,11 +897,11 @@ for attr in alle_actieve_attracties:
             cell.border = thin_border
 
             if moet_grijs:
-                cell.fill = gray_fill [9]
+                cell.fill = gray_fill  # Grijs uit je bronnen
             elif naam and naam in student_kleuren:
-                cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid") [10]
+                cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
             else:
-                cell.fill = white_fill [11]
+                cell.fill = white_fill
 
         rij_out += 1
         
