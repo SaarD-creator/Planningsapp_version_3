@@ -830,14 +830,25 @@ while len(unique_colors) < needed:
 
 student_kleuren = dict(zip(alle_namen, unique_colors))
 
-# Header
 ws_out.cell(1, 1, vandaag).font = Font(bold=True)
 ws_out.cell(1, 1).fill = white_fill
+
 for col_idx, uur in enumerate(sorted(open_uren), start=2):
     ws_out.cell(1, col_idx, f"{uur}:00").font = Font(bold=True)
     ws_out.cell(1, col_idx).fill = white_fill
     ws_out.cell(1, col_idx).alignment = center_align
     ws_out.cell(1, col_idx).border = thin_border
+
+# --- NIEUWE LOGICA VOOR AS2 VINKJE ---
+# AS is de 45e kolom in de Input-sheet (ws)
+as2_vinkje = ws.cell(2, 45).value 
+if as2_vinkje in [1, True, "WAAR", "X"]:
+    # Cel B1 is kolom 2, rij 1
+    ws_out.cell(1, 2).value = "9u30-11u"
+    # Cel J1 is kolom 10, rij 1
+    ws_out.cell(1, 10).value = "18u-19u30"
+# -------------------------------------
+    
 
 rij_out = 2
 for attr in alle_actieve_attracties:
