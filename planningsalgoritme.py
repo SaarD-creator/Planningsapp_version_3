@@ -864,7 +864,7 @@ for attr in alle_actieve_attracties:
             # --- LOGICA VOOR GRIJS KLEUREN ---
             current_attr_norm = normalize_attr(attr) [1]
             is_samengesteld = " + " in attr [4]
-            groepen_dit_uur = uur_samenvoegingen.get(uur, []) [5]
+            groepen_dit_uur = uur_samenvoegingen.get(uur, [])
             
             moet_grijs = False
 
