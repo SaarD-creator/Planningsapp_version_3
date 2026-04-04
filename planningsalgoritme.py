@@ -2876,31 +2876,34 @@ else:
     row_fb += 1
 
 
-### -------------------------------------------------------------
-### EXTRA INFO TOEVOEGEN AAN PAUZEPLANNING (A12 e.v.)
-### -------------------------------------------------------------
-# We gebruiken de 'Input' sheet van het geüploade bestand [1]
-# en de 'Pauzevlinders' sheet van het resultaat [2, 3]
+##### EXTRA INFO TOEVOEGEN AAN PAUZEPLANNING (A12 e.v.)
+##### -------------------------------------------------------------
+### We gebruiken de 'Input' sheet van het geüploade bestand
+### en de 'Pauzevlinders' sheet van het resultaat
 ws_input_data = wb["Input"]
 ws_pauze_sheet = wb_out["Pauzevlinders"]
 
-# Definieer de witte achtergrond (zoals elders in het script) [4]
+### Definieer de witte achtergrond
 witte_fill = PatternFill(start_color="FFFFFF", fill_type="solid")
 
-# Loop door de rijen 15 tot en met 30 van de Input-sheet
-for i, input_rij in enumerate(range(15, 31)):
-    # Kolom BO is de 67e kolom in Excel
-    waarde = ws_input_data.cell(row=input_rij, column=67).value
-    
-    # We starten in de doel-sheet vanaf rij 12 in kolom A (1)
-    doel_rij = 14 + i
-    doel_cel = ws_pauze_sheet.cell(row=doel_rij, column=1, value=waarde)
-    
-    # Pas de witte achtergrond toe [4]
-    doel_cel.fill = witte_fill
-    
-    # Indien je ook de standaard randen wilt behouden die elders gebruikt worden:
-    # doel_cel.border = thin_border 
+# --- NIEUWE LOGICA VOOR BN15 VINKJE ---
+# BN is de 66e kolom in Excel. We controleren cel BN15.
+bn15_vinkje = ws_input_data.cell(row=15, column=66).value
+
+if bn15_vinkje in [1, True, "WAAR", "X"]:
+    # Loop door de rijen 15 tot en met 30 van de Input-sheet
+    for i, input_rij in enumerate(range(15, 31)):
+        # Kolom BO is de 67e kolom in Excel
+        waarde = ws_input_data.cell(row=input_rij, column=67).value
+        
+        if waarde:
+            # Schrijf de waarde naar kolom A van de pauzeplanning, beginnend bij rij 12
+            target_rij = 12 + i
+            cel = ws_pauze_sheet.cell(row=target_rij, column=1, value=waarde)
+            cel.fill = witte_fill
+            cel.border = thin_border
+            cel.alignment = Alignment(horizontal="left", vertical="center")
+# -------------------------------------
 
 
 
