@@ -839,45 +839,70 @@ for col_idx, uur in enumerate(sorted(open_uren), start=2):
     ws_out.cell(1, col_idx).alignment = center_align
     ws_out.cell(1, col_idx).border = thin_border
 
-rij_out = 2 
+rij_out = 2
 for attr in alle_actieve_attracties:
-    # 1. Bepaal hoeveel rijen deze attractie nodig heeft (1 of 2)
+    # 1. Bepaal hoeveel rijen deze attractie nodig heeft (1 of 2 plekken)
+    # We kijken naar de maximale behoefte over alle uren [1]
     max_pos = max(
         max(aantallen[uur].get(attr, 1) for uur in open_uren),
         max(per_hour_assigned_counts[uur].get(attr, 0) for uur in open_uren)
     )
-    
-    for pos in range(1, max_pos + 1):
-        # Schrijf de attractienaam in de eerste kolom (A)
-        display_name = f"{attr} {pos if max_pos > 1 else ''}".strip()
-        
-        # --- HIER VOEG JE HET VETGEDRUKTE TOE ---
-        target_cell = ws_out.cell(rij_out, 1, display_name)
-        target_cell.font = Font(bold=True)  # Dit maakt de naam vetgedrukt
-        target_cell.border = thin_border
-        target_cell.fill = white_fill
-        
-        # Loop door alle uren voor de planning en de grijze vakjes
+
+    for pos_idx in range(1, max_pos + 1):
+        # Schrijf attractienaam in de eerste kolom met opmaak [1, 2]
+        ws_out.cell(rij_out, 1, f"{attr} ({pos_idx})" if max_pos > 1 else attr).font = Font(bold=True)
+        ws_out.cell(rij_out, 1).fill = white_fill
+        ws_out.cell(rij_out, 1).border = thin_border
+
         for col_idx, uur in enumerate(sorted(open_uren), start=2):
             cell = ws_out.cell(rij_out, col_idx)
-            cell.border = thin_border
+
+            # Haal de ingeplande student op voor dit uur en deze positie [3]
+            namen = assigned_map.get((uur, attr), [])
+            naam = namen[pos_idx-1] if pos_idx-1 < len(namen) else ""
+
+            # --- Logica voor grijs kleuren bepalen ---
+            current_attr_norm = normalize_attr(attr)
+            is_samengesteld = " + " in attr
+            groepen_dit_uur = uur_samenvoegingen.get(uur, [])
             
-            # Logica voor de grijze vakjes (red spots / dichte uren)
-            is_dicht = uur in dichte_uren_per_attr.get(normalize_attr(attr), set())
-            is_red_spot = (pos == 2 and attr in second_spot_blocked.get(uur, set()))
-            
-            if is_dicht or is_red_spot:
-                cell.fill = gray_fill
+            moet_grijs = False
+
+            # A. Check of de attractie op dit uur specifiek uitgeschakeld is [4]
+            if uur in dichte_uren_per_attr.get(current_attr_norm, set()):
+                moet_grijs = True
+
+            # B. Check voor samengestelde attractierijen (bijv. 'A + B')
+            elif is_samengesteld:
+                # De rij is alleen wit als EXACT deze groep dit uur actief is [5, 6]
+                onderdelen_set = {normalize_attr(x.strip()) for x in attr.split("+")}
+                actief_als_groep = any({normalize_attr(g) for g in groep} == onderdelen_set for groep in groepen_dit_uur)
+                if not actief_als_groep:
+                    moet_grijs = True
+
+            # C. Check voor individuele attractierijen (bijv. 'A')
             else:
-                # Normale planning
-                namen = assigned_map.get((uur, attr), [])
-                if pos <= len(namen):
-                    naam = namen[pos-1]
-                    cell.value = naam
-                    cell.alignment = center_align
-                    if naam in student_kleuren:
-                        cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-            
+                # De rij wordt grijs als de attractie dit uur is opgegaan in een samenvoeging [5]
+                is_onderdeel_van_samenvoeging = any(current_attr_norm in [normalize_attr(g) for g in groep] for groep in groepen_dit_uur)
+                if is_onderdeel_van_samenvoeging:
+                    moet_grijs = True
+
+            # D. Check of de tweede plek geblokkeerd is (red spots / studententekort) [7, 8]
+            if pos_idx == 2 and attr in second_spot_blocked.get(uur, set()):
+                moet_grijs = True
+
+            # --- De cel invullen en kleuren ---
+            cell.value = naam
+            cell.alignment = center_align
+            cell.border = thin_border
+
+            if moet_grijs:
+                cell.fill = gray_fill  # Grijs als de plek niet benut wordt of uitgeschakeld is [9]
+            elif naam and naam in student_kleuren:
+                cell.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid") # Kleur van student [2]
+            else:
+                cell.fill = white_fill # Standaard wit als er niemand staat maar de plek wel open is [10]
+
         rij_out += 1
 
         
