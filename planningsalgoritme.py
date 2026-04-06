@@ -2910,6 +2910,117 @@ if bn15_vinkje in [1, True, "WAAR", "X"]:
 wb_out.save(output)
 output.seek(0)  # Zorg dat lezen vanaf begin kan
 
+# nieuwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
+#-------------------------------------------------------------------------------------------
+
+### -------------------------------------------------------------
+### DEEL 5: PP optie 2 & Feedback optie 2 (Stap 1)
+### -------------------------------------------------------------
+
+# 1. Nieuwe werkbladen aanmaken
+ws_pauze2 = wb_out.create_sheet(title="PP optie 2")
+ws_feedback2 = wb_out.create_sheet(title="Feedback optie 2")
+
+# 2. Formattering en headers kopiëren van de eerste pauzeplanning
+# We gebruiken de bestaande variabelen zoals uren_rij1, light_fill, etc.
+for col_idx, uur in enumerate(uren_rij1, start=2):
+    c = ws_pauze2.cell(1, col_idx, uur)
+    c.fill = light_fill
+    c.alignment = center_align
+    c.border = thin_border
+
+a1_2 = ws_pauze2.cell(1, 1, vandaag)
+a1_2.font = Font(bold=True)
+a1_2.fill = light_fill
+a1_2.alignment = center_align
+a1_2.border = thin_border
+
+# Namen van pauzevlinders in kolom A zetten (identiek aan planning 1)
+pv_rows2 = []
+rij_cursor = 2
+for pv_idx, pv in enumerate(selected, start=1):
+    # We houden de structuur aan van een attractie-rij en een naam-rij
+    ws_pauze2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}").font = Font(bold=True)
+    ws_pauze2.cell(rij_cursor, 1).fill = white_fill
+    ws_pauze2.cell(rij_cursor, 1).border = thin_border
+    
+    # De naam-rij index opslaan
+    pv_rows2.append((pv, rij_cursor))
+    rij_cursor += 1
+
+# 3. LOGICA STAP 1: Vroeg-stoppende werkers
+# Filter studenten: werken minstens 4 uur en stoppen om 15u of vroeger
+vroege_stoppers = []
+for s in studenten:
+    if s["is_pauzevlinder"]: continue # Pauzevlinders hebben hun eigen regels
+    werk_uren = get_student_work_hours(s["naam"]) # Helper uit bron [2]
+    if len(werk_uren) >= 4 and max(werk_uren, default=0) <= 15:
+        vroege_stoppers.append(s)
+
+# De studenten inplannen volgens jouw stappen
+for idx, student in enumerate(vroege_stoppers):
+    # Bepaal welke pauzevlinder: 1e & 2e student bij PV1, 3e & 4e bij PV2, etc.
+    pv_index = (idx // 2) % len(pv_rows2)
+    pv_obj, pv_row_idx = pv_rows2[pv_index]
+    
+    naam = student["naam"]
+    werk_uren = get_student_work_hours(naam)
+    
+    # Bereken het midden van de shift
+    midden_index = len(werk_uren) // 2
+    midden_uur = werk_uren[midden_index]
+    
+    # Zoek de kolomindex in pauze_cols die bij dit uur hoort
+    # We proberen het eerste kwartier van dat uur (bv. 12u00 of 12u30)
+    target_col = None
+    for col in pauze_cols:
+        header = ws_pauze2.cell(1, col).value
+        if parse_header_uur(header) == midden_uur:
+            # Voor de eerste student van het paar: probeer het hele of halve uur
+            if "30" not in str(header) and idx % 2 == 0:
+                target_col = col
+                break
+            elif "30" in str(header) and idx % 2 == 0:
+                target_col = col
+                break
+
+    if target_col:
+        # Als dit de TWEEDE student is voor deze vlinder, moet hij naast de eerste
+        if idx % 2 != 0:
+            # De vorige student stond op target_col, deze moet op target_col + 1 (het volgende kwartier)
+            # We zoeken de kolom van de vorige student (idx-1)
+            target_col = target_col + 1 
+
+        # Check regels: niet in eerste of laatste uur
+        uur_van_pauze = parse_header_uur(ws_pauze2.cell(1, target_col).value)
+        if uur_van_pauze != werk_uren and uur_van_pauze != werk_uren[-1]:
+            # Plaats de student en de attractie
+            attr = vind_attractie_op_uur(naam, uur_van_pauze) # Helper uit bron [3]
+            
+            # Invullen in de sheet
+            ws_pauze2.cell(pv_row_idx, target_col, naam).alignment = center_align
+            ws_pauze2.cell(pv_row_idx, target_col).fill = lichtpaars_fill
+            ws_pauze2.cell(pv_row_idx, target_col).border = thin_border
+            
+            # Attractie in de rij erboven (optioneel, afhankelijk van je format)
+            if pv_row_idx > 1:
+                ws_pauze2.cell(pv_row_idx - 1, target_col, attr).alignment = center_align
+                ws_pauze2.cell(pv_row_idx - 1, target_col).border = thin_border
+
+# 4. Feedback Optie 2 initialiseren
+ws_feedback2.cell(1, 1, "Feedback voor PP Optie 2 - Stap 1").font = Font(bold=True)
+ws_feedback2.cell(2, 1, f"Aantal vroeg-stoppende werkers verwerkt: {len(vroege_stoppers)}")
+
+
+
+
+
+
+
+
+
+
+
 
 
 
