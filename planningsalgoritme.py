@@ -3536,6 +3536,244 @@ for col1, col2 in pp2_blokken:
             pp2_lange_pauze_ontvangers.add(toegewezen_naam)
 
 
+
+#STAP 3 333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333333
+
+# -----------------------------
+# STAP 3 PP optie 2:
+# open spots berekenen en verdelen
+# + korte pauzes van pauzevlinders zelf invullen
+# -----------------------------
+
+lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
+naam_leeg_fill_pp2 = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
+
+def pp2_heeft_al_korte_pauze(naam, ws_sheet, pv_rows, pauze_cols):
+    """
+    Check of student al een korte pauze heeft in PP optie 2.
+    Een korte pauze = naam staat in 1 kwartiercel, zonder dezelfde naam links/rechts.
+    """
+    for _pv, pv_row in pv_rows:
+        for idx, col in enumerate(pauze_cols):
+            if ws_sheet.cell(pv_row, col).value != naam:
+                continue
+
+            left_same = idx > 0 and ws_sheet.cell(pv_row, pauze_cols[idx - 1]).value == naam
+            right_same = idx + 1 < len(pauze_cols) and ws_sheet.cell(pv_row, pauze_cols[idx + 1]).value == naam
+
+            if not left_same and not right_same:
+                return True
+
+    return False
+
+
+def pp2_korte_pauze_nodig_namen():
+    """
+    Iedereen die minstens 4 uur werkt, heeft recht op een korte pauze.
+    Zelfde basisidee als elders in je script. :contentReference[oaicite:1]{index=1}
+    """
+    namen = []
+    for s in studenten:
+        naam = s["naam"]
+        if student_totalen.get(naam, 0) >= 4:
+            namen.append(naam)
+    return namen
+
+
+def pp2_count_remaining_empty_quarters(ws_sheet, pv_rows, pauze_cols):
+    """
+    Telt alle nog lege kwartiercellen in de naamrijen van PP optie 2.
+    """
+    count = 0
+    for _pv, pv_row in pv_rows:
+        for col in pauze_cols:
+            if ws_sheet.cell(pv_row, col).value in [None, ""]:
+                count += 1
+    return count
+
+
+def pp2_get_empty_cols_for_pv_row(ws_sheet, pv_row, pauze_cols, open_spots_set):
+    """
+    Geeft alle lege kwartierkolommen terug voor deze pauzevlinder-rij,
+    exclusief reeds gemarkeerde open spots.
+    """
+    cols = []
+    for col in pauze_cols:
+        if (pv_row, col) in open_spots_set:
+            continue
+        if ws_sheet.cell(pv_row, col).value in [None, ""]:
+            cols.append(col)
+    return cols
+
+
+def pp2_mark_open_spot(ws_sheet, pv_row, col):
+    """
+    Open spot blijft gewoon blauw en leeg.
+    """
+    # bovenliggende cel leeg houden
+    top_cel = ws_sheet.cell(pv_row - 1, col)
+    top_cel.value = ""
+    top_cel.alignment = center_align
+    top_cel.border = thin_border
+
+    # naamcel leeg en blauw
+    cel = ws_sheet.cell(pv_row, col)
+    cel.value = ""
+    cel.alignment = center_align
+    cel.border = thin_border
+    cel.fill = naam_leeg_fill_pp2
+
+
+def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
+    """
+    Geldige korte pauze:
+    - student werkt dat uur
+    - niet in eerste of laatste werkuur
+    """
+    header = ws_sheet.cell(1, col).value
+    uur = parse_header_uur(header)
+    if uur is None:
+        return False
+
+    werk_uren = pp2_get_student_work_hours(naam)
+    if len(werk_uren) < 4:
+        return False
+
+    if uur not in werk_uren:
+        return False
+
+    if uur == werk_uren[0] or uur == werk_uren[-1]:
+        return False
+
+    return True
+
+
+def pp2_write_short_break_for_pv(ws_sheet, pv_row, col, naam):
+    """
+    Schrijf een korte pauze voor een pauzevlinder zelf:
+    - bovenliggende cel leeg
+    - naam paars
+    """
+    top_cel = ws_sheet.cell(pv_row - 1, col)
+    top_cel.value = ""
+    top_cel.alignment = center_align
+    top_cel.border = thin_border
+
+    cel = ws_sheet.cell(pv_row, col)
+    cel.value = naam
+    cel.alignment = center_align
+    cel.border = thin_border
+    cel.fill = lichtpaars_fill
+
+
+# 1) Tellen hoeveel kwartierblokjes nog leeg zijn
+pp2_remaining_empty_quarters = pp2_count_remaining_empty_quarters(
+    ws_sheet=ws_pp2,
+    pv_rows=pv_rows_pp2,
+    pauze_cols=pauze_cols_pp2
+)
+
+# 2) Tellen hoeveel korte pauzes nog gegeven moeten worden
+pp2_korte_pauze_gerechtigden = pp2_korte_pauze_nodig_namen()
+
+pp2_remaining_short_breaks_needed = 0
+for naam in pp2_korte_pauze_gerechtigden:
+    if not pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+        pp2_remaining_short_breaks_needed += 1
+
+# 3) Open spots berekenen
+pp2_open_spots_count = pp2_remaining_empty_quarters - pp2_remaining_short_breaks_needed
+if pp2_open_spots_count < 0:
+    pp2_open_spots_count = 0
+
+# 4) Open spots eerlijk verdelen
+#    Ronde 1: eerstvolgende lege plek
+#    Ronde 2: laatste lege plek
+#    Ronde 3: weer eerstvolgende
+#    ...
+pp2_open_spots = set()
+
+ronde_nummer = 0
+while len(pp2_open_spots) < pp2_open_spots_count:
+    iets_geplaatst_deze_ronde = False
+
+    # even ronde-index => vooraan beginnen
+    # oneven ronde-index => achteraan beginnen
+    vooraan = (ronde_nummer % 2 == 0)
+
+    for _pv, pv_row in pv_rows_pp2:
+        if len(pp2_open_spots) >= pp2_open_spots_count:
+            break
+
+        lege_cols = pp2_get_empty_cols_for_pv_row(
+            ws_sheet=ws_pp2,
+            pv_row=pv_row,
+            pauze_cols=pauze_cols_pp2,
+            open_spots_set=pp2_open_spots
+        )
+
+        if not lege_cols:
+            continue
+
+        gekozen_col = lege_cols[0] if vooraan else lege_cols[-1]
+
+        pp2_open_spots.add((pv_row, gekozen_col))
+        pp2_mark_open_spot(ws_pp2, pv_row, gekozen_col)
+        iets_geplaatst_deze_ronde = True
+
+    if not iets_geplaatst_deze_ronde:
+        break
+
+    ronde_nummer += 1
+
+# 5) Daarna enkel de korte pauzes van de pauzevlinders zelf invullen
+#    - enkel in eigen rij
+#    - in het eerstvolgende geldige kwartier
+#    - open spots overslaan
+pp2_pv_short_breaks_placed = []
+
+for pv, pv_row in pv_rows_pp2:
+    naam = pv["naam"]
+
+    # alleen als deze pauzevlinder nog een korte pauze nodig heeft
+    if pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+        continue
+
+    if student_totalen.get(naam, 0) < 4:
+        continue
+
+    geplaatst = False
+
+    for col in pauze_cols_pp2:
+        # open spot overslaan
+        if (pv_row, col) in pp2_open_spots:
+            continue
+
+        # moet leeg zijn
+        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+            continue
+
+        # moet een geldig kwartier zijn voor deze student
+        if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+            continue
+
+        pp2_write_short_break_for_pv(
+            ws_sheet=ws_pp2,
+            pv_row=pv_row,
+            col=col,
+            naam=naam
+        )
+
+        pp2_pv_short_breaks_placed.append({
+            "naam": naam,
+            "tijd": ws_pp2.cell(1, col).value
+        })
+
+        geplaatst = True
+        break
+
+
+
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 # -----------------------------
 # Feedback optie 2
@@ -3652,6 +3890,33 @@ if pp2_lange_werkers_random:
 else:
     ws_feedback2.cell(row_fb2, 1, "Geen lange werkers gevonden")
     row_fb2 += 1
+
+
+row_fb2 += 2
+ws_feedback2.cell(row_fb2, 1, "Lege kwartierblokjes na stap 2:")
+ws_feedback2.cell(row_fb2, 2, pp2_remaining_empty_quarters)
+row_fb2 += 1
+
+ws_feedback2.cell(row_fb2, 1, "Nog te geven korte pauzes:")
+ws_feedback2.cell(row_fb2, 2, pp2_remaining_short_breaks_needed)
+row_fb2 += 1
+
+ws_feedback2.cell(row_fb2, 1, "Aantal open spots:")
+ws_feedback2.cell(row_fb2, 2, pp2_open_spots_count)
+row_fb2 += 2
+
+ws_feedback2.cell(row_fb2, 1, "Korte pauzes van pauzevlinders geplaatst:")
+row_fb2 += 1
+
+if pp2_pv_short_breaks_placed:
+    for item in pp2_pv_short_breaks_placed:
+        ws_feedback2.cell(row_fb2, 1, item["naam"])
+        ws_feedback2.cell(row_fb2, 2, item["tijd"])
+        row_fb2 += 1
+else:
+    ws_feedback2.cell(row_fb2, 1, "Geen")
+    row_fb2 += 1
+
 
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
