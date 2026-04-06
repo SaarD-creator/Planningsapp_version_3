@@ -4719,29 +4719,51 @@ for uur in sorted(wissels_per_uur.keys()):
         cell.border = thin_border
     current_row += 1
 
-    # Wissels
+    # -----------------------------
+    # Voorbereiding: startpunten half-automatisch bepalen
+    # -----------------------------
+    half_edges = [x for x in wissels_per_uur[uur] if x["type"] == "half-automatisch"]
+
+    incoming_map = defaultdict(list)
+    for e in half_edges:
+        incoming_map[e["naar"]].append(e)
+
+    # -----------------------------
+    # Wissels per uur
+    # -----------------------------
     for w in wissels_per_uur[uur]:
         ws_wissels.cell(current_row, 1, w["naam"])
         ws_wissels.cell(current_row, 2, w["van"])
         ws_wissels.cell(current_row, 3, w["naar"])
         ws_wissels.cell(current_row, 4, w["type"])
 
+        # Basis layout
         for col_idx in range(1, 5):
             cell = ws_wissels.cell(current_row, col_idx)
             cell.alignment = center_align
             cell.border = thin_border
 
-        # Enkel kolom B en C kleuren
+        # -----------------------------
+        # Kleuren logica
+        # -----------------------------
         if w["type"] == "volledig automatisch":
             ws_wissels.cell(current_row, 2).fill = green_fill
             ws_wissels.cell(current_row, 3).fill = green_fill
+
         elif w["type"] == "half-automatisch":
-            ws_wissels.cell(current_row, 2).fill = yellow_fill
-            ws_wissels.cell(current_row, 3).fill = yellow_fill
+            # startpunt detectie: niemand komt binnen op jouw "van"
+            is_start = len(incoming_map.get(w["van"], [])) == 0
+
+            if not is_start:
+                ws_wissels.cell(current_row, 2).fill = yellow_fill
+                ws_wissels.cell(current_row, 3).fill = yellow_fill
+            # start blijft wit
+
+        # normaal = geen kleur
 
         current_row += 1
 
-    # 1 lege rij tussen uren
+    # Lege rij tussen uren
     current_row += 1
 
 # -----------------------------
