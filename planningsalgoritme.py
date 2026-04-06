@@ -3285,6 +3285,198 @@ if pv_rows_pp2:
                     "reden": "geen geldige naastliggende plek in hetzelfde halfuur"
                 })
 
+
+# -----------------------------
+# STAP 2 PP optie 2:
+# lange pauzes invullen van links naar rechts,
+# per halfuurblok en per pauzevlinder
+# -----------------------------
+
+lichtgroen_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+
+def pp2_heeft_al_lange_pauze(naam, ws_sheet, pv_rows, pauze_cols):
+    """
+    Check of naam al ergens een dubbele blok heeft in PP optie 2.
+    """
+    for _pv, pv_row in pv_rows:
+        for idx in range(len(pauze_cols) - 1):
+            col1 = pauze_cols[idx]
+            col2 = pauze_cols[idx + 1]
+            if (
+                ws_sheet.cell(pv_row, col1).value == naam and
+                ws_sheet.cell(pv_row, col2).value == naam
+            ):
+                return True
+    return False
+
+def pp2_lange_werkers_lijst():
+    """
+    Zelfde logica als in je originele script:
+    - > 6 uur gewerkt
+    - of '-18' in naam en > 4 uur gewerkt
+    - inclusief pauzevlinders indien ze eraan voldoen
+    """
+    result = []
+    al_toegevoegd = set()
+
+    for s in studenten:
+        naam = s["naam"]
+        gewerkte_uren = student_totalen.get(naam, 0)
+
+        if (
+            gewerkte_uren > 6
+            or ("-18" in str(naam) and gewerkte_uren > 4)
+        ):
+            if naam not in al_toegevoegd:
+                result.append(naam)
+                al_toegevoegd.add(naam)
+
+    return result
+
+def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
+    """
+    Een lange pauze mag alleen als:
+    - beide kwartieren samen een half uur vormen
+    - student werkt in beide kwartieren
+    - niet in eerste of laatste werkuur
+    """
+    header1 = ws_sheet.cell(1, col1).value
+    header2 = ws_sheet.cell(1, col2).value
+
+    mins1 = pp2_parse_kwartier_header(header1)
+    mins2 = pp2_parse_kwartier_header(header2)
+
+    if mins1 is None or mins2 is None:
+        return False
+
+    # Moet exact aangrenzend zijn
+    if mins2 - mins1 != 15:
+        return False
+
+    # Moet in hetzelfde halfuur liggen
+    if (mins1 // 30) != (mins2 // 30):
+        return False
+
+    werk_uren = pp2_get_student_work_hours(naam)
+    if not werk_uren:
+        return False
+
+    uur1 = parse_header_uur(header1)
+    uur2 = parse_header_uur(header2)
+
+    if uur1 is None or uur2 is None:
+        return False
+
+    if uur1 not in werk_uren or uur2 not in werk_uren:
+        return False
+
+    eerste_uur = werk_uren[0]
+    laatste_uur = werk_uren[-1]
+
+    # Geen pauze in eerste of laatste werkuur
+    if uur1 == eerste_uur or uur1 == laatste_uur:
+        return False
+    if uur2 == eerste_uur or uur2 == laatste_uur:
+        return False
+
+    return True
+
+def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam):
+    """
+    Schrijf een lange pauze van 2 kwartieren:
+    - attractie erboven
+    - naam in beide vakjes
+    - groen kleuren
+    """
+    for col in [col1, col2]:
+        header = ws_sheet.cell(1, col).value
+        uur = parse_header_uur(header)
+
+        attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
+
+        info_cel = ws_sheet.cell(pv_row - 1, col)
+        info_cel.value = attr if attr else ""
+        info_cel.alignment = center_align
+        info_cel.border = thin_border
+
+        naam_cel = ws_sheet.cell(pv_row, col)
+        naam_cel.value = naam
+        naam_cel.alignment = center_align
+        naam_cel.border = thin_border
+        naam_cel.fill = lichtgroen_fill
+
+def pp2_halfuur_blokken(pauze_cols, ws_sheet):
+    """
+    Geeft alle geldige halfuurblokken terug, van links naar rechts:
+    bv. (12u,12u15), (12u30,12u45), ...
+    """
+    blokken = []
+    idx = 0
+    while idx < len(pauze_cols) - 1:
+        col1 = pauze_cols[idx]
+        col2 = pauze_cols[idx + 1]
+
+        mins1 = pp2_parse_kwartier_header(ws_sheet.cell(1, col1).value)
+        mins2 = pp2_parse_kwartier_header(ws_sheet.cell(1, col2).value)
+
+        if mins1 is not None and mins2 is not None:
+            if mins2 - mins1 == 15 and (mins1 // 30) == (mins2 // 30):
+                blokken.append((col1, col2))
+
+        idx += 2
+
+    return blokken
+
+# 1) Maak de random vaste volgorde voor lange werkers
+pp2_lange_werkers_random = pp2_lange_werkers_lijst()
+random.shuffle(pp2_lange_werkers_random)
+
+# 2) Houd bij wie al een lange pauze kreeg in PP optie 2
+pp2_lange_pauze_ontvangers = set()
+for naam in pp2_lange_werkers_random:
+    if pp2_heeft_al_lange_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+        pp2_lange_pauze_ontvangers.add(naam)
+
+# 3) Bouw de halfuurblokken links -> rechts
+pp2_blokken = pp2_halfuur_blokken(pauze_cols_pp2, ws_pp2)
+
+# 4) Loop per halfuurblok, en daarin per pauzevlinder
+for col1, col2 in pp2_blokken:
+    for pv, pv_name_row in pv_rows_pp2:
+        # dit halfuur moet volledig leeg zijn voor deze pauzevlinder
+        if ws_pp2.cell(pv_name_row, col1).value not in [None, ""]:
+            continue
+        if ws_pp2.cell(pv_name_row, col2).value not in [None, ""]:
+            continue
+
+        toegewezen_naam = None
+        pv_naam = pv["naam"]
+
+        # a) Als de pauzevlinder zelf lange pauze verdient en nog geen lange pauze heeft:
+        if (
+            pv_naam in pp2_lange_werkers_random and
+            pv_naam not in pp2_lange_pauze_ontvangers and
+            pp2_is_valid_long_break_for_student(pv_naam, col1, col2, ws_pp2)
+        ):
+            toegewezen_naam = pv_naam
+
+        else:
+            # b) Neem eerste nog beschikbare student uit de vaste random lijst
+            for kandidaat in pp2_lange_werkers_random:
+                if kandidaat in pp2_lange_pauze_ontvangers:
+                    continue
+                if pp2_is_valid_long_break_for_student(kandidaat, col1, col2, ws_pp2):
+                    toegewezen_naam = kandidaat
+                    break
+
+        # c) Indien iemand gevonden: schrijf weg
+        if toegewezen_naam:
+            pp2_write_long_break(ws_pp2, pv_name_row, col1, col2, toegewezen_naam)
+            pp2_lange_pauze_ontvangers.add(toegewezen_naam)
+
+
+
+#FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 # -----------------------------
 # Feedback optie 2
 # -----------------------------
@@ -3388,7 +3580,18 @@ for row in ws_feedback2.iter_rows():
         )
 
 
+row_fb2 += 2
+ws_feedback2.cell(row_fb2, 1, "Random volgorde lange werkers:")
+row_fb2 += 1
 
+if pp2_lange_werkers_random:
+    for i, naam in enumerate(pp2_lange_werkers_random, start=1):
+        ws_feedback2.cell(row_fb2, 1, i)
+        ws_feedback2.cell(row_fb2, 2, naam)
+        row_fb2 += 1
+else:
+    ws_feedback2.cell(row_fb2, 1, "Geen lange werkers gevonden")
+    row_fb2 += 1
 
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
