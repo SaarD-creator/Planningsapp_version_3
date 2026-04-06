@@ -2925,7 +2925,7 @@ ws_pp2 = wb_out.create_sheet(title="PP optie 2")
 ws_fb2 = wb_out.create_sheet(title="Feedback optie 2")
 
 # 2. Setup: Kopieer urenrij van de eerste pauzeplanning
-# We gebruiken de uren_rij1 en stijlen die al in je script staan
+# We gebruiken uren_rij1 en stijlen die al gedefinieerd zijn in je script [3, 4]
 for col_idx, uur in enumerate(uren_rij1, start=2):
     c = ws_pp2.cell(1, col_idx, uur)
     c.fill = light_fill
@@ -2935,33 +2935,29 @@ for col_idx, uur in enumerate(uren_rij1, start=2):
 ws_pp2.cell(1, 1, vandaag).fill = light_fill
 ws_pp2.cell(1, 1).border = thin_border
 
-# Maak een lijst van de PV-rijen voor dit nieuwe blad
-pp2_pv_rows = []
-rij_cursor = 2
-for pv_idx, pv in enumerate(selected, start=1):
-    # Naam van de Pauzevlinder in kolom A
-    title_cell = ws_pp2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}")
+# Maak een lijst van de PV-rijen (rekening houdend met attractierij erboven)
+pp2_pv_info = []
+rij_cursor = 3 # Rij 1=Uren, Rij 2=Attractie PV1, Rij 3=Naam PV1
+for idx, pv in enumerate(selected, start=1):
+    # Titel in kolom A op de 'naam-rij'
+    title_cell = ws_pp2.cell(rij_cursor, 1, f"Pauzevlinder {idx}")
     title_cell.font = Font(bold=True)
     title_cell.fill = light_fill
     title_cell.border = thin_border
     
-    # Sla rij-index op voor later
-    pp2_pv_rows.append({"pv": pv, "row": rij_cursor})
-    rij_cursor += 1
+    pp2_pv_info.append({"naam": pv["naam"], "row": rij_cursor})
+    rij_cursor += 2 # Spring over naar de volgende set van 2 rijen
 
-# 3. Selectie: Vroeg-stoppende werkers (minstens 4u werk, max tot 15u)
+# 3. Selectie: Vroeg-stoppende werkers (minstens 4u werk, max tot 15u) [5]
 vroeg_stoppers = []
 for s in studenten:
-    # Gebruik de helper uit je script om echte werkuren op te halen
     u = get_student_work_hours(s["naam"]) 
     if len(u) >= 4 and max(u, default=0) <= 15:
-        # Optioneel: check of student zelf geen PV is
-        if not s.get("is_pauzevlinder"):
-            vroeg_stoppers.append(s)
+        vroeg_stoppers.append(s)
 
 # 4. Inplannen volgens Stap 1 logica
 pv_pointer = 0
-last_col_assigned = None
+last_placed_col = None
 
 for i, student in enumerate(vroeg_stoppers):
     naam = student["naam"]
@@ -2969,60 +2965,62 @@ for i, student in enumerate(vroeg_stoppers):
     if not werk_uren:
         continue
     
-    # FIX: Correcte definitie van verboden uren (eerste en laatste uur)
-    if len(werk_uren) > 2:
-        verboden = {werk_uren, werk_uren[-1]}
-    else:
-        verboden = set(werk_uren)
+    # FIX: Gebruik indices  en [-1] om de TypeError te voorkomen
+    verboden = {werk_uren, werk_uren[-1]}
 
-    # Bepaal doel-pauzevlinder (gaat per 2 studenten naar de volgende)
-    current_pv_info = pp2_pv_rows[pv_pointer % len(pp2_pv_rows)]
+    # Bepaal doel-pauzevlinder (gaat per 2 studenten naar de volgende rij)
+    current_pv_row = pp2_pv_info[pv_pointer % len(pp2_pv_info)]["row"]
     
     final_col = None
     if i % 2 == 0:
         # Eerste student van het paar: midden van de shift
         mid_uur = werk_uren[len(werk_uren) // 2]
-        # Zoek eerste kolom van dat uur (meestal :00 of :15)
+        # Zoek bijbehorende kolom en mik op het half uur (:30) indien mogelijk
         for col in pauze_cols:
-            if parse_header_uur(ws_pp2.cell(1, col).value) == mid_uur:
-                # We proberen op :30 te mikken voor het 'midden'
-                final_col = col + 2 if (col + 2) in pauze_cols else col
-                break
+            header = str(ws_pp2.cell(1, col).value)
+            if parse_header_uur(header) == mid_uur:
+                if "30" in header: # Voorkeur voor midden van het uur
+                    final_col = col
+                    break
+        if not final_col: # Fallback naar eerste beschikbare kwartier van dat uur
+            for col in pauze_cols:
+                if parse_header_uur(ws_pp2.cell(1, col).value) == mid_uur:
+                    final_col = col
+                    break
     else:
         # Tweede student van het paar: direct naast de vorige (zelfde halve uur)
-        if last_col_assigned:
-            final_col = last_col_assigned + 1
+        if last_placed_col:
+            final_col = last_placed_col + 1
 
-    # Controleer of de plek geldig is
+    # Controleer of de plek geldig is volgens jouw regels
     if final_col and final_col in pauze_cols:
-        gekozen_header = ws_pp2.cell(1, final_col).value
-        gekozen_uur = parse_header_uur(gekozen_header)
+        gekozen_uur = parse_header_uur(ws_pp2.cell(1, final_col).value)
         
         if gekozen_uur in werk_uren and gekozen_uur not in verboden:
-            # Naam invullen
-            cel = ws_pp2.cell(current_pv_info["row"], final_col, naam)
+            # Naam invullen op de naam-rij
+            cel = ws_pp2.cell(current_pv_row, final_col, naam)
             cel.fill = lichtpaars_fill
             cel.alignment = center_align
             cel.border = thin_border
             
-            # Attractienaam erboven (rij - 1)
+            # Attractienaam erboven invullen (current_row - 1) [1, 6]
             attr = vind_attractie_op_uur(naam, gekozen_uur)
             if attr:
-                ws_pp2.cell(current_pv_info["row"] - 1, final_col, attr).border = thin_border
+                attr_cel = ws_pp2.cell(current_pv_row - 1, final_col, attr)
+                attr_cel.alignment = center_align
+                attr_cel.border = thin_border
             
-            last_col_assigned = final_col
+            last_placed_col = final_col
     
-    # Na elke 2 studenten (of als plaatsen mislukte) pointer verhogen
+    # Na elke 2 studenten naar de volgende pauzevlinder gaan
     if i % 2 == 1:
         pv_pointer += 1
-        last_col_assigned = None
+        last_placed_col = None
 
 # Opmaak kolommen
 ws_pp2.column_dimensions['A'].width = 20
 for col in range(2, ws_pp2.max_column + 1):
     ws_pp2.column_dimensions[get_column_letter(col)].width = 12
-
-
 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
