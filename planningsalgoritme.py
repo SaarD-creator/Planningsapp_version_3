@@ -1074,8 +1074,340 @@ for uur in sorted(open_uren):
 output = BytesIO()
 
 
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+
+# =============================
+# DEEL 2B: PP optie 2 - layout + stap 1
+# =============================
+
+from datetime import datetime, timedelta
+from collections import defaultdict
+
+# ---------------------------------
+# Helpers voor PP optie 2
+# ---------------------------------
+def build_pauze_kwartieren(required_pauze_hours, open_uren):
+    kwartieren = []
+    if required_pauze_hours:
+        start_uur = min(required_pauze_hours)
+        eind_uur = max(required_pauze_hours)
+        tijd = datetime(2020, 1, 1, start_uur, 0)
+        laatste_pauze = datetime(2020, 1, 1, eind_uur, 30)
+        while tijd <= laatste_pauze:
+            kwartieren.append(
+                f"{tijd.hour}u" if tijd.minute == 0 else f"{tijd.hour}u{tijd.minute:02d}"
+            )
+            tijd += timedelta(minutes=15)
+    else:
+        for uur in sorted(open_uren):
+            kwartieren.append(f"{uur}u")
+    return kwartieren
 
 
+def kwartier_header_to_minutes(header):
+    """
+    '12u' -> 720
+    '12u15' -> 735
+    '12u30' -> 750
+    '12u45' -> 765
+    """
+    s = str(header).strip().lower()
+    if "u" not in s:
+        return None
+    uur, rest = s.split("u", 1)
+    uur = int(uur)
+    minuten = int(rest) if rest else 0
+    return uur * 60 + minuten
+
+
+def get_student_work_hours_from_planning(naam, ws_planning):
+    uren = set()
+    for col in range(2, ws_planning.max_column + 1):
+        header = ws_planning.cell(1, col).value
+        uur = parse_header_uur(header)
+        if uur is None:
+            continue
+        for row in range(2, ws_planning.max_row + 1):
+            if ws_planning.cell(row, col).value == naam:
+                uren.add(uur)
+                break
+    return sorted(uren)
+
+
+def is_valid_short_break_col_for_student(col, naam, ws_sheet):
+    """
+    Geen pauze in eerste of laatste werkuur.
+    """
+    werk_uren = get_student_work_hours_from_planning(naam, ws_out)
+    if len(werk_uren) < 4:
+        return False
+
+    header = ws_sheet.cell(1, col).value
+    pauze_uur = parse_header_uur(header)
+    if pauze_uur is None:
+        return False
+
+    eerste_uur = werk_uren[0]
+    laatste_uur = werk_uren[-1]
+
+    if pauze_uur == eerste_uur or pauze_uur == laatste_uur:
+        return False
+
+    return True
+
+
+def candidate_cols_for_student_pp2(naam, ws_sheet, pauze_cols):
+    """
+    Geldige kwartieren voor deze student binnen zijn shift,
+    behalve eerste/laatste werkuur.
+    """
+    werk_uren = get_student_work_hours_from_planning(naam, ws_out)
+    if len(werk_uren) < 4:
+        return []
+
+    eerste_uur = werk_uren[0]
+    laatste_uur = werk_uren[-1]
+
+    candidates = []
+    for col in pauze_cols:
+        header = ws_sheet.cell(1, col).value
+        pauze_uur = parse_header_uur(header)
+        if pauze_uur is None:
+            continue
+
+        if pauze_uur in werk_uren and pauze_uur != eerste_uur and pauze_uur != laatste_uur:
+            candidates.append(col)
+
+    return candidates
+
+
+def choose_middle_col(cols, ws_sheet):
+    """
+    Neem het kwartier dat het dichtst bij het midden van de geldige kandidaatkolommen ligt.
+    Bij een even aantal nemen we de linkse van de twee middenkandidaten.
+    """
+    if not cols:
+        return None
+    return cols[(len(cols) - 1) // 2]
+
+
+def choose_adjacent_same_halfhour(base_col, student_name, ws_sheet, pauze_cols):
+    """
+    Tweede student moet verplicht naast de eerste pauze staan,
+    in hetzelfde halfuur. Dus:
+    - 12u30 naast 12u45
+    - 12u45 naast 12u30
+    - 12u00 naast 12u15
+    - 12u15 naast 12u00
+    Maar alleen als dat volgens de regels mag.
+    """
+    if base_col not in pauze_cols:
+        return None
+
+    idx = pauze_cols.index(base_col)
+    base_header = ws_sheet.cell(1, base_col).value
+    base_minutes = kwartier_header_to_minutes(base_header)
+    if base_minutes is None:
+        return None
+
+    kandidaten = []
+
+    # buur links
+    if idx - 1 >= 0:
+        left_col = pauze_cols[idx - 1]
+        left_minutes = kwartier_header_to_minutes(ws_sheet.cell(1, left_col).value)
+        if left_minutes is not None and abs(left_minutes - base_minutes) == 15:
+            if (base_minutes // 30) == (left_minutes // 30):
+                kandidaten.append(left_col)
+
+    # buur rechts
+    if idx + 1 < len(pauze_cols):
+        right_col = pauze_cols[idx + 1]
+        right_minutes = kwartier_header_to_minutes(ws_sheet.cell(1, right_col).value)
+        if right_minutes is not None and abs(right_minutes - base_minutes) == 15:
+            if (base_minutes // 30) == (right_minutes // 30):
+                kandidaten.append(right_col)
+
+    # Enkel toegelaten als leeg én niet in eerste/laatste werkuur
+    for col in kandidaten:
+        if ws_sheet.cell(base_row_lookup_pp2[student_name], col).value not in [None, ""]:
+            continue
+        if is_valid_short_break_col_for_student(col, student_name, ws_sheet):
+            return col
+
+    return None
+
+
+def write_break_pp2(ws_sheet, pv_row, col, student_name):
+    """
+    Schrijf enkel de naam in de naamrij.
+    Vak erboven laten we voorlopig leeg voor stap 1.
+    """
+    cel = ws_sheet.cell(pv_row, col)
+    cel.value = student_name
+    cel.alignment = center_align
+    cel.border = thin_border
+    if student_name in student_kleuren:
+        cel.fill = PatternFill(start_color=student_kleuren[student_name], fill_type="solid")
+
+
+# ---------------------------------
+# Werkblad PP optie 2 aanmaken
+# ---------------------------------
+ws_pauze2 = wb_out.create_sheet(title="PP optie 2")
+
+light_fill_pp2 = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+uren_rij1_pp2 = build_pauze_kwartieren(required_pauze_hours, open_uren)
+
+# header rij
+for col_idx, uur in enumerate(uren_rij1_pp2, start=2):
+    c = ws_pauze2.cell(1, col_idx, uur)
+    c.fill = light_fill_pp2
+    c.alignment = center_align
+    c.border = thin_border
+
+a1_pp2 = ws_pauze2.cell(1, 1, vandaag)
+a1_pp2.font = Font(bold=True)
+a1_pp2.fill = light_fill_pp2
+a1_pp2.alignment = center_align
+a1_pp2.border = thin_border
+
+# pauzevlinders layout identiek aan PP1
+rij_out_pp2 = 2
+pv_rows_pp2 = []   # lijst van (pv_dict, naam_rij)
+for pv_idx, pv in enumerate(selected, start=1):
+    title_cell = ws_pauze2.cell(rij_out_pp2, 1, f"Pauzevlinder {pv_idx}")
+    title_cell.font = Font(bold=True)
+    title_cell.fill = light_fill_pp2
+    title_cell.alignment = center_align
+    title_cell.border = thin_border
+
+    naam_cel = ws_pauze2.cell(rij_out_pp2 + 1, 1, pv["naam"])
+    naam_cel.fill = light_fill_pp2
+    naam_cel.alignment = center_align
+    naam_cel.border = thin_border
+
+    pv_rows_pp2.append((pv, rij_out_pp2 + 1))
+    rij_out_pp2 += 3
+
+# breedtes
+max_len_colA_pp2 = 0
+for row in range(1, ws_pauze2.max_row + 1):
+    val = ws_pauze2.cell(row, 1).value
+    if val:
+        max_len_colA_pp2 = max(max_len_colA_pp2, len(str(val)))
+ws_pauze2.column_dimensions['A'].width = max(12, max_len_colA_pp2 + 2)
+
+for col in range(2, len(uren_rij1_pp2) + 2):
+    ws_pauze2.column_dimensions[get_column_letter(col)].width = 10
+
+# lijst kwartierkolommen
+pauze_cols_pp2 = []
+for col in range(2, ws_pauze2.max_column + 1):
+    header = ws_pauze2.cell(1, col).value
+    if header and "u" in str(header):
+        pauze_cols_pp2.append(col)
+
+# mapping studentnaam -> eigen rij in PP2
+base_row_lookup_pp2 = {}
+for pv, pv_row in pv_rows_pp2:
+    base_row_lookup_pp2[pv["naam"]] = pv_row
+
+# lichtblauw voor lege naamcellen, zodat blad niet spierwit rondzweeft
+naam_leeg_fill_pp2 = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
+for pv, pv_row in pv_rows_pp2:
+    for col in pauze_cols_pp2:
+        cel = ws_pauze2.cell(pv_row, col)
+        cel.alignment = center_align
+        cel.border = thin_border
+        if cel.value in [None, ""]:
+            cel.fill = naam_leeg_fill_pp2
+        # bovenliggende rij ook borders geven
+        boven = ws_pauze2.cell(pv_row - 1, col)
+        boven.alignment = center_align
+        boven.border = thin_border
+
+# ---------------------------------
+# STAP 1 voor PP optie 2
+# Vroege stoppers: tot 15u of vroeger, minstens 4 uur werk
+# ---------------------------------
+
+# interpretatie:
+# max(werk_uren) <= 15  -> "tot 15u of vroeger"
+vroege_stoppers = []
+for s in studenten:
+    naam = s["naam"]
+    if naam in [pv["naam"] for pv in selected]:
+        continue
+
+    werk_uren = get_student_work_hours_from_planning(naam, ws_out)
+    if len(werk_uren) < 4:
+        continue
+    if not werk_uren:
+        continue
+
+    if max(werk_uren) <= 15:
+        vroege_stoppers.append({
+            "naam": naam,
+            "werk_uren": werk_uren
+        })
+
+# Sorteer op vroegste einduur, daarna naam
+vroege_stoppers.sort(key=lambda x: (max(x["werk_uren"]), x["naam"]))
+
+# groepeer per 2 op dezelfde pauzevlinder:
+# 1-2 bij pv1, 3-4 bij pv2, 5-6 bij pv3, ...
+for idx, item in enumerate(vroege_stoppers):
+    naam = item["naam"]
+
+    if not pv_rows_pp2:
+        break
+
+    pv_index = min(idx // 2, len(pv_rows_pp2) - 1)
+    pv, pv_row = pv_rows_pp2[pv_index]
+
+    candidate_cols = candidate_cols_for_student_pp2(naam, ws_pauze2, pauze_cols_pp2)
+    if not candidate_cols:
+        continue
+
+    # oneven index binnen duo: eerste van het duo -> midden van shift
+    if idx % 2 == 0:
+        gekozen_col = choose_middle_col(candidate_cols, ws_pauze2)
+        if gekozen_col is not None and ws_pauze2.cell(pv_row, gekozen_col).value in [None, ""]:
+            write_break_pp2(ws_pauze2, pv_row, gekozen_col, naam)
+
+            # onthoud basispauze voor het duo
+            pv_rows_pp2[pv_index] = ({
+                **pv,
+                "_basis_col_pp2": gekozen_col
+            }, pv_row)
+
+    # even index binnen duo: tweede van het duo -> verplicht naast de eerste
+    else:
+        basis_col = pv.get("_basis_col_pp2")
+        gekozen_col = None
+
+        if basis_col is not None:
+            gekozen_col = choose_adjacent_same_halfhour(
+                basis_col=basis_col,
+                student_name=naam,
+                ws_sheet=ws_pauze2,
+                pauze_cols=pauze_cols_pp2
+            )
+
+        # alleen invullen als "naast de eerste" kan
+        if gekozen_col is not None and ws_pauze2.cell(pv_row, gekozen_col).value in [None, ""]:
+            write_break_pp2(ws_pauze2, pv_row, gekozen_col, naam)
+
+
+
+
+
+
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 
 #oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
 
@@ -2875,6 +3207,50 @@ else:
     vinkje_cel.font = Font(bold=True, color="006100")
     row_fb += 1
 
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+
+
+# =============================
+# FEEDBACK SHEET - OPTIE 2
+# =============================
+ws_feedback2 = wb_out.create_sheet("Feedback optie 2")
+row_fb2 = 1
+
+ws_feedback2.cell(row_fb2, 1, "PP optie 2 - huidig stadium")
+ws_feedback2.cell(row_fb2, 1).font = Font(bold=True)
+row_fb2 += 2
+
+ws_feedback2.cell(row_fb2, 1, "Uitgevoerd:")
+row_fb2 += 1
+ws_feedback2.cell(row_fb2, 1, "- Layout van PP optie 2 aangemaakt")
+row_fb2 += 1
+ws_feedback2.cell(row_fb2, 1, "- Stap 1 voor vroege stoppers (tot 15u of vroeger) toegepast")
+row_fb2 += 2
+
+ws_feedback2.cell(row_fb2, 1, "Nog niet uitgevoerd:")
+row_fb2 += 1
+ws_feedback2.cell(row_fb2, 1, "- Korte werkdagen volledig volgens optie 2-logica")
+row_fb2 += 1
+ws_feedback2.cell(row_fb2, 1, "- Lange werkdagen volgens de nieuwe stappen")
+row_fb2 += 2
+
+ws_feedback2.cell(row_fb2, 1, "Vroege stoppers die in stap 1 bekeken werden:")
+row_fb2 += 1
+
+if vroege_stoppers:
+    for item in vroege_stoppers:
+        ws_feedback2.cell(row_fb2, 1, item["naam"])
+        ws_feedback2.cell(row_fb2, 2, f"werkuren: {item['werk_uren']}")
+        row_fb2 += 1
+else:
+    ws_feedback2.cell(row_fb2, 1, "Geen")
+
+
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+
+
 
 ##### EXTRA INFO TOEVOEGEN AAN PAUZEPLANNING (A12 e.v.)
 ##### -------------------------------------------------------------
@@ -2914,369 +3290,6 @@ output.seek(0)  # Zorg dat lezen vanaf begin kan
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWww
 #------------------------------------------------------------------------------------------------------------------------
-
-# =============================
-# DEEL 2B: PP optie 2 - layout + stap 1
-# =============================
-
-from datetime import datetime, timedelta
-from collections import defaultdict
-
-# ---------------------------------
-# Helpers voor PP optie 2
-# ---------------------------------
-def build_pauze_kwartieren(required_pauze_hours, open_uren):
-    kwartieren = []
-    if required_pauze_hours:
-        start_uur = min(required_pauze_hours)
-        eind_uur = max(required_pauze_hours)
-        tijd = datetime(2020, 1, 1, start_uur, 0)
-        laatste_pauze = datetime(2020, 1, 1, eind_uur, 30)
-        while tijd <= laatste_pauze:
-            kwartieren.append(
-                f"{tijd.hour}u" if tijd.minute == 0 else f"{tijd.hour}u{tijd.minute:02d}"
-            )
-            tijd += timedelta(minutes=15)
-    else:
-        for uur in sorted(open_uren):
-            kwartieren.append(f"{uur}u")
-    return kwartieren
-
-
-def kwartier_header_to_minutes(header):
-    """
-    '12u' -> 720
-    '12u15' -> 735
-    '12u30' -> 750
-    '12u45' -> 765
-    """
-    s = str(header).strip().lower()
-    if "u" not in s:
-        return None
-    uur, rest = s.split("u", 1)
-    uur = int(uur)
-    minuten = int(rest) if rest else 0
-    return uur * 60 + minuten
-
-
-def get_student_work_hours_from_planning(naam, ws_planning):
-    uren = set()
-    for col in range(2, ws_planning.max_column + 1):
-        header = ws_planning.cell(1, col).value
-        uur = parse_header_uur(header)
-        if uur is None:
-            continue
-        for row in range(2, ws_planning.max_row + 1):
-            if ws_planning.cell(row, col).value == naam:
-                uren.add(uur)
-                break
-    return sorted(uren)
-
-
-def is_valid_short_break_col_for_student(col, naam, ws_sheet):
-    """
-    Geen pauze in eerste of laatste werkuur.
-    """
-    werk_uren = get_student_work_hours_from_planning(naam, ws_out)
-    if len(werk_uren) < 4:
-        return False
-
-    header = ws_sheet.cell(1, col).value
-    pauze_uur = parse_header_uur(header)
-    if pauze_uur is None:
-        return False
-
-    eerste_uur = werk_uren[0]
-    laatste_uur = werk_uren[-1]
-
-    if pauze_uur == eerste_uur or pauze_uur == laatste_uur:
-        return False
-
-    return True
-
-
-def candidate_cols_for_student_pp2(naam, ws_sheet, pauze_cols):
-    """
-    Geldige kwartieren voor deze student binnen zijn shift,
-    behalve eerste/laatste werkuur.
-    """
-    werk_uren = get_student_work_hours_from_planning(naam, ws_out)
-    if len(werk_uren) < 4:
-        return []
-
-    eerste_uur = werk_uren[0]
-    laatste_uur = werk_uren[-1]
-
-    candidates = []
-    for col in pauze_cols:
-        header = ws_sheet.cell(1, col).value
-        pauze_uur = parse_header_uur(header)
-        if pauze_uur is None:
-            continue
-
-        if pauze_uur in werk_uren and pauze_uur != eerste_uur and pauze_uur != laatste_uur:
-            candidates.append(col)
-
-    return candidates
-
-
-def choose_middle_col(cols, ws_sheet):
-    """
-    Neem het kwartier dat het dichtst bij het midden van de geldige kandidaatkolommen ligt.
-    Bij een even aantal nemen we de linkse van de twee middenkandidaten.
-    """
-    if not cols:
-        return None
-    return cols[(len(cols) - 1) // 2]
-
-
-def choose_adjacent_same_halfhour(base_col, student_name, ws_sheet, pauze_cols):
-    """
-    Tweede student moet verplicht naast de eerste pauze staan,
-    in hetzelfde halfuur. Dus:
-    - 12u30 naast 12u45
-    - 12u45 naast 12u30
-    - 12u00 naast 12u15
-    - 12u15 naast 12u00
-    Maar alleen als dat volgens de regels mag.
-    """
-    if base_col not in pauze_cols:
-        return None
-
-    idx = pauze_cols.index(base_col)
-    base_header = ws_sheet.cell(1, base_col).value
-    base_minutes = kwartier_header_to_minutes(base_header)
-    if base_minutes is None:
-        return None
-
-    kandidaten = []
-
-    # buur links
-    if idx - 1 >= 0:
-        left_col = pauze_cols[idx - 1]
-        left_minutes = kwartier_header_to_minutes(ws_sheet.cell(1, left_col).value)
-        if left_minutes is not None and abs(left_minutes - base_minutes) == 15:
-            if (base_minutes // 30) == (left_minutes // 30):
-                kandidaten.append(left_col)
-
-    # buur rechts
-    if idx + 1 < len(pauze_cols):
-        right_col = pauze_cols[idx + 1]
-        right_minutes = kwartier_header_to_minutes(ws_sheet.cell(1, right_col).value)
-        if right_minutes is not None and abs(right_minutes - base_minutes) == 15:
-            if (base_minutes // 30) == (right_minutes // 30):
-                kandidaten.append(right_col)
-
-    # Enkel toegelaten als leeg én niet in eerste/laatste werkuur
-    for col in kandidaten:
-        if ws_sheet.cell(base_row_lookup_pp2[student_name], col).value not in [None, ""]:
-            continue
-        if is_valid_short_break_col_for_student(col, student_name, ws_sheet):
-            return col
-
-    return None
-
-
-def write_break_pp2(ws_sheet, pv_row, col, student_name):
-    """
-    Schrijf enkel de naam in de naamrij.
-    Vak erboven laten we voorlopig leeg voor stap 1.
-    """
-    cel = ws_sheet.cell(pv_row, col)
-    cel.value = student_name
-    cel.alignment = center_align
-    cel.border = thin_border
-    if student_name in student_kleuren:
-        cel.fill = PatternFill(start_color=student_kleuren[student_name], fill_type="solid")
-
-
-# ---------------------------------
-# Werkblad PP optie 2 aanmaken
-# ---------------------------------
-ws_pauze2 = wb_out.create_sheet(title="PP optie 2")
-
-light_fill_pp2 = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-
-uren_rij1_pp2 = build_pauze_kwartieren(required_pauze_hours, open_uren)
-
-# header rij
-for col_idx, uur in enumerate(uren_rij1_pp2, start=2):
-    c = ws_pauze2.cell(1, col_idx, uur)
-    c.fill = light_fill_pp2
-    c.alignment = center_align
-    c.border = thin_border
-
-a1_pp2 = ws_pauze2.cell(1, 1, vandaag)
-a1_pp2.font = Font(bold=True)
-a1_pp2.fill = light_fill_pp2
-a1_pp2.alignment = center_align
-a1_pp2.border = thin_border
-
-# pauzevlinders layout identiek aan PP1
-rij_out_pp2 = 2
-pv_rows_pp2 = []   # lijst van (pv_dict, naam_rij)
-for pv_idx, pv in enumerate(selected, start=1):
-    title_cell = ws_pauze2.cell(rij_out_pp2, 1, f"Pauzevlinder {pv_idx}")
-    title_cell.font = Font(bold=True)
-    title_cell.fill = light_fill_pp2
-    title_cell.alignment = center_align
-    title_cell.border = thin_border
-
-    naam_cel = ws_pauze2.cell(rij_out_pp2 + 1, 1, pv["naam"])
-    naam_cel.fill = light_fill_pp2
-    naam_cel.alignment = center_align
-    naam_cel.border = thin_border
-
-    pv_rows_pp2.append((pv, rij_out_pp2 + 1))
-    rij_out_pp2 += 3
-
-# breedtes
-max_len_colA_pp2 = 0
-for row in range(1, ws_pauze2.max_row + 1):
-    val = ws_pauze2.cell(row, 1).value
-    if val:
-        max_len_colA_pp2 = max(max_len_colA_pp2, len(str(val)))
-ws_pauze2.column_dimensions['A'].width = max(12, max_len_colA_pp2 + 2)
-
-for col in range(2, len(uren_rij1_pp2) + 2):
-    ws_pauze2.column_dimensions[get_column_letter(col)].width = 10
-
-# lijst kwartierkolommen
-pauze_cols_pp2 = []
-for col in range(2, ws_pauze2.max_column + 1):
-    header = ws_pauze2.cell(1, col).value
-    if header and "u" in str(header):
-        pauze_cols_pp2.append(col)
-
-# mapping studentnaam -> eigen rij in PP2
-base_row_lookup_pp2 = {}
-for pv, pv_row in pv_rows_pp2:
-    base_row_lookup_pp2[pv["naam"]] = pv_row
-
-# lichtblauw voor lege naamcellen, zodat blad niet spierwit rondzweeft
-naam_leeg_fill_pp2 = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
-for pv, pv_row in pv_rows_pp2:
-    for col in pauze_cols_pp2:
-        cel = ws_pauze2.cell(pv_row, col)
-        cel.alignment = center_align
-        cel.border = thin_border
-        if cel.value in [None, ""]:
-            cel.fill = naam_leeg_fill_pp2
-        # bovenliggende rij ook borders geven
-        boven = ws_pauze2.cell(pv_row - 1, col)
-        boven.alignment = center_align
-        boven.border = thin_border
-
-# ---------------------------------
-# STAP 1 voor PP optie 2
-# Vroege stoppers: tot 15u of vroeger, minstens 4 uur werk
-# ---------------------------------
-
-# interpretatie:
-# max(werk_uren) <= 15  -> "tot 15u of vroeger"
-vroege_stoppers = []
-for s in studenten:
-    naam = s["naam"]
-    if naam in [pv["naam"] for pv in selected]:
-        continue
-
-    werk_uren = get_student_work_hours_from_planning(naam, ws_out)
-    if len(werk_uren) < 4:
-        continue
-    if not werk_uren:
-        continue
-
-    if max(werk_uren) <= 15:
-        vroege_stoppers.append({
-            "naam": naam,
-            "werk_uren": werk_uren
-        })
-
-# Sorteer op vroegste einduur, daarna naam
-vroege_stoppers.sort(key=lambda x: (max(x["werk_uren"]), x["naam"]))
-
-# groepeer per 2 op dezelfde pauzevlinder:
-# 1-2 bij pv1, 3-4 bij pv2, 5-6 bij pv3, ...
-for idx, item in enumerate(vroege_stoppers):
-    naam = item["naam"]
-
-    if not pv_rows_pp2:
-        break
-
-    pv_index = min(idx // 2, len(pv_rows_pp2) - 1)
-    pv, pv_row = pv_rows_pp2[pv_index]
-
-    candidate_cols = candidate_cols_for_student_pp2(naam, ws_pauze2, pauze_cols_pp2)
-    if not candidate_cols:
-        continue
-
-    # oneven index binnen duo: eerste van het duo -> midden van shift
-    if idx % 2 == 0:
-        gekozen_col = choose_middle_col(candidate_cols, ws_pauze2)
-        if gekozen_col is not None and ws_pauze2.cell(pv_row, gekozen_col).value in [None, ""]:
-            write_break_pp2(ws_pauze2, pv_row, gekozen_col, naam)
-
-            # onthoud basispauze voor het duo
-            pv_rows_pp2[pv_index] = ({
-                **pv,
-                "_basis_col_pp2": gekozen_col
-            }, pv_row)
-
-    # even index binnen duo: tweede van het duo -> verplicht naast de eerste
-    else:
-        basis_col = pv.get("_basis_col_pp2")
-        gekozen_col = None
-
-        if basis_col is not None:
-            gekozen_col = choose_adjacent_same_halfhour(
-                basis_col=basis_col,
-                student_name=naam,
-                ws_sheet=ws_pauze2,
-                pauze_cols=pauze_cols_pp2
-            )
-
-        # alleen invullen als "naast de eerste" kan
-        if gekozen_col is not None and ws_pauze2.cell(pv_row, gekozen_col).value in [None, ""]:
-            write_break_pp2(ws_pauze2, pv_row, gekozen_col, naam)
-
-
-
-
-# =============================
-# FEEDBACK SHEET - OPTIE 2
-# =============================
-ws_feedback2 = wb_out.create_sheet("Feedback optie 2")
-row_fb2 = 1
-
-ws_feedback2.cell(row_fb2, 1, "PP optie 2 - huidig stadium")
-ws_feedback2.cell(row_fb2, 1).font = Font(bold=True)
-row_fb2 += 2
-
-ws_feedback2.cell(row_fb2, 1, "Uitgevoerd:")
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "- Layout van PP optie 2 aangemaakt")
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "- Stap 1 voor vroege stoppers (tot 15u of vroeger) toegepast")
-row_fb2 += 2
-
-ws_feedback2.cell(row_fb2, 1, "Nog niet uitgevoerd:")
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "- Korte werkdagen volledig volgens optie 2-logica")
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "- Lange werkdagen volgens de nieuwe stappen")
-row_fb2 += 2
-
-ws_feedback2.cell(row_fb2, 1, "Vroege stoppers die in stap 1 bekeken werden:")
-row_fb2 += 1
-
-if vroege_stoppers:
-    for item in vroege_stoppers:
-        ws_feedback2.cell(row_fb2, 1, item["naam"])
-        ws_feedback2.cell(row_fb2, 2, f"werkuren: {item['werk_uren']}")
-        row_fb2 += 1
-else:
-    ws_feedback2.cell(row_fb2, 1, "Geen")
-
 
 
 
