@@ -2961,52 +2961,56 @@ last_placed_col = None
 
 for i, student in enumerate(vroeg_stoppers):
     naam = student["naam"]
-    werk_uren = get_student_work_hours(naam)
+    werk_uren = get_student_work_hours(naam) # Haalt uren op uit Planning [10, 11]
     if not werk_uren:
         continue
     
-    # FIX: Gebruik index  voor het eerste uur om TypeError te voorkomen
-    verboden = {werk_uren, werk_uren[-1]}
+    # EXACTE FIX: Gebruik index  voor het eerste uur om de TypeError te voorkomen
+    if len(werk_uren) > 2:
+        verboden = {werk_uren, werk_uren[-1]}
+    else:
+        verboden = set(werk_uren)
 
-    # Bepaal doel-pauzevlinder (gaat per 2 studenten naar de volgende PV-set)
+    # Bepaal de huidige rij van de pauzevlinder (2 rijen per PV: attractie + naam)
     current_pv_row = pp2_pv_info[pv_pointer % len(pp2_pv_info)]["row"]
     
     final_col = None
     if i % 2 == 0:
-        # Eerste student van het paar: midden van de shift
+        # Eerste student van het paar: zo goed mogelijk in het midden van de shift
         mid_uur = werk_uren[len(werk_uren) // 2]
-        # Zoek kolom die bij dat uur hoort (voorkeur voor :30 voor het 'midden')
+        
+        # Zoek de kolom die bij dit uur hoort (voorkeur voor :30 voor het 'midden')
         for col in pauze_cols:
             header = str(ws_pp2.cell(1, col).value)
             if parse_header_uur(header) == mid_uur:
-                if "30" in header: 
+                if "30" in header: # Probeer op het half uur te mikken
                     final_col = col
                     break
-        # Fallback naar eerste beschikbare kwartier van dat uur
+        # Fallback als :30 niet gevonden is naar het eerste kwartier van dat uur
         if not final_col:
             for col in pauze_cols:
                 if parse_header_uur(ws_pp2.cell(1, col).value) == mid_uur:
                     final_col = col
                     break
     else:
-        # Tweede student van het paar: direct naast de vorige (zelfde halve uur)
+        # Tweede student van het paar: verplicht naast de vorige (zelfde halve uur)
         if last_placed_col:
             final_col = last_placed_col + 1
 
-    # Controleer of de plek geldig is (niet in eerste/laatste werkuur)
+    # Controleer of de plek geldig is (bestaat de kolom en is het uur niet verboden)
     if final_col and final_col in pauze_cols:
         gekozen_header = ws_pp2.cell(1, final_col).value
         gekozen_uur = parse_header_uur(gekozen_header)
         
         if gekozen_uur in werk_uren and gekozen_uur not in verboden:
-            # Naam invullen op de naam-rij
+            # Naam invullen op de 'naam-rij'
             cel = ws_pp2.cell(current_pv_row, final_col, naam)
-            cel.fill = lichtpaars_fill
+            cel.fill = lichtpaars_fill # Standaard kleur uit Deel 4 [12, 13]
             cel.alignment = center_align
             cel.border = thin_border
             
-            # Attractienaam erboven invullen (rij - 1)
-            attr = vind_attractie_op_uur(naam, gekozen_uur)
+            # Attractienaam op de rij erboven (current_row - 1)
+            attr = vind_attractie_op_uur(naam, gekozen_uur) # [14, 15]
             if attr:
                 attr_cel = ws_pp2.cell(current_pv_row - 1, final_col, attr)
                 attr_cel.alignment = center_align
@@ -3014,7 +3018,7 @@ for i, student in enumerate(vroeg_stoppers):
             
             last_placed_col = final_col
     
-    # Wissel van PV na elke 2 studenten
+    # Logica: na elke 2 studenten springen we naar de volgende pauzevlinder
     if i % 2 == 1:
         pv_pointer += 1
         last_placed_col = None
