@@ -4378,6 +4378,140 @@ for row in ws_feedback2.iter_rows():
             bottom=Side(style="thin")
         )
 
+
+# PART 6 6666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
+# PART 6 666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
+
+
+
+
+# -----------------------------
+# DEEL 6: Wissels detecteren & exporteren
+# -----------------------------
+
+from collections import defaultdict
+from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+
+# -----------------------------
+# Stap 1: student → uur → attractie
+# -----------------------------
+student_per_uur = defaultdict(dict)
+
+for (uur, attr), namen in assigned_map.items():
+    for naam in namen:
+        student_per_uur[naam][uur] = attr
+
+
+# -----------------------------
+# Stap 2: wissels detecteren
+# -----------------------------
+wissels = []
+
+for naam, uren_dict in student_per_uur.items():
+    uren_sorted = sorted(uren_dict.keys())
+
+    for i in range(1, len(uren_sorted)):
+        vorig_uur = uren_sorted[i-1]
+        huidig_uur = uren_sorted[i]
+
+        vorig_attr = uren_dict[vorig_uur]
+        huidig_attr = uren_dict[huidig_uur]
+
+        if vorig_attr != huidig_attr:
+            wissels.append({
+                "naam": naam,
+                "van": vorig_attr,
+                "naar": huidig_attr,
+                "uur": huidig_uur,
+                "type": "normaal"
+            })
+
+
+# -----------------------------
+# Stap 3: automatische wissels
+# -----------------------------
+for w in wissels:
+    naam = w["naam"]
+    uur = w["uur"]
+
+    # student komt nieuw binnen → automatische wissel
+    if (uur - 1) not in student_per_uur[naam]:
+        w["type"] = "auto"
+
+
+# -----------------------------
+# Stap 4: kettingreacties ook groen maken
+# -----------------------------
+for w in wissels:
+    if w["type"] == "auto":
+        vrij_attr = w["van"]
+        uur = w["uur"]
+
+        for w2 in wissels:
+            if (
+                w2["uur"] == uur and
+                w2["naar"] == vrij_attr
+            ):
+                w2["type"] = "auto"
+
+
+# -----------------------------
+# Stap 5: werkblad aanmaken
+# -----------------------------
+ws_wissels = wb_out.create_sheet(title="Wissels")
+
+headers = ["Student", "Uur", "Van", "Naar", "Type"]
+
+center_align = Alignment(horizontal="center", vertical="center")
+thin_border = Border(
+    left=Side(style="thin"), right=Side(style="thin"),
+    top=Side(style="thin"), bottom=Side(style="thin")
+)
+
+green_fill = PatternFill(start_color="C6EFCE", fill_type="solid")
+red_fill = PatternFill(start_color="FFC7CE", fill_type="solid")
+
+# headers schrijven
+for col, h in enumerate(headers, start=1):
+    cell = ws_wissels.cell(1, col, h)
+    cell.font = Font(bold=True)
+    cell.alignment = center_align
+    cell.border = thin_border
+
+
+# -----------------------------
+# Stap 6: data invullen
+# -----------------------------
+row = 2
+for w in wissels:
+    ws_wissels.cell(row, 1, w["naam"])
+    ws_wissels.cell(row, 2, w["uur"])
+    ws_wissels.cell(row, 3, w["van"])
+    ws_wissels.cell(row, 4, w["naar"])
+    ws_wissels.cell(row, 5, w["type"])
+
+    fill = green_fill if w["type"] == "auto" else red_fill
+
+    for col in range(1, 6):
+        c = ws_wissels.cell(row, col)
+        c.fill = fill
+        c.border = thin_border
+        c.alignment = center_align
+
+    row += 1
+
+
+# -----------------------------
+# Stap 7: kolombreedte netjes maken
+# -----------------------------
+from openpyxl.utils import get_column_letter
+
+for col in range(1, 6):
+    ws_wissels.column_dimensions[get_column_letter(col)].width = 20
+
+
+
+
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 
