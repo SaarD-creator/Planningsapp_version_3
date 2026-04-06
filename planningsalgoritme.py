@@ -559,28 +559,33 @@ def _has_capacity(attr, uur):
 
 
 def _try_place_block_on_attr(student, block_hours, attr):
-    """Check capaciteit in alle uren en plaats dan in één keer, met max 4 uur per attractie per dag (positie 1 en 2 tellen samen)."""
+    """Check capaciteit in alle uren en plaats dan in één keer, met max 6 uur per attractie per dag (positie 1 en 2 tellen samen)."""
     # Capaciteit check
     for h in block_hours:
         if not _has_capacity(attr, h):
             return False
-    # Check max 4 unieke uren per attractie per dag (positie 1 en 2 tellen samen)
+
+    # Check max 6 unieke uren per attractie per dag (positie 1 en 2 tellen samen)
     # Verzamel alle uren waarop deze student al bij deze attractie staat
     uren_bij_attr = set()
     for h in student["assigned_hours"]:
         namen = assigned_map.get((h, attr), [])
         if student["naam"] in namen:
             uren_bij_attr.add(h)
+
     # Voeg de nieuwe uren toe
     nieuwe_uren = set(block_hours)
     totaal_uren = uren_bij_attr | nieuwe_uren
-    if len(totaal_uren) > 4:
+
+    if len(totaal_uren) > 6:
         return False
+
     # Plaatsen
     for h in block_hours:
         assigned_map[(h, attr)].append(student["naam"])
         per_hour_assigned_counts[h][attr] += 1
         student["assigned_hours"].append(h)
+
     student["assigned_attracties"].add(attr)
     return True
 
