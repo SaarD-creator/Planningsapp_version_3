@@ -3286,6 +3286,9 @@ if pv_rows_pp2:
                 })
 
 
+
+#STAP 2 2222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222222
+
 # -----------------------------
 # STAP 2 PP optie 2:
 # lange pauzes invullen van links naar rechts,
@@ -3308,6 +3311,7 @@ def pp2_heeft_al_lange_pauze(naam, ws_sheet, pv_rows, pauze_cols):
             ):
                 return True
     return False
+
 
 def pp2_lange_werkers_lijst():
     """
@@ -3333,10 +3337,11 @@ def pp2_lange_werkers_lijst():
 
     return result
 
+
 def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
     """
     Een lange pauze mag alleen als:
-    - beide kwartieren samen een half uur vormen
+    - beide kwartieren samen exact 30 min vormen
     - student werkt in beide kwartieren
     - niet in eerste of laatste werkuur
     """
@@ -3349,12 +3354,8 @@ def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
     if mins1 is None or mins2 is None:
         return False
 
-    # Moet exact aangrenzend zijn
+    # Moet exact 2 opeenvolgende kwartieren zijn
     if mins2 - mins1 != 15:
-        return False
-
-    # Moet in hetzelfde halfuur liggen
-    if (mins1 // 30) != (mins2 // 30):
         return False
 
     werk_uren = pp2_get_student_work_hours(naam)
@@ -3381,23 +3382,27 @@ def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
 
     return True
 
-def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam):
+
+def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam, leave_top_blank=False):
     """
     Schrijf een lange pauze van 2 kwartieren:
-    - attractie erboven
+    - normaal: attractie erboven
+    - voor pauzevlinder op eigen rij: bovenste cel leeg laten
     - naam in beide vakjes
     - groen kleuren
     """
     for col in [col1, col2]:
-        header = ws_sheet.cell(1, col).value
-        uur = parse_header_uur(header)
-
-        attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
-
         info_cel = ws_sheet.cell(pv_row - 1, col)
-        info_cel.value = attr if attr else ""
         info_cel.alignment = center_align
         info_cel.border = thin_border
+
+        if leave_top_blank:
+            info_cel.value = ""
+        else:
+            header = ws_sheet.cell(1, col).value
+            uur = parse_header_uur(header)
+            attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
+            info_cel.value = attr if attr else ""
 
         naam_cel = ws_sheet.cell(pv_row, col)
         naam_cel.value = naam
@@ -3405,27 +3410,74 @@ def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam):
         naam_cel.border = thin_border
         naam_cel.fill = lichtgroen_fill
 
+
 def pp2_halfuur_blokken(pauze_cols, ws_sheet):
     """
-    Geeft alle geldige halfuurblokken terug, van links naar rechts:
-    bv. (12u,12u15), (12u30,12u45), ...
+    Geeft alle mogelijke halfuurblokken terug, van links naar rechts.
+    Flexibel:
+    - mag starten op heel uur
+    - mag ook starten op :15
+    Dus bv.:
+    (12u00, 12u15), (12u15, 12u30), (12u30, 12u45), ...
+    zolang de cellen exact 15 minuten uit elkaar liggen.
     """
     blokken = []
-    idx = 0
-    while idx < len(pauze_cols) - 1:
+
+    for idx in range(len(pauze_cols) - 1):
         col1 = pauze_cols[idx]
         col2 = pauze_cols[idx + 1]
 
         mins1 = pp2_parse_kwartier_header(ws_sheet.cell(1, col1).value)
         mins2 = pp2_parse_kwartier_header(ws_sheet.cell(1, col2).value)
 
-        if mins1 is not None and mins2 is not None:
-            if mins2 - mins1 == 15 and (mins1 // 30) == (mins2 // 30):
-                blokken.append((col1, col2))
+        if mins1 is None or mins2 is None:
+            continue
 
-        idx += 2
+        if mins2 - mins1 == 15:
+            blokken.append((col1, col2))
 
     return blokken
+
+
+def pp2_place_long_break_for_pv_in_own_row(pv, pv_name_row, ws_sheet, pauze_cols, lange_pauze_ontvangers, lange_werkers_random):
+    """
+    Geef een langwerkende pauzevlinder verplicht een lange pauze in de eigen rij.
+    We proberen de blokken strikt van links naar rechts.
+    De cellen erboven blijven leeg.
+    """
+    naam = pv["naam"]
+
+    if naam not in lange_werkers_random:
+        return False
+
+    if naam in lange_pauze_ontvangers:
+        return False
+
+    blokken = pp2_halfuur_blokken(pauze_cols, ws_sheet)
+
+    for col1, col2 in blokken:
+        # beide kwartieren moeten leeg zijn op eigen rij
+        if ws_sheet.cell(pv_name_row, col1).value not in [None, ""]:
+            continue
+        if ws_sheet.cell(pv_name_row, col2).value not in [None, ""]:
+            continue
+
+        if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
+            continue
+
+        pp2_write_long_break(
+            ws_sheet=ws_sheet,
+            pv_row=pv_name_row,
+            col1=col1,
+            col2=col2,
+            naam=naam,
+            leave_top_blank=True
+        )
+        lange_pauze_ontvangers.add(naam)
+        return True
+
+    return False
+
 
 # 1) Maak de random vaste volgorde voor lange werkers
 pp2_lange_werkers_random = pp2_lange_werkers_lijst()
@@ -3437,43 +3489,51 @@ for naam in pp2_lange_werkers_random:
     if pp2_heeft_al_lange_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
         pp2_lange_pauze_ontvangers.add(naam)
 
-# 3) Bouw de halfuurblokken links -> rechts
+# 3) Bouw de flexibele halfuurblokken links -> rechts
 pp2_blokken = pp2_halfuur_blokken(pauze_cols_pp2, ws_pp2)
 
-# 4) Loop per halfuurblok, en daarin per pauzevlinder
+# 4) Eerst: elke langwerkende pauzevlinder verplicht in eigen rij proberen plaatsen
+for pv, pv_name_row in pv_rows_pp2:
+    pp2_place_long_break_for_pv_in_own_row(
+        pv=pv,
+        pv_name_row=pv_name_row,
+        ws_sheet=ws_pp2,
+        pauze_cols=pauze_cols_pp2,
+        lange_pauze_ontvangers=pp2_lange_pauze_ontvangers,
+        lange_werkers_random=pp2_lange_werkers_random
+    )
+
+# 5) Daarna: algemene verdeling van andere lange pauzes
+#    per blok van links naar rechts, en binnen elk blok per pauzevlinder
 for col1, col2 in pp2_blokken:
     for pv, pv_name_row in pv_rows_pp2:
-        # dit halfuur moet volledig leeg zijn voor deze pauzevlinder
+        # dit blok moet volledig leeg zijn voor deze pauzevlinder
         if ws_pp2.cell(pv_name_row, col1).value not in [None, ""]:
             continue
         if ws_pp2.cell(pv_name_row, col2).value not in [None, ""]:
             continue
 
         toegewezen_naam = None
-        pv_naam = pv["naam"]
 
-        # a) Als de pauzevlinder zelf lange pauze verdient en nog geen lange pauze heeft:
-        if (
-            pv_naam in pp2_lange_werkers_random and
-            pv_naam not in pp2_lange_pauze_ontvangers and
-            pp2_is_valid_long_break_for_student(pv_naam, col1, col2, ws_pp2)
-        ):
-            toegewezen_naam = pv_naam
+        # Neem eerste nog beschikbare student uit de vaste random lijst
+        for kandidaat in pp2_lange_werkers_random:
+            if kandidaat in pp2_lange_pauze_ontvangers:
+                continue
+            if pp2_is_valid_long_break_for_student(kandidaat, col1, col2, ws_pp2):
+                toegewezen_naam = kandidaat
+                break
 
-        else:
-            # b) Neem eerste nog beschikbare student uit de vaste random lijst
-            for kandidaat in pp2_lange_werkers_random:
-                if kandidaat in pp2_lange_pauze_ontvangers:
-                    continue
-                if pp2_is_valid_long_break_for_student(kandidaat, col1, col2, ws_pp2):
-                    toegewezen_naam = kandidaat
-                    break
-
-        # c) Indien iemand gevonden: schrijf weg
+        # Indien iemand gevonden: schrijf weg
         if toegewezen_naam:
-            pp2_write_long_break(ws_pp2, pv_name_row, col1, col2, toegewezen_naam)
+            pp2_write_long_break(
+                ws_sheet=ws_pp2,
+                pv_row=pv_name_row,
+                col1=col1,
+                col2=col2,
+                naam=toegewezen_naam,
+                leave_top_blank=False
+            )
             pp2_lange_pauze_ontvangers.add(toegewezen_naam)
-
 
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
