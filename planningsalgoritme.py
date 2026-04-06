@@ -2910,8 +2910,11 @@ if bn15_vinkje in [1, True, "WAAR", "X"]:
 wb_out.save(output)
 output.seek(0)  # Zorg dat lezen vanaf begin kan
 
-# nieuwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
-#-------------------------------------------------------------------------------------------
+
+
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWww
+#------------------------------------------------------------------------------------------------------------------------
+
 
 
 ### -------------------------------------------------------------
@@ -3022,6 +3025,7 @@ for i, student in enumerate(vroeg_stoppers):
 ws_pp2.column_dimensions['A'].width = 20
 for col in range(2, ws_pp2.max_column + 1):
     ws_pp2.column_dimensions[get_column_letter(col)].width = 12
+
 
 
 
