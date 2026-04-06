@@ -4383,14 +4383,13 @@ for row in ws_feedback2.iter_rows():
 # PART 6 666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
 
 
-
-
 # -----------------------------
 # DEEL 6: Wissels detecteren & exporteren
 # -----------------------------
 
 from collections import defaultdict
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.styles import Font, Alignment, Border, Side
+from openpyxl.utils import get_column_letter
 
 # -----------------------------
 # Stap 1: student → uur → attractie
@@ -4401,7 +4400,6 @@ for (uur, attr), namen in assigned_map.items():
     for naam in namen:
         student_per_uur[naam][uur] = attr
 
-
 # -----------------------------
 # Stap 2: wissels detecteren
 # -----------------------------
@@ -4411,7 +4409,7 @@ for naam, uren_dict in student_per_uur.items():
     uren_sorted = sorted(uren_dict.keys())
 
     for i in range(1, len(uren_sorted)):
-        vorig_uur = uren_sorted[i-1]
+        vorig_uur = uren_sorted[i - 1]
         huidig_uur = uren_sorted[i]
 
         vorig_attr = uren_dict[vorig_uur]
@@ -4426,21 +4424,18 @@ for naam, uren_dict in student_per_uur.items():
                 "type": "normaal"
             })
 
-
 # -----------------------------
-# Stap 3: automatische wissels
+# Stap 3: automatische wissels bepalen
 # -----------------------------
 for w in wissels:
     naam = w["naam"]
     uur = w["uur"]
 
-    # student komt nieuw binnen → automatische wissel
     if (uur - 1) not in student_per_uur[naam]:
         w["type"] = "auto"
 
-
 # -----------------------------
-# Stap 4: kettingreacties ook groen maken
+# Stap 4: kettingreacties ook als auto markeren
 # -----------------------------
 for w in wissels:
     if w["type"] == "auto":
@@ -4454,60 +4449,78 @@ for w in wissels:
             ):
                 w2["type"] = "auto"
 
+# -----------------------------
+# Stap 5: wissels groeperen per uur
+# -----------------------------
+wissels_per_uur = defaultdict(list)
+
+for w in wissels:
+    wissels_per_uur[w["uur"]].append(w)
+
+for uur in wissels_per_uur:
+    wissels_per_uur[uur].sort(key=lambda x: x["naam"])
 
 # -----------------------------
-# Stap 5: werkblad aanmaken
+# Stap 6: werkblad aanmaken
 # -----------------------------
 ws_wissels = wb_out.create_sheet(title="Wissels")
 
-headers = ["Student", "Uur", "Van", "Naar", "Type"]
-
 center_align = Alignment(horizontal="center", vertical="center")
 thin_border = Border(
-    left=Side(style="thin"), right=Side(style="thin"),
-    top=Side(style="thin"), bottom=Side(style="thin")
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin")
 )
 
-green_fill = PatternFill(start_color="C6EFCE", fill_type="solid")
-red_fill = PatternFill(start_color="FFC7CE", fill_type="solid")
+# -----------------------------
+# Stap 7: headers schrijven
+# -----------------------------
+headers = ["Student", "Van", "Naar", "Type"]
+start_row = 1
 
-# headers schrijven
-for col, h in enumerate(headers, start=1):
-    cell = ws_wissels.cell(1, col, h)
-    cell.font = Font(bold=True)
-    cell.alignment = center_align
-    cell.border = thin_border
+for uur in sorted(wissels_per_uur.keys()):
+    # Uur-titel
+    ws_wissels.cell(start_row, 1, f"Wissels om {uur}:00").font = Font(bold=True)
+    ws_wissels.cell(start_row, 1).alignment = center_align
 
+    # Kolomheaders
+    for col, h in enumerate(headers, start=1):
+        cell = ws_wissels.cell(start_row + 1, col, h)
+        cell.font = Font(bold=True)
+        cell.alignment = center_align
+        cell.border = thin_border
+
+    # Gegevens
+    current_row = start_row + 2
+    for w in wissels_per_uur[uur]:
+        ws_wissels.cell(current_row, 1, w["naam"])
+        ws_wissels.cell(current_row, 2, w["van"])
+        ws_wissels.cell(current_row, 3, w["naar"])
+        ws_wissels.cell(current_row, 4, w["type"])
+
+        for col in range(1, 5):
+            c = ws_wissels.cell(current_row, col)
+            c.alignment = center_align
+            c.border = thin_border
+
+        current_row += 1
+
+    # 1 lege rij tussen de uurblokken
+    start_row = current_row + 1
 
 # -----------------------------
-# Stap 6: data invullen
+# Stap 8: kolombreedtes netjes zetten
 # -----------------------------
-row = 2
-for w in wissels:
-    ws_wissels.cell(row, 1, w["naam"])
-    ws_wissels.cell(row, 2, w["uur"])
-    ws_wissels.cell(row, 3, w["van"])
-    ws_wissels.cell(row, 4, w["naar"])
-    ws_wissels.cell(row, 5, w["type"])
+breedtes = {
+    1: 22,  # Student
+    2: 25,  # Van
+    3: 25,  # Naar
+    4: 15   # Type
+}
 
-    fill = green_fill if w["type"] == "auto" else red_fill
-
-    for col in range(1, 6):
-        c = ws_wissels.cell(row, col)
-        c.fill = fill
-        c.border = thin_border
-        c.alignment = center_align
-
-    row += 1
-
-
-# -----------------------------
-# Stap 7: kolombreedte netjes maken
-# -----------------------------
-from openpyxl.utils import get_column_letter
-
-for col in range(1, 6):
-    ws_wissels.column_dimensions[get_column_letter(col)].width = 20
+for col_idx, breedte in breedtes.items():
+    ws_wissels.column_dimensions[get_column_letter(col_idx)].width = breedte
 
 
 
