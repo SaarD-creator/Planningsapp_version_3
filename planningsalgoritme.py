@@ -3115,12 +3115,41 @@ def pp2_choose_adjacent_same_halfhour(base_col, student_name, ws_sheet, pauze_co
     return None
 
 def pp2_write_name(ws_sheet, row_name, col, naam):
+    """
+    Schrijf in PP optie 2:
+    - bovenste vak: attractie waarop student dat moment staat
+    - onderste vak: naam van student
+    - korte pauze = paars
+    - lange pauze = groen (voor later bruikbaar)
+    """
+    lichtgroen_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+    lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
+
+    # bepaal uur van deze kolom
+    header = ws_sheet.cell(1, col).value
+    uur = parse_header_uur(header)
+
+    # attractie erboven invullen
+    info_cel = ws_sheet.cell(row_name - 1, col)
+    attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
+    info_cel.value = attr if attr else ""
+    info_cel.alignment = center_align
+    info_cel.border = thin_border
+
+    # naam invullen
     cel = ws_sheet.cell(row_name, col)
     cel.value = naam
     cel.alignment = center_align
     cel.border = thin_border
-    if naam in student_kleuren:
-        cel.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+
+    # check of dit een lange of korte pauze is
+    is_lange_pauze = False
+    if col - 1 >= 2 and ws_sheet.cell(row_name, col - 1).value == naam:
+        is_lange_pauze = True
+    if col + 1 <= ws_sheet.max_column and ws_sheet.cell(row_name, col + 1).value == naam:
+        is_lange_pauze = True
+
+    cel.fill = lichtgroen_fill if is_lange_pauze else lichtpaars_fill
 
 def pp2_clear_pauze_grid(ws_sheet, pv_rows, pauze_cols):
     """
