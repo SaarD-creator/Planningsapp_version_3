@@ -669,7 +669,7 @@ def assign_student(s):
       * student met exact 4 effectieve werkuren
       * én AS2 aangevinkt
       * én run start op het eerste open uur
-      => dan liever 1 + 3, zodat de wissel om 11u kan vallen.
+      => probeer expliciet 1 + 3
     - Blokken die niet passen, gaan voorlopig naar extra_assignments.
     """
     # Filter op effectieve inzetbare uren
@@ -684,21 +684,32 @@ def assign_student(s):
     eerste_open_uur = min(open_uren) if open_uren else None
 
     for run in runs:
-        preferred_sizes = [3, 2, 1]
-
         # Speciaal geval:
         # bij AS2 aangevinkt telt het eerste blok als 1,5 uur (9u30-11u),
-        # dus voor een shift/run van exact 4 uren die start op het eerste open uur
-        # willen we liever 1 + 3 dan 3 + 1
+        # dus voor een run van exact 4 uren die start op het eerste open uur
+        # proberen we eerst expliciet 1 + 3
         if (
             eerste_blok_is_anderhalf_uur
             and len(run) == 4
             and eerste_open_uur is not None
             and run[0] == eerste_open_uur
         ):
-            preferred_sizes = [1, 3, 2]
+            eerste_blok = [run[0]]
+            rest_blok = run[1:]
 
-        unplaced = _place_block_with_fallback(s, run, preferred_sizes)
+            if _try_place_block_any_attr(s, eerste_blok):
+                if _try_place_block_any_attr(s, rest_blok):
+                    unplaced = []
+                else:
+                    # Eerste uur is al geplaatst, rest valt terug op normale logica
+                    unplaced = _place_block_with_fallback(s, rest_blok)
+            else:
+                # Als 1+3 niet lukt, val volledig terug op normale logica
+                unplaced = _place_block_with_fallback(s, run)
+
+        else:
+            # Normale logica
+            unplaced = _place_block_with_fallback(s, run)
 
         for h in unplaced:
             extra_assignments[h].append(s["naam"])
