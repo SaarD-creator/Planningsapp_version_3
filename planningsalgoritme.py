@@ -3479,10 +3479,22 @@ def pp2_place_long_break_for_pv_in_own_row(pv, pv_name_row, ws_sheet, pauze_cols
     return False
 
 
-# 1) Maak de random vaste volgorde voor lange werkers
-pp2_lange_werkers_random = pp2_lange_werkers_lijst()
-random.shuffle(pp2_lange_werkers_random)
+# 1) Maak de vaste volgorde voor lange werkers:
+#    eerst wie vroeger stopt, en bij gelijke eindtijd random volgorde
+pp2_lange_werkers_basis = pp2_lange_werkers_lijst()
 
+pp2_lange_werkers_per_einduur = defaultdict(list)
+for naam in pp2_lange_werkers_basis:
+    werk_uren = pp2_get_student_work_hours(naam)
+    if werk_uren:
+        einduur = max(werk_uren)
+        pp2_lange_werkers_per_einduur[einduur].append(naam)
+
+pp2_lange_werkers_random = []
+for einduur in sorted(pp2_lange_werkers_per_einduur.keys()):
+    groep = pp2_lange_werkers_per_einduur[einduur][:]
+    random.shuffle(groep)
+    pp2_lange_werkers_random.extend(groep)
 # 2) Houd bij wie al een lange pauze kreeg in PP optie 2
 pp2_lange_pauze_ontvangers = set()
 for naam in pp2_lange_werkers_random:
