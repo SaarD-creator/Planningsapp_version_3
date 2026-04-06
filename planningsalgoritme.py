@@ -559,13 +559,16 @@ def _has_capacity(attr, uur):
 
 
 def _try_place_block_on_attr(student, block_hours, attr):
-    """Check capaciteit in alle uren en plaats dan in één keer, met max 6 uur per attractie per dag (positie 1 en 2 tellen samen)."""
+    """Check capaciteit in alle uren en plaats dan in één keer.
+    Regels:
+    - max 6 uur totaal per attractie per dag
+    - max 4 aaneengesloten uren op dezelfde attractie
+    """
     # Capaciteit check
     for h in block_hours:
         if not _has_capacity(attr, h):
             return False
 
-    # Check max 6 unieke uren per attractie per dag (positie 1 en 2 tellen samen)
     # Verzamel alle uren waarop deze student al bij deze attractie staat
     uren_bij_attr = set()
     for h in student["assigned_hours"]:
@@ -573,11 +576,15 @@ def _try_place_block_on_attr(student, block_hours, attr):
         if student["naam"] in namen:
             uren_bij_attr.add(h)
 
-    # Voeg de nieuwe uren toe
+    # Check max 6 unieke uren per attractie per dag
     nieuwe_uren = set(block_hours)
     totaal_uren = uren_bij_attr | nieuwe_uren
-
     if len(totaal_uren) > 6:
+        return False
+
+    # Check max 4 aaneengesloten uren op dezelfde attractie
+    alle_uren_attr = sorted(totaal_uren)
+    if max_consecutive_hours(alle_uren_attr) > 4:
         return False
 
     # Plaatsen
@@ -588,6 +595,8 @@ def _try_place_block_on_attr(student, block_hours, attr):
 
     student["assigned_attracties"].add(attr)
     return True
+
+
 
 def _try_place_block_any_attr(student, block_hours):
     """Probeer dit blok te plaatsen op eender welke attractie die student kan."""
