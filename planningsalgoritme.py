@@ -4804,6 +4804,23 @@ for uur in sorted(open_uren):
 # -----------------------------
 ws_wissels = wb_out.create_sheet(title="Wissels")
 
+# -----------------------------
+# KPI bovenaan tonen
+# -----------------------------
+ws_wissels.cell(1, 1, "KPI Wissels").font = Font(bold=True)
+
+ws_wissels.cell(2, 1, "Totaal wissels:")
+ws_wissels.cell(2, 2, totaal_wissels)
+
+ws_wissels.cell(3, 1, "Volledig automatisch:")
+ws_wissels.cell(3, 2, aantal_auto)
+
+ws_wissels.cell(4, 1, "Niet-groen (KPI):")
+ws_wissels.cell(4, 2, niet_groen)
+
+# beetje visueel accent
+ws_wissels.cell(4, 2).font = Font(bold=True)
+
 center_align = Alignment(horizontal="center", vertical="center")
 thin_border = Border(
     left=Side(style="thin"),
@@ -4815,7 +4832,23 @@ thin_border = Border(
 green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 
-current_row = 1
+current_row = 6
+
+
+# -----------------------------
+# KPI berekenen
+# -----------------------------
+totaal_wissels = 0
+aantal_auto = 0
+
+for uur in wissels_per_uur:
+    for w in wissels_per_uur[uur]:
+        totaal_wissels += 1
+        if w["type"] == "volledig automatisch":
+            aantal_auto += 1
+
+niet_groen = totaal_wissels - aantal_auto
+
 
 for uur in sorted(wissels_per_uur.keys()):
     # Titelrij per uur
