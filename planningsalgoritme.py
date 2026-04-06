@@ -758,6 +758,16 @@ for _ in range(max_iterations):
         break
 
 
+
+# -----------------------------
+# Volgorde attracties uit Input!BL16:BL33
+# -----------------------------
+input_volgorde = []
+for rij in range(16, 34):  # 16 t.e.m. 33
+    waarde = ws[f"BL{rij}"].value
+    if waarde:
+        input_volgorde.append(str(waarde).strip())
+
 # -----------------------------
 # Alle attracties die minstens één keer actief zijn (voor output)
 # -----------------------------
@@ -765,8 +775,14 @@ alle_actieve_attracties = set()
 for uur in open_uren:
     alle_actieve_attracties |= actieve_attracties_per_uur.get(uur, set())
 
-alle_actieve_attracties = sorted(alle_actieve_attracties)
+# Eerst in de volgorde van BL16:BL33
+geordende_attracties = [a for a in input_volgorde if a in alle_actieve_attracties]
 
+# Daarna eventueel nog attracties toevoegen die wel actief zijn,
+# maar niet in BL16:BL33 staan
+resterende_attracties = [a for a in alle_actieve_attracties if a not in geordende_attracties]
+
+alle_actieve_attracties = geordende_attracties + resterende_attracties
 
     
 
