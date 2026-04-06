@@ -4799,6 +4799,19 @@ for uur in sorted(open_uren):
     if ordered_switches:
         wissels_per_uur[uur] = ordered_switches
 
+
+# KPI berekenen
+totaal_wissels = 0
+aantal_auto = 0
+
+for uur in wissels_per_uur:
+    for w in wissels_per_uur[uur]:
+        totaal_wissels += 1
+        if w["type"] == "volledig automatisch":
+            aantal_auto += 1
+
+niet_groen = totaal_wissels - aantal_auto
+
 # -----------------------------
 # Stap 4: werkblad "Wissels" maken
 # -----------------------------
@@ -4833,21 +4846,6 @@ green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="so
 yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
 
 current_row = 6
-
-
-# -----------------------------
-# KPI berekenen
-# -----------------------------
-totaal_wissels = 0
-aantal_auto = 0
-
-for uur in wissels_per_uur:
-    for w in wissels_per_uur[uur]:
-        totaal_wissels += 1
-        if w["type"] == "volledig automatisch":
-            aantal_auto += 1
-
-niet_groen = totaal_wissels - aantal_auto
 
 
 for uur in sorted(wissels_per_uur.keys()):
