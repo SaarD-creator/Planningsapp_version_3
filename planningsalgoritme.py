@@ -599,23 +599,76 @@ def _try_place_block_on_attr(student, block_hours, attr):
 
 
 def _try_place_block_any_attr(student, block_hours):
-    """Probeer dit blok te plaatsen op eender welke attractie die student kan."""
-    # Eerst attracties die nu het minst keuze hebben (kritiek), zodat we schaarste slim benutten
+    """Probeer dit blok te plaatsen op eender welke attractie die student kan.
+    Fairness-regel:
+    - Studenten met veel mogelijke attracties moeten minder snel naar 5e/6e uur
+      op dezelfde attractie gaan.
+    - Studenten met weinig mogelijke attracties blijven soepeler behandeld.
+    """
+
+    def uren_bij_attr(student, attr):
+        uren = set()
+        for h in student["assigned_hours"]:
+            namen = assigned_map.get((h, attr), [])
+            if student["naam"] in namen:
+                uren.add(h)
+        return uren
+
+    def candidate_score(attr):
+        # Hoeveel studenten kunnen deze attractie? Lager = kritieker
+        schaarste = sum(1 for s in studenten_workend if attr in s["attracties"])
+
+        bestaande_uren = uren_bij_attr(student, attr)
+        totaal_na_plaatsing = len(bestaande_uren | set(block_hours))
+        reeds_gebruikt = attr in student["assigned_attracties"]
+
+        # Hoe breed is deze student inzetbaar?
+        # We nemen aantal_attracties als hoofdsignaal, met fallback op echte lijstlengte
+        breedte_profiel = student.get("aantal_attracties", len(student.get("attracties", [])))
+
+        # Fairness-straf:
+        # - Studenten met veel attracties krijgen zware straf als ze naar uur 5/6
+        #   op dezelfde attractie gaan.
+        # - Studenten met weinig attracties krijgen weinig of geen straf.
+        fairness_straf = 0
+
+        if totaal_na_plaatsing > 4:
+            if breedte_profiel >= 6:
+                fairness_straf = 100
+            elif breedte_profiel >= 5:
+                fairness_straf = 60
+            elif breedte_profiel >= 4:
+                fairness_straf = 25
+            else:
+                fairness_straf = 0
+
+        # Lichte voorkeur om eerst nieuwe attracties te gebruiken,
+        # maar minder belangrijk dan fairness boven 4 uur.
+        hergebruik_straf = 1 if reeds_gebruikt else 0
+
+        # Eventueel nog mini-voorkeur voor attracties waar student nog 0 uur stond
+        # en pas daarna voor attracties met al wat uren.
+        huidige_uren_op_attr = len(bestaande_uren)
+
+        return (
+            fairness_straf,
+            hergebruik_straf,
+            huidige_uren_op_attr,
+            schaarste,
+            attr
+        )
+
     candidate_attrs = [
-    a for a in attracties_te_plannen
-    if student_kan_attr(student, a)
-]
-    candidate_attrs.sort(key=lambda a: sum(1 for s in studenten_workend if a in s["attracties"]))
-    for attr in candidate_attrs:
-        # vermijd dubbele toewijzing van hetzelfde attr als het niet per se moet
-        if attr in student["assigned_attracties"]:
-            continue
-        if _try_place_block_on_attr(student, block_hours, attr):
-            return True
-    # Als niets lukte zonder herhaling, laat herhaling van attractie toe als dat nodig is
+        a for a in attracties_te_plannen
+        if student_kan_attr(student, a)
+    ]
+
+    candidate_attrs.sort(key=candidate_score)
+
     for attr in candidate_attrs:
         if _try_place_block_on_attr(student, block_hours, attr):
             return True
+
     return False
     
 
