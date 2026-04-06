@@ -2967,7 +2967,7 @@ for i, student in enumerate(vroeg_stoppers):
     
     # EXACTE FIX: Gebruik index  voor het eerste uur om de TypeError te voorkomen
     if len(werk_uren) > 2:
-        verboden = {werk_uren, werk_uren[-1]}
+        verboden = {werk_uren[0], werk_uren[-1]}
     else:
         verboden = set(werk_uren)
 
