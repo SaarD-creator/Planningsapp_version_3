@@ -623,7 +623,7 @@ def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
     """
     Probeer een reeks opeenvolgende uren te plaatsen.
     - Standaard: eerst 3, dan 2, dan 1.
-    - Voor studenten met exact 4 effectieve werkuren: liever 2, dan 3, dan 1.
+    - Via preferred_sizes kan je lokaal een andere voorkeur afdwingen.
     - Als niets lukt aan het begin van de reeks, schuif 1 uur op (dat uur gaat voorlopig naar extra),
       en probeer verder; tweede pass zal het later alsnog proberen op te vullen.
     Retourneert: lijst 'unplaced' uren die (voorlopig) niet geplaatst raakten.
@@ -639,7 +639,6 @@ def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
         if len(hours_seq) >= size:
             first_block = hours_seq[:size]
             if _try_place_block_any_attr(student, first_block):
-                # Rest recursief met dezelfde voorkeur
                 return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes)
 
     # Helemaal niks paste aan de voorkant: markeer eerste uur tijdelijk als 'unplaced' en schuif door
@@ -647,39 +646,60 @@ def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
 
 
 # -----------------------------
+# AS2-vinkje uitlezen voor bloklogica
+# AS = kolom 45, rij 2
+# -----------------------------
+as2_vinkje = ws.cell(2, 45).value
+eerste_blok_is_anderhalf_uur = as2_vinkje in [1, True, "WAAR", "X"]
+
+    
+# -----------------------------
 # Nieuwe assign_student
 # -----------------------------
+
+
 def assign_student(s):
     """
     Plaats één student in de planning volgens alle regels:
     - Alleen uren waar de student beschikbaar is én open_uren zijn.
     - Geen overlap met pauzevlinder-uren.
     - Alleen attracties die de student kan.
-    - Studenten met exact 4 effectieve werkuren krijgen bij voorkeur blokken van 2 uur.
-    - Andere studenten behouden de standaardvoorkeur: 3 uur, dan 2, dan 1.
+    - Standaard voorkeur: 3 uur, dan 2, dan 1.
+    - Speciaal geval:
+      * student met exact 4 effectieve werkuren
+      * én AS2 aangevinkt
+      * én run start op het eerste open uur
+      => dan liever 1 + 3, zodat de wissel om 11u kan vallen.
     - Blokken die niet passen, gaan voorlopig naar extra_assignments.
     """
     # Filter op effectieve inzetbare uren
     uren = sorted(u for u in s["uren_beschikbaar"] if u in open_uren)
     if s["is_pauzevlinder"]:
-        # Verwijder uren waarin pauzevlinder moet werken
         uren = [u for u in uren if u not in required_pauze_hours]
 
     if not uren:
-        return  # geen beschikbare uren
+        return
 
-    # Studenten met exact 4 effectieve werkuren:
-    # liever 2+2 dan 3+1
-    if len(uren) == 4:
-        preferred_sizes = [2, 3, 1]
-    else:
-        preferred_sizes = [3, 2, 1]
-
-    # Vind aaneengesloten runs van uren
     runs = contiguous_runs(uren)
+    eerste_open_uur = min(open_uren) if open_uren else None
 
     for run in runs:
+        preferred_sizes = [3, 2, 1]
+
+        # Speciaal geval:
+        # bij AS2 aangevinkt telt het eerste blok als 1,5 uur (9u30-11u),
+        # dus voor een shift/run van exact 4 uren die start op het eerste open uur
+        # willen we liever 1 + 3 dan 3 + 1
+        if (
+            eerste_blok_is_anderhalf_uur
+            and len(run) == 4
+            and eerste_open_uur is not None
+            and run[0] == eerste_open_uur
+        ):
+            preferred_sizes = [1, 3, 2]
+
         unplaced = _place_block_with_fallback(s, run, preferred_sizes)
+
         for h in unplaced:
             extra_assignments[h].append(s["naam"])
 
