@@ -3778,6 +3778,7 @@ for pv, pv_row in pv_rows_pp2:
 # -----------------------------
 # STAP 4 PP optie 2:
 # overige korte pauzes voor studenten die vroeger stoppen dan het einduur
+# met voorkeur voor dezelfde rij als eerdere lange pauze
 # -----------------------------
 
 lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
@@ -3838,12 +3839,14 @@ def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
     cel.fill = lichtpaars_fill
 
 
-def pp2_get_long_break_owner_on_row(ws_sheet, pv_row, pauze_cols):
+def pp2_get_long_break_owners_on_row(ws_sheet, pv_row, pauze_cols):
     """
-    Zoek of er op deze rij al een student met lange pauze staat.
-    Geeft de naam terug van de student op de eerste gevonden dubbele blok.
-    Als er geen lange pauze op de rij staat: None.
+    Geeft alle studenten terug die op deze rij een lange pauze hebben.
+    Normaal is dat meestal 0 of 1, maar dit is robuuster.
     """
+    owners = []
+    seen = set()
+
     for idx in range(len(pauze_cols) - 1):
         col1 = pauze_cols[idx]
         col2 = pauze_cols[idx + 1]
@@ -3852,9 +3855,12 @@ def pp2_get_long_break_owner_on_row(ws_sheet, pv_row, pauze_cols):
         val2 = ws_sheet.cell(pv_row, col2).value
 
         if val1 and val1 == val2:
-            return str(val1).strip()
+            naam = str(val1).strip()
+            if naam not in seen:
+                owners.append(naam)
+                seen.add(naam)
 
-    return None
+    return owners
 
 
 def pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
@@ -3907,25 +3913,30 @@ for col in pauze_cols_pp2:
 
         toegewezen_naam = None
 
-        # -------------------------
-        # PRIORITEIT:
-        # als op deze rij al iemand een lange pauze kreeg,
-        # en die student stopt vroeger dan het einduur,
-        # en hij heeft nog geen korte pauze,
-        # dan krijgt hij absolute voorrang op dezelfde rij
-        # -------------------------
-        rij_lange_pauze_naam = pp2_get_long_break_owner_on_row(ws_pp2, pv_row, pauze_cols_pp2)
+        # ---------------------------------------------------
+        # PRIORITEIT 1:
+        # probeer eerst studenten die op DEZEZELFDE rij al
+        # eerder een lange pauze kregen, zodat korte + lange
+        # pauze liefst bij dezelfde pauzevlinder staan
+        # ---------------------------------------------------
+        rij_lange_pauze_namen = pp2_get_long_break_owners_on_row(ws_pp2, pv_row, pauze_cols_pp2)
 
-        if (
-            rij_lange_pauze_naam
-            and rij_lange_pauze_naam in pp2_students_before_end_pending
-            and pp2_student_has_long_break_in_row(rij_lange_pauze_naam, ws_pp2, pv_row, pauze_cols_pp2)
-            and pp2_is_valid_short_break_for_student(rij_lange_pauze_naam, col, ws_pp2)
-        ):
-            toegewezen_naam = rij_lange_pauze_naam
+        for kandidaat in rij_lange_pauze_namen:
+            if kandidaat not in pp2_students_before_end_pending:
+                continue
+            if not pp2_student_has_long_break_in_row(kandidaat, ws_pp2, pv_row, pauze_cols_pp2):
+                continue
+            if not pp2_is_valid_short_break_for_student(kandidaat, col, ws_pp2):
+                continue
 
-        else:
-            # anders: eerste geldige kandidaat uit de vaste random lijst
+            toegewezen_naam = kandidaat
+            break
+
+        # ---------------------------------------------------
+        # PRIORITEIT 2:
+        # anders eerste geldige kandidaat uit de vaste random lijst
+        # ---------------------------------------------------
+        if toegewezen_naam is None:
             for kandidaat in pp2_students_before_end_pending:
                 if not pp2_is_valid_short_break_for_student(kandidaat, col, ws_pp2):
                     continue
@@ -3944,12 +3955,14 @@ for col in pauze_cols_pp2:
             pp2_regular_short_breaks_placed.append({
                 "naam": toegewezen_naam,
                 "pauzevlinder": pv["naam"],
-                "tijd": ws_pp2.cell(1, col).value
+                "tijd": ws_pp2.cell(1, col).value,
+                "zelfde_rij_als_lange_pauze": pp2_student_has_long_break_in_row(
+                    toegewezen_naam, ws_pp2, pv_row, pauze_cols_pp2
+                )
             })
 
             if toegewezen_naam in pp2_students_before_end_pending:
                 pp2_students_before_end_pending.remove(toegewezen_naam)
-
 
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
