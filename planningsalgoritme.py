@@ -4238,97 +4238,100 @@ for col in pauze_cols_pp2:
 
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
-# -----------------------------
-# Feedback optie 2
-# -----------------------------
+# =============================
+# FEEDBACK SHEET - OPTIE 2
+# =============================
 ws_feedback2 = wb_out.create_sheet("Feedback optie 2")
 
-row_fb2 = 1
 groen_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
 rood_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
-geel_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+
+row_fb2 = 1
 
 ws_feedback2.cell(row_fb2, 1, "Feedback PP optie 2").font = Font(bold=True)
 row_fb2 += 2
 
-ws_feedback2.cell(row_fb2, 1, "Uitgevoerde stap:")
-ws_feedback2.cell(row_fb2, 2, "Enkel stap 1")
-row_fb2 += 2
+# -----------------------------------
+# Bepaal wie een LANGE pauze moet krijgen
+# Zelfde logica als in je script / PP optie 2 stap 2
+# -----------------------------------
+pp2_lange_pauze_verplicht = []
 
-ws_feedback2.cell(row_fb2, 1, "Interpretatie 'tot 15u of vroeger':")
-ws_feedback2.cell(row_fb2, 2, "laatste gewerkt uur <= 15")
-row_fb2 += 2
+for s in studenten:
+    naam = s["naam"]
+    gewerkte_uren = student_totalen.get(naam, 0)
 
-ws_feedback2.cell(row_fb2, 1, "Aantal vroege stoppers bekeken:")
-ws_feedback2.cell(row_fb2, 2, len(vroege_stoppers))
-row_fb2 += 1
+    if (
+        gewerkte_uren > 6
+        or ("-18" in str(naam) and gewerkte_uren > 4)
+    ):
+        pp2_lange_pauze_verplicht.append(naam)
 
-ws_feedback2.cell(row_fb2, 1, "Aantal effectief ingepland:")
-ws_feedback2.cell(row_fb2, 2, len(pp2_geplaatste_pauzes))
-row_fb2 += 1
+pp2_lange_pauze_ontbreekt = []
+for naam in pp2_lange_pauze_verplicht:
+    if not pp2_heeft_al_lange_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+        pp2_lange_pauze_ontbreekt.append(naam)
 
-ws_feedback2.cell(row_fb2, 1, "Aantal niet ingepland:")
-ws_feedback2.cell(row_fb2, 2, len(pp2_niet_geplaatst))
-row_fb2 += 2
-
-# Geplaatste pauzes
-ws_feedback2.cell(row_fb2, 1, "Geplaatste pauzes").font = Font(bold=True)
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "Naam")
-ws_feedback2.cell(row_fb2, 2, "Pauzevlinder")
-ws_feedback2.cell(row_fb2, 3, "Tijd")
-ws_feedback2.cell(row_fb2, 4, "Type")
-for c in range(1, 5):
-    ws_feedback2.cell(row_fb2, c).fill = geel_fill
-    ws_feedback2.cell(row_fb2, c).font = Font(bold=True)
-row_fb2 += 1
-
-if pp2_geplaatste_pauzes:
-    for item in pp2_geplaatste_pauzes:
-        ws_feedback2.cell(row_fb2, 1, item["naam"])
-        ws_feedback2.cell(row_fb2, 2, item["pauzevlinder"])
-        ws_feedback2.cell(row_fb2, 3, item["tijd"])
-        ws_feedback2.cell(row_fb2, 4, item["type"])
-        row_fb2 += 1
+# -----------------------------------
+# Check 1: lange pauzes
+# -----------------------------------
+if not pp2_lange_pauze_ontbreekt:
+    cel = ws_feedback2.cell(row_fb2, 1, "✓ Alle lange pauzes toegekend")
+    cel.fill = groen_fill
+    cel.font = Font(bold=True, color="006100")
+    row_fb2 += 2
 else:
-    cel = ws_feedback2.cell(row_fb2, 1, "Geen")
+    cel = ws_feedback2.cell(row_fb2, 1, "✗ Ontbrekende lange pauzes:")
     cel.fill = rood_fill
+    cel.font = Font(bold=True)
     row_fb2 += 1
 
-row_fb2 += 1
-
-# Niet geplaatste pauzes
-ws_feedback2.cell(row_fb2, 1, "Niet geplaatste vroege stoppers").font = Font(bold=True)
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "Naam")
-ws_feedback2.cell(row_fb2, 2, "Reden")
-for c in range(1, 3):
-    ws_feedback2.cell(row_fb2, c).fill = geel_fill
-    ws_feedback2.cell(row_fb2, c).font = Font(bold=True)
-row_fb2 += 1
-
-if pp2_niet_geplaatst:
-    for item in pp2_niet_geplaatst:
-        ws_feedback2.cell(row_fb2, 1, item["naam"])
-        ws_feedback2.cell(row_fb2, 2, item["reden"])
+    for naam in pp2_lange_pauze_ontbreekt:
+        ws_feedback2.cell(row_fb2, 1, naam)
         row_fb2 += 1
-else:
-    vinkje = ws_feedback2.cell(row_fb2, 1, "✓")
-    ws_feedback2.cell(row_fb2, 2, "Alle vroege stoppers uit stap 1 konden ingepland worden.")
-    vinkje.fill = groen_fill
-    vinkje.font = Font(bold=True, color="006100")
+
     row_fb2 += 1
 
-# -----------------------------
-# Eenvoudige opmaak Feedback optie 2
-# -----------------------------
-for col in range(1, 5):
-    max_len = 0
-    for row in range(1, ws_feedback2.max_row + 1):
-        val = ws_feedback2.cell(row, col).value
-        if val is not None:
-            max_len = max(max_len, len(str(val)))
-    ws_feedback2.column_dimensions[get_column_letter(col)].width = min(max(14, max_len + 2), 40)
+# -----------------------------------
+# Bepaal wie een KORTE pauze moet krijgen
+# Iedereen met minstens 4 uur werk
+# -----------------------------------
+pp2_korte_pauze_verplicht = []
+
+for s in studenten:
+    naam = s["naam"]
+    werk_uren = pp2_get_student_work_hours(naam)
+
+    if len(werk_uren) >= 4:
+        pp2_korte_pauze_verplicht.append(naam)
+
+pp2_korte_pauze_ontbreekt = []
+for naam in pp2_korte_pauze_verplicht:
+    if not pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+        pp2_korte_pauze_ontbreekt.append(naam)
+
+# -----------------------------------
+# Check 2: korte pauzes
+# -----------------------------------
+if not pp2_korte_pauze_ontbreekt:
+    cel = ws_feedback2.cell(row_fb2, 1, "✓ Alle korte pauzes toegekend")
+    cel.fill = groen_fill
+    cel.font = Font(bold=True, color="006100")
+    row_fb2 += 2
+else:
+    cel = ws_feedback2.cell(row_fb2, 1, "✗ Ontbrekende korte pauzes:")
+    cel.fill = rood_fill
+    cel.font = Font(bold=True)
+    row_fb2 += 1
+
+    for naam in pp2_korte_pauze_ontbreekt:
+        ws_feedback2.cell(row_fb2, 1, naam)
+        row_fb2 += 1
+
+# -----------------------------------
+# kolombreedte netjes maken
+# -----------------------------------
+ws_feedback2.column_dimensions['A'].width = 40
 
 for row in ws_feedback2.iter_rows():
     for cell in row:
@@ -4339,96 +4342,6 @@ for row in ws_feedback2.iter_rows():
             top=Side(style="thin"),
             bottom=Side(style="thin")
         )
-
-
-row_fb2 += 2
-ws_feedback2.cell(row_fb2, 1, "Random volgorde lange werkers:")
-row_fb2 += 1
-
-if pp2_lange_werkers_random:
-    for i, naam in enumerate(pp2_lange_werkers_random, start=1):
-        ws_feedback2.cell(row_fb2, 1, i)
-        ws_feedback2.cell(row_fb2, 2, naam)
-        row_fb2 += 1
-else:
-    ws_feedback2.cell(row_fb2, 1, "Geen lange werkers gevonden")
-    row_fb2 += 1
-
-
-row_fb2 += 2
-ws_feedback2.cell(row_fb2, 1, "Lege kwartierblokjes na stap 2:")
-ws_feedback2.cell(row_fb2, 2, pp2_remaining_empty_quarters)
-row_fb2 += 1
-
-ws_feedback2.cell(row_fb2, 1, "Nog te geven korte pauzes:")
-ws_feedback2.cell(row_fb2, 2, pp2_remaining_short_breaks_needed)
-row_fb2 += 1
-
-ws_feedback2.cell(row_fb2, 1, "Aantal open spots:")
-ws_feedback2.cell(row_fb2, 2, pp2_open_spots_count)
-row_fb2 += 2
-
-ws_feedback2.cell(row_fb2, 1, "Korte pauzes van pauzevlinders geplaatst:")
-row_fb2 += 1
-
-if pp2_pv_short_breaks_placed:
-    for item in pp2_pv_short_breaks_placed:
-        ws_feedback2.cell(row_fb2, 1, item["naam"])
-        ws_feedback2.cell(row_fb2, 2, item["tijd"])
-        row_fb2 += 1
-else:
-    ws_feedback2.cell(row_fb2, 1, "Geen")
-    row_fb2 += 1
-
-
-row_fb2 += 2
-ws_feedback2.cell(row_fb2, 1, "Overige korte pauzes geplaatst voor vroegstoppers:")
-row_fb2 += 1
-
-if pp2_regular_short_breaks_placed:
-    for item in pp2_regular_short_breaks_placed:
-        ws_feedback2.cell(row_fb2, 1, item["naam"])
-        ws_feedback2.cell(row_fb2, 2, item["pauzevlinder"])
-        ws_feedback2.cell(row_fb2, 3, item["tijd"])
-        row_fb2 += 1
-else:
-    ws_feedback2.cell(row_fb2, 1, "Geen")
-    row_fb2 += 1
-
-row_fb2 += 1
-ws_feedback2.cell(row_fb2, 1, "Nog niet geplaatste vroegstoppers:")
-row_fb2 += 1
-
-if pp2_students_before_end_pending:
-    for naam in pp2_students_before_end_pending:
-        ws_feedback2.cell(row_fb2, 1, naam)
-        row_fb2 += 1
-else:
-    ws_feedback2.cell(row_fb2, 1, "Geen")
-    row_fb2 += 1
-
-
-row_fb2 += 2
-ws_feedback2.cell(row_fb2, 1, "Stap 5 geplaatste korte pauzes:")
-row_fb2 += 1
-
-if pp2_step5_short_breaks_placed:
-    ws_feedback2.cell(row_fb2, 1, "Naam")
-    ws_feedback2.cell(row_fb2, 2, "Pauzevlinder")
-    ws_feedback2.cell(row_fb2, 3, "Tijd")
-    ws_feedback2.cell(row_fb2, 4, "Via lange-pauze-prioriteit")
-    row_fb2 += 1
-
-    for item in pp2_step5_short_breaks_placed:
-        ws_feedback2.cell(row_fb2, 1, item["naam"])
-        ws_feedback2.cell(row_fb2, 2, item["pauzevlinder"])
-        ws_feedback2.cell(row_fb2, 3, item["tijd"])
-        ws_feedback2.cell(row_fb2, 4, "ja" if item["via_lange_pauze_prioriteit"] else "nee")
-        row_fb2 += 1
-else:
-    ws_feedback2.cell(row_fb2, 1, "Geen")
-    row_fb2 += 1
-
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
