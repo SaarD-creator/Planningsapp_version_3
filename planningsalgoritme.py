@@ -2919,92 +2919,76 @@ output.seek(0)  # Zorg dat lezen vanaf begin kan
 ### DEEL 5: PP OPTIE 2 & FEEDBACK OPTIE 2 (STAP 1)
 ### -------------------------------------------------------------
 
-# 1. Werkbladen aanmaken
+# 1. Nieuwe werkbladen aanmaken
 ws_pauze2 = wb_out.create_sheet(title="PP optie 2")
 ws_feedback2 = wb_out.create_sheet(title="Feedback optie 2")
 
-# 2. Header Logica: Exacte Kwartier-opdeling (zoals in Pauzevlinders [1])
-uren_rij_pp2 = []
-from datetime import datetime, timedelta
-if required_pauze_hours:
-    start_uur = min(required_pauze_hours)
-    eind_uur = max(required_pauze_hours)
-    tijd = datetime(2020, 1, 1, start_uur, 0)
-    # De planning loopt tot 30 minuten na het laatste pauze-uur
-    laatste_moment = datetime(2020, 1, 1, eind_uur, 30)
-    while tijd <= laatste_moment:
-        label = f"{tijd.hour}u" if tijd.minute == 0 else f"{tijd.hour}u{tijd.minute:02d}"
-        uren_rij_pp2.append(label)
-        tijd += timedelta(minutes=15)
-else:
-    # Fallback op basis van open_uren
-    for uur in sorted(open_uren):
-        uren_rij_pp2.append(f"{uur}u")
-
-# Headers schrijven in Rij 1
-for col_idx, label in enumerate(uren_rij_pp2, start=2):
+# 2. EXACTE LAYOUT KOPIËREN (Gebaseerd op 'Pauzevlinders')
+# We gebruiken de uren_rij1 die in Deel 2 is opgebouwd [1]
+for col_idx, label in enumerate(uren_rij1, start=2):
     c = ws_pauze2.cell(1, col_idx, label)
     c.fill = light_fill
     c.alignment = center_align
     c.border = thin_border
 
-# Datum in A1
-a1_2 = ws_pauze2.cell(1, 1, vandaag)
-a1_2.font = Font(bold=True)
-a1_2.fill = light_fill
-a1_2.alignment = center_align
-a1_2.border = thin_border
+# Datum in A1 [2]
+a1_pp2 = ws_pauze2.cell(1, 1, vandaag)
+a1_pp2.font = Font(bold=True)
+a1_pp2.fill = light_fill
+a1_pp2.alignment = center_align
+a1_pp2.border = thin_border
 
-# 3. Rij-structuur: "Pauzevlinder X" boven de Naam van de student (zoals gevraagd)
-pv_mapping2 = [] 
+# Rij-structuur: Boven "Pauzevlinder X", Onder de naam van de student [2]
+pv_mapping2 = [] # Lijst van (pv_dict, naam_rij_index)
 rij_cursor = 2
 for pv_idx, pv in enumerate(selected, start=1):
-    # Attractie-rij (Bovenste): Bevat tekst "Pauzevlinder X"
-    ws_pauze2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}").font = Font(bold=True)
-    ws_pauze2.cell(rij_cursor, 1).fill = white_fill
-    ws_pauze2.cell(rij_cursor, 1).border = thin_border
+    # Attractierij (Boven): Bevat de tekst "Pauzevlinder X"
+    attr_row = ws_pauze2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}")
+    attr_row.font = Font(bold=True)
+    attr_row.fill = white_fill
+    attr_row.border = thin_border
     
-    # Naam-rij (Onderste): Bevat de werkelijke naam van de student
-    naam_rij_idx = rij_cursor + 1
-    name_label = ws_pauze2.cell(naam_rij_idx, 1, pv["naam"])
+    # Naamrij (Onder): Bevat de werkelijke naam van de pauzevlinder
+    naam_rij = rij_cursor + 1
+    name_label = ws_pauze2.cell(naam_rij, 1, pv["naam"])
     name_label.font = Font(bold=True)
     name_label.fill = light_fill
     name_label.alignment = center_align
     name_label.border = thin_border
     
-    # Sla de index van de Naam-rij op voor de plaatsing van de pauzes
-    pv_mapping2.append((pv, naam_rij_idx))
+    pv_mapping2.append((pv, naam_rij))
     rij_cursor += 2
 
-# Kolombreedtes instellen [2]
+# Kolombreedtes exact overnemen [3]
 ws_pauze2.column_dimensions['A'].width = max(18, max_len_colA + 2)
-for col in range(2, len(uren_rij_pp2) + 2):
+for col in range(2, len(uren_rij1) + 2):
     ws_pauze2.column_dimensions[get_column_letter(col)].width = 10
 
-# 4. LOGICA STAP 1: Vroeg-stoppende werkers
+# 3. LOGICA STAP 1: Vroeg-stoppende werkers
+# Filter: minstens 4u werken en stoppen om/vóór 15u [4, 5]
 vroege_stoppers = []
 for s in studenten:
     if s["is_pauzevlinder"]: continue
     w_uren = get_student_work_hours(s["naam"])
-    # Werkt minstens 4u en stopt om 15u of vroeger [3]
     if len(w_uren) >= 4 and max(w_uren, default=0) <= 15:
         vroege_stoppers.append(s)
 
-# De studenten inplannen volgens jouw regels
+# Planning uitvoeren
 for idx, student in enumerate(vroege_stoppers):
-    # Verdeling: student 1&2 -> PV1, student 3&4 -> PV2, enz.
-    pv_map_idx = (idx // 2) % len(pv_mapping2)
-    pv_obj, n_rij = pv_mapping2[pv_map_idx]
+    # Verdeling: student 1&2 -> PV1, student 3&4 -> PV2, etc.
+    pv_idx_map = (idx // 2) % len(pv_mapping2)
+    pv_obj, n_rij = pv_mapping2[pv_idx_map]
     
     naam = student["naam"]
     w_uren = get_student_work_hours(naam)
     target_col = None
     
     if idx % 2 == 0:
-        # EERSTE student: Midden van de shift
+        # EERSTE student: Midden van de shift [6]
         midden_uur = w_uren[len(w_uren)//2]
         for col in range(2, ws_pauze2.max_column + 1):
-            if parse_header_uur(ws_pauze2.cell(1, col).value) == midden_uur:
+            header = ws_pauze2.cell(1, col).value
+            if parse_header_uur(header) == midden_uur:
                 target_col = col
                 break
     else:
@@ -3016,26 +3000,26 @@ for idx, student in enumerate(vroege_stoppers):
                 break
 
     if target_col:
-        # Check regels: Niet in eerste of laatste uur [4]
+        # Regels: Niet in eerste of laatste uur [7]
         p_uur = parse_header_uur(ws_pauze2.cell(1, target_col).value)
         if p_uur not in [w_uren, w_uren[-1]]:
-            attr = vind_attractie_op_uur(naam, p_uur)
+            attr = vind_attractie_op_uur(naam, p_uur) [8]
             
-            # Vul de Naam-cel in (paars voor kwartierpauze [5])
+            # Naam invullen (paars = kwartierpauze) [9]
             ws_pauze2.cell(n_rij, target_col, naam).alignment = center_align
             ws_pauze2.cell(n_rij, target_col).fill = lichtpaars_fill
             ws_pauze2.cell(n_rij, target_col).border = thin_border
             
-            # Vul de Attractie-cel in (rij erboven)
+            # Attractie in rij erboven
             ws_pauze2.cell(n_rij - 1, target_col, attr).alignment = center_align
             ws_pauze2.cell(n_rij - 1, target_col).border = thin_border
 
-# 5. Feedback Optie 2: Kopie van originele logica [6]
+# 4. FEEDBACK OPTIE 2 (Letterlijke kopie van originele logica) [10, 11]
 row_f = 1
 ws_feedback2.cell(row_f, 1, "Feedback voor PP Optie 2 - Stap 1").font = Font(bold=True)
 row_f += 2
 
-missing_p = []
+missing_short = []
 werkende = [s for s in studenten if student_totalen.get(s["naam"], 0) >= 4]
 
 for s in werkende:
@@ -3044,19 +3028,19 @@ for s in werkende:
     for _, n_rij in pv_mapping2:
         for col in range(2, ws_pauze2.max_column + 1):
             if ws_pauze2.cell(n_rij, col).value == n:
-                # Korte pauze check: geen buren met dezelfde naam
+                # Korte pauze check: geen buren met dezelfde naam [10]
                 is_l = (col+1 <= ws_pauze2.max_column and ws_pauze2.cell(n_rij, col+1).value == n) or \
                        (col-1 >= 2 and ws_pauze2.cell(n_rij, col-1).value == n)
                 if not is_l:
                     heeft_k = True
                     break
         if heeft_k: break
-    if not heeft_k: missing_p.append(n)
+    if not heeft_k: missing_short.append(n)
 
 ws_feedback2.cell(row_f, 1, "Werkende studenten zonder korte pauze (PP Optie 2):")
 row_f += 1
-if missing_p:
-    for n in sorted(missing_p):
+if missing_short:
+    for n in sorted(missing_short):
         ws_feedback2.cell(row_f, 1, n)
         row_f += 1
 else:
@@ -3065,7 +3049,19 @@ else:
     vink.fill = PatternFill(start_color="92D050", fill_type="solid")
     vink.font = Font(bold=True, color="006100")
 
+### -------------------------------------------------------------
+### CORRECTIE DOWNLOADKNOP (Lost de AttributeError op)
+### -----------------------------
+output = BytesIO()
+wb_out.save(output)
+output.seek(0)
 
+st.download_button(
+    "Download planning",
+    data=output.getvalue(),
+    # Gebruik datetime.now() omdat jouw script 'from datetime import datetime' gebruikt [12]
+    file_name=f"Planning_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+)
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
 
