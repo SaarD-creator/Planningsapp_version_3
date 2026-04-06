@@ -2914,58 +2914,57 @@ output.seek(0)  # Zorg dat lezen vanaf begin kan
 #-------------------------------------------------------------------------------------------
 
 
-
 ### -------------------------------------------------------------
 ### DEEL 5: PP OPTIE 2 & FEEDBACK OPTIE 2 (STAP 1)
 ### -------------------------------------------------------------
 
-# 1. Nieuwe werkbladen aanmaken
+# 1. Werkbladen aanmaken
 ws_pauze2 = wb_out.create_sheet(title="PP optie 2")
 ws_feedback2 = wb_out.create_sheet(title="Feedback optie 2")
 
-# 2. EXACTE LAYOUT KOPIËREN (Gebaseerd op 'Pauzevlinders')
-# We gebruiken de uren_rij1 die in Deel 2 is opgebouwd [1]
+# 2. EXACTE LAYOUT (Kopie van 'Pauzevlinders')
+# Headers in rij 1 schrijven (gebaseerd op uren_rij1 uit bron [2, 3])
 for col_idx, label in enumerate(uren_rij1, start=2):
     c = ws_pauze2.cell(1, col_idx, label)
     c.fill = light_fill
     c.alignment = center_align
     c.border = thin_border
 
-# Datum in A1 [2]
+# Datum in A1 [3]
 a1_pp2 = ws_pauze2.cell(1, 1, vandaag)
 a1_pp2.font = Font(bold=True)
 a1_pp2.fill = light_fill
 a1_pp2.alignment = center_align
 a1_pp2.border = thin_border
 
-# Rij-structuur: Boven "Pauzevlinder X", Onder de naam van de student [2]
-pv_mapping2 = [] # Lijst van (pv_dict, naam_rij_index)
+# Rij-structuur opbouwen: Attractierij (Pauzevlinder X) + Naamrij (Naam PV) [3, 4]
+pv_mapping2 = [] 
 rij_cursor = 2
 for pv_idx, pv in enumerate(selected, start=1):
-    # Attractierij (Boven): Bevat de tekst "Pauzevlinder X"
-    attr_row = ws_pauze2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}")
-    attr_row.font = Font(bold=True)
-    attr_row.fill = white_fill
-    attr_row.border = thin_border
+    # Bovenste rij: Label "Pauzevlinder X"
+    ws_pauze2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}").font = Font(bold=True)
+    ws_pauze2.cell(rij_cursor, 1).fill = white_fill
+    ws_pauze2.cell(rij_cursor, 1).border = thin_border
     
-    # Naamrij (Onder): Bevat de werkelijke naam van de pauzevlinder
-    naam_rij = rij_cursor + 1
-    name_label = ws_pauze2.cell(naam_rij, 1, pv["naam"])
+    # Onderste rij: Naam van de Pauzevlinder
+    naam_rij_idx = rij_cursor + 1
+    name_label = ws_pauze2.cell(naam_rij_idx, 1, pv["naam"])
     name_label.font = Font(bold=True)
     name_label.fill = light_fill
     name_label.alignment = center_align
     name_label.border = thin_border
     
-    pv_mapping2.append((pv, naam_rij))
+    # Sla de naam_rij_idx op voor de logica
+    pv_mapping2.append((pv, naam_rij_idx))
     rij_cursor += 2
 
-# Kolombreedtes exact overnemen [3]
+# Kolombreedtes instellen [5]
 ws_pauze2.column_dimensions['A'].width = max(18, max_len_colA + 2)
 for col in range(2, len(uren_rij1) + 2):
     ws_pauze2.column_dimensions[get_column_letter(col)].width = 10
 
 # 3. LOGICA STAP 1: Vroeg-stoppende werkers
-# Filter: minstens 4u werken en stoppen om/vóór 15u [4, 5]
+# Filter: werkt >= 4u en stopt om/vóór 15u [6]
 vroege_stoppers = []
 for s in studenten:
     if s["is_pauzevlinder"]: continue
@@ -2973,74 +2972,82 @@ for s in studenten:
     if len(w_uren) >= 4 and max(w_uren, default=0) <= 15:
         vroege_stoppers.append(s)
 
-# Planning uitvoeren
+# Planning uitvoeren volgens jouw stappen
+pauze_cols_pp2 = list(range(2, len(uren_rij1) + 2))
+
 for idx, student in enumerate(vroege_stoppers):
     # Verdeling: student 1&2 -> PV1, student 3&4 -> PV2, etc.
-    pv_idx_map = (idx // 2) % len(pv_mapping2)
-    pv_obj, n_rij = pv_mapping2[pv_idx_map]
+    pv_map_idx = (idx // 2) % len(pv_mapping2)
+    pv_obj, n_rij = pv_mapping2[pv_map_idx]
     
     naam = student["naam"]
     w_uren = get_student_work_hours(naam)
     target_col = None
     
     if idx % 2 == 0:
-        # EERSTE student: Midden van de shift [6]
+        # EERSTE student: Midden van de shift
         midden_uur = w_uren[len(w_uren)//2]
-        for col in range(2, ws_pauze2.max_column + 1):
-            header = ws_pauze2.cell(1, col).value
-            if parse_header_uur(header) == midden_uur:
+        for col in pauze_cols_pp2:
+            h_val = ws_pauze2.cell(1, col).value
+            if parse_header_uur(h_val) == midden_uur:
+                # We pakken het eerste kwartier van dat uur (bv. :00 of :30)
                 target_col = col
                 break
     else:
-        # TWEEDE student: Naast de vorige student in dezelfde rij
-        vorige_n = vroege_stoppers[idx-1]["naam"]
-        for col in range(2, ws_pauze2.max_column + 1):
-            if ws_pauze2.cell(n_rij, col).value == vorige_n:
+        # TWEEDE student: Verplicht naast de vorige student (het volgende kwartier)
+        vorige_naam = vroege_stoppers[idx-1]["naam"]
+        for col in pauze_cols_pp2:
+            if ws_pauze2.cell(n_rij, col).value == vorige_naam:
                 target_col = col + 1
                 break
 
-    if target_col:
-        # Regels: Niet in eerste of laatste uur [7]
-        p_uur = parse_header_uur(ws_pauze2.cell(1, target_col).value)
-        if p_uur not in [w_uren, w_uren[-1]]:
-            attr = vind_attractie_op_uur(naam, p_uur) [8]
+    if target_col and target_col <= max(pauze_cols_pp2):
+        # Controleer regels: niet in eerste of laatste werkuur [7]
+        h_val = ws_pauze2.cell(1, target_col).value
+        p_uur = parse_header_uur(h_val)
+        
+        if p_uur is not None and p_uur not in [w_uren, w_uren[-1]]:
+            # Attractie ophalen (ZONDER de [1] fout) [8]
+            attr = vind_attractie_op_uur(naam, p_uur)
             
-            # Naam invullen (paars = kwartierpauze) [9]
-            ws_pauze2.cell(n_rij, target_col, naam).alignment = center_align
-            ws_pauze2.cell(n_rij, target_col).fill = lichtpaars_fill
-            ws_pauze2.cell(n_rij, target_col).border = thin_border
-            
-            # Attractie in rij erboven
-            ws_pauze2.cell(n_rij - 1, target_col, attr).alignment = center_align
-            ws_pauze2.cell(n_rij - 1, target_col).border = thin_border
+            if attr:
+                # Invullen in Naam-rij (paars voor kwartierpauze) [9]
+                ws_pauze2.cell(n_rij, target_col, naam).alignment = center_align
+                ws_pauze2.cell(n_rij, target_col).fill = lichtpaars_fill
+                ws_pauze2.cell(n_rij, target_col).border = thin_border
+                
+                # Invullen in Attractie-rij erboven [9]
+                ws_pauze2.cell(n_rij - 1, target_col, attr).alignment = center_align
+                ws_pauze2.cell(n_rij - 1, target_col).border = thin_border
 
-# 4. FEEDBACK OPTIE 2 (Letterlijke kopie van originele logica) [10, 11]
+# 4. FEEDBACK OPTIE 2 (Identieke kopie van 'Feedback' [10, 11])
 row_f = 1
 ws_feedback2.cell(row_f, 1, "Feedback voor PP Optie 2 - Stap 1").font = Font(bold=True)
 row_f += 2
 
-missing_short = []
+missing_pp2 = []
 werkende = [s for s in studenten if student_totalen.get(s["naam"], 0) >= 4]
 
 for s in werkende:
     n = s["naam"]
     heeft_k = False
     for _, n_rij in pv_mapping2:
-        for col in range(2, ws_pauze2.max_column + 1):
-            if ws_pauze2.cell(n_rij, col).value == n:
+        for col in pauze_cols_pp2:
+            cel = ws_pauze2.cell(n_rij, col)
+            if cel.value == n:
                 # Korte pauze check: geen buren met dezelfde naam [10]
-                is_l = (col+1 <= ws_pauze2.max_column and ws_pauze2.cell(n_rij, col+1).value == n) or \
+                is_l = (col+1 <= max(pauze_cols_pp2) and ws_pauze2.cell(n_rij, col+1).value == n) or \
                        (col-1 >= 2 and ws_pauze2.cell(n_rij, col-1).value == n)
                 if not is_l:
                     heeft_k = True
                     break
         if heeft_k: break
-    if not heeft_k: missing_short.append(n)
+    if not heeft_k: missing_pp2.append(n)
 
 ws_feedback2.cell(row_f, 1, "Werkende studenten zonder korte pauze (PP Optie 2):")
 row_f += 1
-if missing_short:
-    for n in sorted(missing_short):
+if missing_pp2:
+    for n in sorted(missing_pp2):
         ws_feedback2.cell(row_f, 1, n)
         row_f += 1
 else:
@@ -3049,9 +3056,7 @@ else:
     vink.fill = PatternFill(start_color="92D050", fill_type="solid")
     vink.font = Font(bold=True, color="006100")
 
-### -------------------------------------------------------------
-### CORRECTIE DOWNLOADKNOP (Lost de AttributeError op)
-### -----------------------------
+# 5. DOWNLOAD KNOP CORRECTIE (lost AttributeError op uit [12])
 output = BytesIO()
 wb_out.save(output)
 output.seek(0)
@@ -3059,7 +3064,6 @@ output.seek(0)
 st.download_button(
     "Download planning",
     data=output.getvalue(),
-    # Gebruik datetime.now() omdat jouw script 'from datetime import datetime' gebruikt [12]
     file_name=f"Planning_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 )
 
