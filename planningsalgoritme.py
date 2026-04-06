@@ -2913,53 +2913,60 @@ output.seek(0)  # Zorg dat lezen vanaf begin kan
 # nieuwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww
 #-------------------------------------------------------------------------------------------
 
-### -------------------------------------------------------------
-### DEEL 5: PP OPTIE 2 & FEEDBACK OPTIE 2 (STAP 1)
-### -------------------------------------------------------------
+
+
+### -----------------------------
+### DEEL 5: PP optie 2 & Feedback optie 2 (Stap 1 - Exacte Layout)
+### -----------------------------
 
 # 1. Werkbladen aanmaken
 ws_pauze2 = wb_out.create_sheet(title="PP optie 2")
 ws_feedback2 = wb_out.create_sheet(title="Feedback optie 2")
 
-# 2. EXACTE LAYOUT KOPIËREN (Gebaseerd op 'Pauzevlinders')
-# Uren-headers in rij 1 kopiëren [1, 2]
+# 2. EXACTE HEADER LAYOUT (Kwartier-opdeling uit bron [1-3])
+# We gebruiken de uren_rij1 die al is aangemaakt voor de eerste planning
 for col_idx, uur in enumerate(uren_rij1, start=2):
     c = ws_pauze2.cell(1, col_idx, uur)
     c.fill = light_fill
     c.alignment = center_align
     c.border = thin_border
 
-# Datum in A1 [2]
+# Datum in A1
 a1_2 = ws_pauze2.cell(1, 1, vandaag)
 a1_2.font = Font(bold=True)
 a1_2.fill = light_fill
 a1_2.alignment = center_align
 a1_2.border = thin_border
 
-# Kolombreedtes instellen [3]
-ws_pauze2.column_dimensions['A'].width = max(12, max_len_colA + 2)
-for col in range(2, len(uren_rij1) + 2):
-    ws_pauze2.column_dimensions[get_column_letter(col)].width = 10
-
-# Pauzevlinder-rijen structureren (Attractierij + Naamrij per PV) [4, 5]
+# 3. RIJ-STRUCTUUR OPBOUWEN
+# Per pauzevlinder: bovenste rij = "Pauzevlinder X", onderste rij = Naam van de PV
 pv_mapping2 = [] # Opslaan als lijst van (pv_object, naam_rij_index)
 rij_cursor = 2
 for pv_idx, pv in enumerate(selected, start=1):
-    # Attractierij (rij_cursor) - leeg laten voor nu, enkel border in kolom A
-    ws_pauze2.cell(rij_cursor, 1).border = thin_border
+    # Attractierij (Boven): Bevat "Pauzevlinder X"
+    pv_label_cell = ws_pauze2.cell(rij_cursor, 1, f"Pauzevlinder {pv_idx}")
+    pv_label_cell.font = Font(bold=True)
+    pv_label_cell.fill = white_fill # Zoals in bron [4]
+    pv_label_cell.border = thin_border
     
-    # Naamrij (rij_cursor + 1)
-    title_cell = ws_pauze2.cell(rij_cursor + 1, 1, f"Pauzevlinder {pv_idx}")
-    title_cell.font = Font(bold=True)
-    title_cell.fill = light_fill
-    title_cell.alignment = center_align
-    title_cell.border = thin_border
+    # Naamrij (Onder): Bevat de werkelijke naam van de pauzevlinder
+    name_label_cell = ws_pauze2.cell(rij_cursor + 1, 1, pv["naam"])
+    name_label_cell.font = Font(bold=True)
+    name_label_cell.fill = light_fill # Geelachtige kleur uit bron [2]
+    name_label_cell.alignment = center_align
+    name_label_cell.border = thin_border
     
+    # We slaan de naam_rij_index op voor de logica van Stap 1
     pv_mapping2.append((pv, rij_cursor + 1))
     rij_cursor += 2
 
-# 3. LOGICA STAP 1: Vroeg-stoppende werkers
-# Filter: minstens 4u werken, stoppen <= 15u, geen PV [6]
+# Kolombreedtes instellen [5]
+ws_pauze2.column_dimensions['A'].width = max(18, max_len_colA + 2)
+for col in range(2, len(uren_rij1) + 2):
+    ws_pauze2.column_dimensions[get_column_letter(col)].width = 10
+
+# 4. LOGICA STAP 1: Vroeg-stoppende werkers
+# Filter: minstens 4u werken, stoppen om of vóór 15u [6]
 vroege_stoppers = []
 for s in studenten:
     if s["is_pauzevlinder"]: continue
@@ -2970,16 +2977,16 @@ for s in studenten:
 pauze_cols = [c for c in range(2, ws_pauze2.max_column + 1)]
 
 for idx, student in enumerate(vroege_stoppers):
-    # Verdeling: student 1&2 bij PV1, student 3&4 bij PV2, etc.
+    # Verdeling over PV's: 1&2 bij PV1, 3&4 bij PV2, etc.
     pv_idx_map = (idx // 2) % len(pv_mapping2)
     pv_obj, naam_rij = pv_mapping2[pv_idx_map]
     
     naam = student["naam"]
     werk_uren = get_student_work_hours(naam)
-    
     target_col = None
+    
     if idx % 2 == 0:
-        # EERSTE student van het paar: midden van de shift
+        # EERSTE student: Midden van de shift [7]
         midden_uur = werk_uren[len(werk_uren)//2]
         for col in pauze_cols:
             header = ws_pauze2.cell(1, col).value
@@ -2987,7 +2994,7 @@ for idx, student in enumerate(vroege_stoppers):
                 target_col = col
                 break
     else:
-        # TWEEDE student van het paar: verplicht naast de vorige student
+        # TWEEDE student: Direct naast de vorige student in dezelfde rij [8]
         vorige_naam = vroege_stoppers[idx-1]["naam"]
         for c_search in pauze_cols:
             if ws_pauze2.cell(naam_rij, c_search).value == vorige_naam:
@@ -2995,25 +3002,28 @@ for idx, student in enumerate(vroege_stoppers):
                 break
 
     if target_col:
-        # REGELS: Niet in eerste of laatste werkuur [7]
-        uur_van_pauze = parse_header_uur(ws_pauze2.cell(1, target_col).value)
-        if uur_van_pauze not in [werk_uren, werk_uren[-1]]:
-            attr = vind_attractie_op_uur(naam, uur_van_pauze) # [8]
+        # Check op eerste/laatste werkuur [7]
+        uur_pauze = parse_header_uur(ws_pauze2.cell(1, target_col).value)
+        if uur_pauze not in [werk_uren, werk_uren[-1]]:
+            attr = vind_attractie_op_uur(naam, uur_pauze)
             
-            # Naam invullen in Naamrij
-            ws_pauze2.cell(naam_rij, target_col, naam).alignment = center_align
-            ws_pauze2.cell(naam_rij, target_col).fill = lichtpaars_fill # Kwartierpauze [4]
-            ws_pauze2.cell(naam_rij, target_col).border = thin_border
+            # Vul de Naam-rij in
+            cel_naam = ws_pauze2.cell(naam_rij, target_col, naam)
+            cel_naam.alignment = center_align
+            cel_naam.fill = lichtpaars_fill # Kwartierpauze [8]
+            cel_naam.border = thin_border
             
-            # Attractie invullen in rij erboven (Attractierij) [4, 9]
-            ws_pauze2.cell(naam_rij - 1, target_col, attr).alignment = center_align
-            ws_pauze2.cell(naam_rij - 1, target_col).border = thin_border
+            # Vul de Attractie-rij erboven in
+            cel_attr = ws_pauze2.cell(naam_rij - 1, target_col, attr)
+            cel_attr.alignment = center_align
+            cel_attr.border = thin_border
 
-# 4. FEEDBACK OPTIE 2 (Identiek aan 'Feedback' werkblad) [10-13]
+# 5. FEEDBACK OPTIE 2 (Identieke kopie van Feedback werkblad)
 row_fb = 1
 ws_feedback2.cell(row_fb, 1, "Feedback voor PP Optie 2 - Stap 1").font = Font(bold=True)
 row_fb += 2
 
+# We berekenen wie er in 'PP optie 2' nog een korte pauze mist [9, 10]
 studenten_zonder_korte = []
 werkende_studenten = [s for s in studenten if student_totalen.get(s["naam"], 0) >= 4]
 
@@ -3024,10 +3034,9 @@ for s in werkende_studenten:
         for col in pauze_cols:
             cel = ws_pauze2.cell(n_rij, col)
             if cel.value == naam:
-                # Controleer of het een korte pauze is (geen buren met dezelfde naam) [12]
-                is_lange = False
-                if col+1 <= ws_pauze2.max_column and ws_pauze2.cell(n_rij, col+1).value == naam: is_lange = True
-                if col-1 >= 2 and ws_pauze2.cell(n_rij, col-1).value == naam: is_lange = True
+                # Korte pauze check: geen buren met dezelfde naam
+                is_lange = (col+1 <= ws_pauze2.max_column and ws_pauze2.cell(n_rij, col+1).value == naam) or \
+                           (col-1 >= 2 and ws_pauze2.cell(n_rij, col-1).value == naam)
                 if not is_lange:
                     heeft_korte = True
                     break
@@ -3041,10 +3050,10 @@ if studenten_zonder_korte:
         ws_feedback2.cell(row_fb, 1, n)
         row_fb += 1
 else:
-    vink_cel = ws_feedback2.cell(row_fb, 1, "✓")
+    vink = ws_feedback2.cell(row_fb, 1, "✓")
     ws_feedback2.cell(row_fb, 2, "Iedereen heeft een korte pauze gekregen.")
-    vink_cel.fill = PatternFill(start_color="92D050", fill_type="solid")
-    vink_cel.font = Font(bold=True, color="006100")
+    vink.fill = PatternFill(start_color="92D050", fill_type="solid")
+    vink.font = Font(bold=True, color="006100")
 
 
 
