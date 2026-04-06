@@ -2924,8 +2924,8 @@ output.seek(0)  # Zorg dat lezen vanaf begin kan
 ws_pp2 = wb_out.create_sheet(title="PP optie 2")
 ws_fb2 = wb_out.create_sheet(title="Feedback optie 2")
 
-# 2. Setup: Kopieer urenrij van de eerste pauzeplanning
-# We gebruiken uren_rij1 en stijlen die al gedefinieerd zijn in je script [3, 4]
+# 2. Setup: Kopieer urenrij en styling van de eerste pauzeplanning
+# We gebruiken uren_rij1 en stijlen die al gedefinieerd zijn
 for col_idx, uur in enumerate(uren_rij1, start=2):
     c = ws_pp2.cell(1, col_idx, uur)
     c.fill = light_fill
@@ -2935,7 +2935,7 @@ for col_idx, uur in enumerate(uren_rij1, start=2):
 ws_pp2.cell(1, 1, vandaag).fill = light_fill
 ws_pp2.cell(1, 1).border = thin_border
 
-# Maak een lijst van de PV-rijen (rekening houdend met attractierij erboven)
+# Maak een lijst van de PV-rijen (2 rijen per PV: Attractie + Naam)
 pp2_pv_info = []
 rij_cursor = 3 # Rij 1=Uren, Rij 2=Attractie PV1, Rij 3=Naam PV1
 for idx, pv in enumerate(selected, start=1):
@@ -2946,9 +2946,9 @@ for idx, pv in enumerate(selected, start=1):
     title_cell.border = thin_border
     
     pp2_pv_info.append({"naam": pv["naam"], "row": rij_cursor})
-    rij_cursor += 2 # Spring over naar de volgende set van 2 rijen
+    rij_cursor += 2
 
-# 3. Selectie: Vroeg-stoppende werkers (minstens 4u werk, max tot 15u) [5]
+# 3. Selectie: Vroeg-stoppende werkers (minstens 4u werk, max tot 15u)
 vroeg_stoppers = []
 for s in studenten:
     u = get_student_work_hours(s["naam"]) 
@@ -2965,24 +2965,25 @@ for i, student in enumerate(vroeg_stoppers):
     if not werk_uren:
         continue
     
-    # FIX: Gebruik indices  en [-1] om de TypeError te voorkomen
+    # FIX: Gebruik index  voor het eerste uur om TypeError te voorkomen
     verboden = {werk_uren, werk_uren[-1]}
 
-    # Bepaal doel-pauzevlinder (gaat per 2 studenten naar de volgende rij)
+    # Bepaal doel-pauzevlinder (gaat per 2 studenten naar de volgende PV-set)
     current_pv_row = pp2_pv_info[pv_pointer % len(pp2_pv_info)]["row"]
     
     final_col = None
     if i % 2 == 0:
         # Eerste student van het paar: midden van de shift
         mid_uur = werk_uren[len(werk_uren) // 2]
-        # Zoek bijbehorende kolom en mik op het half uur (:30) indien mogelijk
+        # Zoek kolom die bij dat uur hoort (voorkeur voor :30 voor het 'midden')
         for col in pauze_cols:
             header = str(ws_pp2.cell(1, col).value)
             if parse_header_uur(header) == mid_uur:
-                if "30" in header: # Voorkeur voor midden van het uur
+                if "30" in header: 
                     final_col = col
                     break
-        if not final_col: # Fallback naar eerste beschikbare kwartier van dat uur
+        # Fallback naar eerste beschikbare kwartier van dat uur
+        if not final_col:
             for col in pauze_cols:
                 if parse_header_uur(ws_pp2.cell(1, col).value) == mid_uur:
                     final_col = col
@@ -2992,9 +2993,10 @@ for i, student in enumerate(vroeg_stoppers):
         if last_placed_col:
             final_col = last_placed_col + 1
 
-    # Controleer of de plek geldig is volgens jouw regels
+    # Controleer of de plek geldig is (niet in eerste/laatste werkuur)
     if final_col and final_col in pauze_cols:
-        gekozen_uur = parse_header_uur(ws_pp2.cell(1, final_col).value)
+        gekozen_header = ws_pp2.cell(1, final_col).value
+        gekozen_uur = parse_header_uur(gekozen_header)
         
         if gekozen_uur in werk_uren and gekozen_uur not in verboden:
             # Naam invullen op de naam-rij
@@ -3003,7 +3005,7 @@ for i, student in enumerate(vroeg_stoppers):
             cel.alignment = center_align
             cel.border = thin_border
             
-            # Attractienaam erboven invullen (current_row - 1) [1, 6]
+            # Attractienaam erboven invullen (rij - 1)
             attr = vind_attractie_op_uur(naam, gekozen_uur)
             if attr:
                 attr_cel = ws_pp2.cell(current_pv_row - 1, final_col, attr)
@@ -3012,7 +3014,7 @@ for i, student in enumerate(vroeg_stoppers):
             
             last_placed_col = final_col
     
-    # Na elke 2 studenten naar de volgende pauzevlinder gaan
+    # Wissel van PV na elke 2 studenten
     if i % 2 == 1:
         pv_pointer += 1
         last_placed_col = None
@@ -3021,6 +3023,11 @@ for i, student in enumerate(vroeg_stoppers):
 ws_pp2.column_dimensions['A'].width = 20
 for col in range(2, ws_pp2.max_column + 1):
     ws_pp2.column_dimensions[get_column_letter(col)].width = 12
+
+# 6. Finale Save actie
+output = BytesIO()
+wb_out.save(output)
+output.seek(0)
 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
