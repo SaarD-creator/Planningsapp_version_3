@@ -1516,6 +1516,290 @@ _try_reduce_long_same_attr_clusters(max_iterations=4)
 # Post-processing: lege plekken opvullen door doorschuiven
 # -----------------------------
 
+# -----------------------------
+# Post-processing helpers: eenvoudige swap om >4u op zelfde attractie af te bouwen
+# -----------------------------
+def _find_student_attr_on_hour(student, uur):
+    for attr in attracties_te_plannen:
+        namen = assigned_map.get((uur, attr), [])
+        if student["naam"] in namen:
+            return attr
+    return None
+
+
+def _get_student_attr_hours(student, attr):
+    uren = set()
+    for h in student["assigned_hours"]:
+        namen = assigned_map.get((h, attr), [])
+        if student["naam"] in namen:
+            uren.add(h)
+    return sorted(uren)
+
+
+def _count_student_switches(student):
+    uren = sorted(set(student["assigned_hours"]))
+    if len(uren) <= 1:
+        return 0
+
+    switches = 0
+    prev_attr = None
+
+    for uur in uren:
+        attr = _find_student_attr_on_hour(student, uur)
+        if attr is None:
+            continue
+        if prev_attr is not None and attr != prev_attr:
+            switches += 1
+        prev_attr = attr
+
+    return switches
+
+
+def _count_total_switches():
+    return sum(_count_student_switches(s) for s in studenten_workend)
+
+
+def _count_students_5plus_same_attr():
+    count = 0
+    for s in studenten_workend:
+        for attr in attracties_te_plannen:
+            if len(_get_student_attr_hours(s, attr)) >= 5:
+                count += 1
+                break
+    return count
+
+
+def _student_can_take_hours_on_attr(student, attr, uren):
+    if not student_kan_attr(student, attr):
+        return False
+
+    if any(h in student["assigned_hours"] for h in uren):
+        return False
+
+    if any(h not in student["uren_beschikbaar"] for h in uren):
+        return False
+
+    huidige = set(_get_student_attr_hours(student, attr))
+    totaal = sorted(huidige | set(uren))
+
+    if len(totaal) > 6:
+        return False
+
+    if max_consecutive_hours(totaal) > 4:
+        return False
+
+    for h in uren:
+        if attr in red_spots.get(h, set()):
+            return False
+        if per_hour_assigned_counts[h][attr] >= _max_spots_for(attr, h):
+            return False
+
+    return True
+
+
+def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
+    """
+    Probeer een eenvoudige 2-richtingsswap:
+
+    - student_a staat op attr_a tijdens suffix_hours
+    - student_b staat tijdens diezelfde uren op andere attracties
+    - student_b neemt attr_a over op suffix_hours
+    - student_a neemt de oorspronkelijke attracties van student_b over op die uren
+
+    Alleen als ALLE suffix-uren lukt.
+    """
+    if not suffix_hours:
+        return False
+
+    # Bepaal op welke attracties student_b staat tijdens suffix_hours
+    b_attr_per_hour = {}
+    for h in suffix_hours:
+        b_attr = _find_student_attr_on_hour(student_b, h)
+        if not b_attr:
+            return False
+        b_attr_per_hour[h] = b_attr
+
+    # student_b moet attr_a kunnen overnemen op alle suffix-uren
+    if not _student_can_take_hours_on_attr(student_b, attr_a, suffix_hours):
+        return False
+
+    # student_a moet de vrijgekomen uren van student_b kunnen overnemen
+    for h in suffix_hours:
+        b_attr = b_attr_per_hour[h]
+        if not student_kan_attr(student_a, b_attr):
+            return False
+
+        # Check limieten voor student_a op b_attr
+        huidige = set(_get_student_attr_hours(student_a, b_attr))
+        totaal = sorted(huidige | {h})
+        if len(totaal) > 6:
+            return False
+        if max_consecutive_hours(totaal) > 4:
+            return False
+
+    # KPI vooraf
+    switches_before = _count_total_switches()
+    long_before = _count_students_5plus_same_attr()
+
+    # Snapshot voor rollback
+    snapshot_assigned_map = {k: list(v) for k, v in assigned_map.items()}
+    snapshot_counts = {uur: dict(vals) for uur, vals in per_hour_assigned_counts.items()}
+    snapshot_a_hours = list(student_a["assigned_hours"])
+    snapshot_a_attrs = set(student_a["assigned_attracties"])
+    snapshot_b_hours = list(student_b["assigned_hours"])
+    snapshot_b_attrs = set(student_b["assigned_attracties"])
+
+    # Voer swap uur per uur uit
+    for h in suffix_hours:
+        b_attr = b_attr_per_hour[h]
+
+        # verwijder student_a van attr_a op uur h
+        if student_a["naam"] in assigned_map.get((h, attr_a), []):
+            assigned_map[(h, attr_a)].remove(student_a["naam"])
+            if per_hour_assigned_counts[h][attr_a] > 0:
+                per_hour_assigned_counts[h][attr_a] -= 1
+
+        # verwijder student_b van b_attr op uur h
+        if student_b["naam"] in assigned_map.get((h, b_attr), []):
+            assigned_map[(h, b_attr)].remove(student_b["naam"])
+            if per_hour_assigned_counts[h][b_attr] > 0:
+                per_hour_assigned_counts[h][b_attr] -= 1
+
+        # zet student_b op attr_a
+        assigned_map[(h, attr_a)].append(student_b["naam"])
+        per_hour_assigned_counts[h][attr_a] += 1
+
+        # zet student_a op b_attr
+        assigned_map[(h, b_attr)].append(student_a["naam"])
+        per_hour_assigned_counts[h][b_attr] += 1
+
+    # Bouw student_a metadata opnieuw op
+    student_a["assigned_hours"] = []
+    student_a["assigned_attracties"] = set()
+    for uur in open_uren:
+        for attr in attracties_te_plannen:
+            if student_a["naam"] in assigned_map.get((uur, attr), []):
+                student_a["assigned_hours"].append(uur)
+                student_a["assigned_attracties"].add(attr)
+
+    # Bouw student_b metadata opnieuw op
+    student_b["assigned_hours"] = []
+    student_b["assigned_attracties"] = set()
+    for uur in open_uren:
+        for attr in attracties_te_plannen:
+            if student_b["naam"] in assigned_map.get((uur, attr), []):
+                student_b["assigned_hours"].append(uur)
+                student_b["assigned_attracties"].add(attr)
+
+    switches_after = _count_total_switches()
+    long_after = _count_students_5plus_same_attr()
+
+    # student_a moet echt verbeterd zijn op attr_a
+    a_hours_after = _get_student_attr_hours(student_a, attr_a)
+    a_runs_after = contiguous_runs(a_hours_after)
+    still_bad = (
+        len(a_hours_after) >= 5
+        or any(len(r) >= 5 for r in a_runs_after)
+    )
+
+    accepted = False
+    if not still_bad and switches_after <= switches_before + 1:
+        accepted = True
+    elif long_after < long_before and switches_after <= switches_before + 1:
+        accepted = True
+    elif long_after == long_before and switches_after < switches_before:
+        accepted = True
+
+    if accepted:
+        return True
+
+    # rollback
+    assigned_map.clear()
+    for k, v in snapshot_assigned_map.items():
+        assigned_map[k] = v
+
+    per_hour_assigned_counts.clear()
+    for uur, vals in snapshot_counts.items():
+        per_hour_assigned_counts[uur] = vals
+
+    student_a["assigned_hours"] = snapshot_a_hours
+    student_a["assigned_attracties"] = snapshot_a_attrs
+    student_b["assigned_hours"] = snapshot_b_hours
+    student_b["assigned_attracties"] = snapshot_b_attrs
+
+    return False
+
+
+def _postprocess_simple_long_attr_swaps(max_iterations=6):
+    """
+    Zoek studenten die >4 uur totaal op dezelfde attractie staan
+    en probeer een eenvoudige suffix-swap met een andere student.
+
+    Focus:
+    - laatste 2 uur, anders laatste 1 uur
+    - brede profielen eerst
+    - vaste hele-dag-studenten met rust laten
+    """
+    for _ in range(max_iterations):
+        changes_made = False
+
+        studenten_volgorde = sorted(
+            studenten_workend,
+            key=lambda s: (
+                -max([len(_get_student_attr_hours(s, a)) for a in attracties_te_plannen] + [0]),
+                -s.get("aantal_attracties", len(s.get("attracties", [])))
+            )
+        )
+
+        for student_a in studenten_volgorde:
+            if "locked_whole_day_students" in globals() and student_a["naam"] in locked_whole_day_students:
+                continue
+
+            for attr_a in attracties_te_plannen:
+                uren_attr_a = _get_student_attr_hours(student_a, attr_a)
+                if len(uren_attr_a) <= 4:
+                    continue
+
+                runs = contiguous_runs(uren_attr_a)
+                if not runs:
+                    continue
+
+                # werk vooral op de laatste run
+                doel_run = runs[-1]
+
+                kandidaat_suffixen = []
+                if len(doel_run) >= 2:
+                    kandidaat_suffixen.append(doel_run[-2:])
+                kandidaat_suffixen.append([doel_run[-1]])
+
+                for suffix_hours in kandidaat_suffixen:
+                    for student_b in studenten_workend:
+                        if student_b["naam"] == student_a["naam"]:
+                            continue
+                        if "locked_whole_day_students" in globals() and student_b["naam"] in locked_whole_day_students:
+                            continue
+
+                        # student_b moet op alle suffix-uren effectief ergens staan
+                        if any(_find_student_attr_on_hour(student_b, h) is None for h in suffix_hours):
+                            continue
+
+                        if _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
+                            changes_made = True
+                            break
+
+                    if changes_made:
+                        break
+                if changes_made:
+                    break
+            if changes_made:
+                break
+
+        if not changes_made:
+            break
+
+
+
+
 def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
     if stap > max_stappen:
         return False
@@ -1645,6 +1929,14 @@ def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
 
     return False
 
+# -----------------------------
+# Post-processing:
+# 1. eerst eenvoudige swaps om >4u op dezelfde attractie af te bouwen
+# 2. daarna lege plekken opvullen via doorschuiven
+# -----------------------------
+
+_postprocess_simple_long_attr_swaps(max_iterations=6)
+
 max_iterations = 5
 for _ in range(max_iterations):
     changes_made = False
@@ -1653,25 +1945,36 @@ for _ in range(max_iterations):
             max_pos = aantallen[uur].get(attr, 1)
             if attr in red_spots.get(uur, set()):
                 max_pos = 1
-            for pos_idx in range(1, max_pos+1):
+
+            for pos_idx in range(1, max_pos + 1):
                 namen = assigned_map.get((uur, attr), [])
-                naam = namen[pos_idx-1] if pos_idx-1 < len(namen) else ""
+                naam = namen[pos_idx - 1] if pos_idx - 1 < len(namen) else ""
                 if naam:
                     continue
+
                 # Probeer voor alle extra's op dit uur
-                extras_op_uur = list(extra_assignments[uur])  # kopie ivm mutatie
+                extras_op_uur = list(extra_assignments[uur])
                 for extra_naam in extras_op_uur:
                     extra_student = next((s for s in studenten_workend if s["naam"] == extra_naam), None)
                     if not extra_student:
                         continue
+
                     if attr in extra_student["attracties"]:
                         # Kan direct geplaatst worden, dus hoort niet bij dit scenario
                         continue
-                    # Probeer doorschuiven
+
                     if doorschuif_leegplek(uur, attr, pos_idx, extra_naam, 1, max_iterations):
                         extra_assignments[uur].remove(extra_naam)
                         changes_made = True
-                        break  # stop met deze plek, ga naar volgende lege plek
+                        break
+
+                if changes_made:
+                    break
+            if changes_made:
+                break
+        if changes_made:
+            break
+
     if not changes_made:
         break
 
