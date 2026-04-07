@@ -1309,61 +1309,121 @@ def stabiliseer_assigned_map_voor_output():
     maar alleen in welke volgorde namen in assigned_map[(uur, attr)] staan.
 
     Doel:
-    - Als een student meerdere opeenvolgende uren op dezelfde attractie staat,
-      probeer die visueel op dezelfde plek (1 of 2) te houden in Excel.
-    - Dit vermindert verwarrende sprongen tussen 'plek 1' en 'plek 2'.
-
-    Belangrijk:
-    - Bij een attractie met maar 1 plek wordt alles gewoon plek 1.
-    - Als plek 2 op een uur niet beschikbaar is (bv. red spot), dan kan continuïteit
-      uiteraard niet altijd behouden blijven.
+    - Studenten zo veel mogelijk op dezelfde plek (1 of 2) houden over opeenvolgende uren.
+    - Extra slim omgaan met uren waarop plek 2 later verdwijnt:
+      als iemand doorloopt naar een volgend uur met slechts 1 plek,
+      dan zetten we die student liefst al op plek 1 in het uur ervoor.
     """
+
+    def get_namen_op_uur(attr, uur):
+        namen = list(assigned_map.get((uur, attr), []))
+        unieke_namen = []
+        for naam in namen:
+            if naam and naam not in unieke_namen:
+                unieke_namen.append(naam)
+        return unieke_namen
+
+    def get_max_pos(attr, uur):
+        max_pos = aantallen[uur].get(attr, 1)
+        if attr in second_spot_blocked.get(uur, set()):
+            max_pos = 1
+        return max_pos
+
+    def naam_staat_op_attr_in_volgend_uur(attr, huidig_uur, naam):
+        volgende_uren = [u for u in sorted(open_uren) if u > huidig_uur]
+        if not volgende_uren:
+            return False
+        volgend_uur = volgende_uren[0]
+        return naam in get_namen_op_uur(attr, volgend_uur)
+
+    def naam_moet_liefst_naar_plek1(attr, huidig_uur, naam):
+        """
+        True als deze naam in het volgende uur nog op dezelfde attractie staat
+        én het volgende uur maar 1 plek heeft.
+        Dan is het logisch om deze student nu al op plek 1 te zetten.
+        """
+        volgende_uren = [u for u in sorted(open_uren) if u > huidig_uur]
+        if not volgende_uren:
+            return False
+
+        volgend_uur = volgende_uren[0]
+        if get_max_pos(attr, volgend_uur) != 1:
+            return False
+
+        return naam in get_namen_op_uur(attr, volgend_uur)
+
     for attr in alle_actieve_attracties:
         vorige_slots = {1: None, 2: None}
 
         for uur in sorted(open_uren):
-            namen = list(assigned_map.get((uur, attr), []))
+            namen = get_namen_op_uur(attr, uur)
+            max_pos = get_max_pos(attr, uur)
 
-            # verwijder eventuele dubbels, behoud volgorde
-            unieke_namen = []
-            for naam in namen:
-                if naam and naam not in unieke_namen:
-                    unieke_namen.append(naam)
-            namen = unieke_namen
-
-            max_pos = aantallen[uur].get(attr, 1)
-            if attr in second_spot_blocked.get(uur, set()):
-                max_pos = 1
-
-            # geen bezetting op dit uur
             if not namen:
                 assigned_map[(uur, attr)] = []
                 vorige_slots = {1: None, 2: None}
                 continue
 
-            # maar 1 plek beschikbaar: alles naar plek 1
             if max_pos <= 1:
                 assigned_map[(uur, attr)] = [namen[0]]
                 vorige_slots = {1: namen[0], 2: None}
                 continue
 
-            # max 2 plekken
+            # Vanaf hier: 2 plekken beschikbaar
             slots = {1: None, 2: None}
             resterend = namen[:]
 
-            # 1) probeer eerst dezelfde student op dezelfde plek te houden
+            # 1) Eerst vooruitkijken:
+            # als een student in het volgende uur doorloopt terwijl daar nog maar 1 plek is,
+            # dan krijgt die student nu voorrang op plek 1.
+            voorkeursnaam_plek1 = None
+            kandidaten_plek1 = [n for n in resterend if naam_moet_liefst_naar_plek1(attr, uur, n)]
+            if len(kandidaten_plek1) == 1:
+                voorkeursnaam_plek1 = kandidaten_plek1[0]
+            elif len(kandidaten_plek1) > 1:
+                # Als er meerdere kandidaten zijn:
+                # geef voorkeur aan wie vorige uur al op plek 1 stond,
+                # anders gewoon de eerste in de huidige lijst.
+                if vorige_slots.get(1) in kandidaten_plek1:
+                    voorkeursnaam_plek1 = vorige_slots.get(1)
+                else:
+                    voorkeursnaam_plek1 = kandidaten_plek1[0]
+
+            if voorkeursnaam_plek1 in resterend:
+                slots[1] = voorkeursnaam_plek1
+                resterend.remove(voorkeursnaam_plek1)
+
+            # 2) Daarna achterwaartse stabiliteit:
+            # probeer dezelfde student op dezelfde plek te houden
             for pos in [1, 2]:
+                if slots[pos] is not None:
+                    continue
                 vorige_naam = vorige_slots.get(pos)
                 if vorige_naam in resterend:
                     slots[pos] = vorige_naam
                     resterend.remove(vorige_naam)
 
-            # 2) vul lege plekken op met de resterende namen
+            # 3) Als plek 1 nog leeg is, geef lichte voorkeur aan iemand
+            # die ook in het volgende uur op deze attractie blijft staan
+            if slots[1] is None:
+                doorlopers = [n for n in resterend if naam_staat_op_attr_in_volgend_uur(attr, uur, n)]
+                if len(doorlopers) == 1:
+                    slots[1] = doorlopers[0]
+                    resterend.remove(doorlopers[0])
+                elif len(doorlopers) > 1:
+                    # behoud indien mogelijk de oude plek-1 volgorde
+                    if vorige_slots.get(1) in doorlopers:
+                        slots[1] = vorige_slots.get(1)
+                        resterend.remove(vorige_slots.get(1))
+                    else:
+                        slots[1] = doorlopers[0]
+                        resterend.remove(doorlopers[0])
+
+            # 4) Vul de rest gewoon op
             for pos in [1, 2]:
                 if slots[pos] is None and resterend:
                     slots[pos] = resterend.pop(0)
 
-            # 3) schrijf terug in vaste volgorde: plek 1, dan plek 2
             nieuwe_volgorde = []
             if slots[1]:
                 nieuwe_volgorde.append(slots[1])
