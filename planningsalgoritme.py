@@ -577,12 +577,75 @@ def _has_capacity(attr, uur):
         return False
     return per_hour_assigned_counts[uur][attr] < _max_spots_for(attr, uur)
 
+# -----------------------------
+# Helpers voor AS2-logica: eerste en laatste uur tellen als 1,5u
+# -----------------------------
+def _weighted_run_duration(hours_list):
+    """
+    Berekent de 'gewogen' duur van een aaneengesloten run.
+    Normaal telt elk uur als 1.
+    Als AS2 aan staat:
+    - eerste open uur telt als 1.5
+    - laatste open uur telt als 1.5
+    Dus een run van 4 uur aan het begin of einde van de dag telt als 4.5.
+    """
+    if not hours_list:
+        return 0.0
+
+    totaal = float(len(hours_list))
+
+    if eerste_blok_is_anderhalf_uur and open_uren:
+        eerste_open_uur = min(open_uren)
+        laatste_open_uur = max(open_uren)
+
+        if eerste_open_uur in hours_list:
+            totaal += 0.5
+        if laatste_open_uur in hours_list:
+            totaal += 0.5
+
+    return totaal
+
+
+def _creates_heavy_edge_block(existing_hours, new_block_hours):
+    """
+    Checkt of de combinatie van bestaande uren + nieuw blok
+    een aaneengesloten run vormt van exact 4 uren aan het begin of einde,
+    die bij AS2 dus eigenlijk 4.5 uur telt.
+
+    Dit willen we vermijden waar mogelijk, maar niet absoluut verbieden.
+    """
+    if not eerste_blok_is_anderhalf_uur or not open_uren:
+        return False
+
+    alle_uren = sorted(set(existing_hours) | set(new_block_hours))
+    runs = contiguous_runs(alle_uren)
+
+    eerste_open_uur = min(open_uren)
+    laatste_open_uur = max(open_uren)
+
+    for run in runs:
+        if len(run) != 4:
+            continue
+        if run[0] == eerste_open_uur or run[-1] == laatste_open_uur:
+            if _weighted_run_duration(run) > 4.0:
+                return True
+
+    return False
+
+
 
 def _try_place_block_on_attr(student, block_hours, attr):
-    """Check capaciteit in alle uren en plaats dan in één keer.
+    """
+    Check capaciteit in alle uren en plaats dan in één keer.
+
     Regels:
     - max 6 uur totaal per attractie per dag
     - max 4 aaneengesloten uren op dezelfde attractie
+    - als AS2 aan staat:
+      * een run van 4 uur aan begin of einde telt eigenlijk als 4.5 uur
+      * zo'n blok mag dus enkel nog als er geen redelijke lichtere optie is
+      * daarom blokkeren we het hier niet hard, maar geven we het alleen door
+        als het niet boven de harde limieten gaat én de planner het echt kiest
     """
     # Capaciteit check
     for h in block_hours:
@@ -596,15 +659,30 @@ def _try_place_block_on_attr(student, block_hours, attr):
         if student["naam"] in namen:
             uren_bij_attr.add(h)
 
-    # Check max 6 unieke uren per attractie per dag
     nieuwe_uren = set(block_hours)
     totaal_uren = uren_bij_attr | nieuwe_uren
+
+    # Harde limiet: max 6 unieke uren per attractie per dag
     if len(totaal_uren) > 6:
         return False
 
-    # Check max 4 aaneengesloten uren op dezelfde attractie
-    alle_uren_attr = sorted(totaal_uren)
-    if max_consecutive_hours(alle_uren_attr) > 4:
+    # Harde limiet: max 4 aaneengesloten uren op dezelfde attractie
+    alle_runs = contiguous_runs(sorted(totaal_uren))
+    if any(len(run) > 4 for run in alle_runs):
+        return False
+
+    # Zachte AS2-bewaking:
+    # als dit een 4-uurs edge block maakt dat 4.5 uur telt,
+    # laten we het alleen toe als dit blok zelf NIET exact 4 uur is.
+    #
+    # Reden:
+    # - assign_student probeert voor het begin al expliciet 1+3 bij run=4
+    # - fallback zal eerst 3,2,1 proberen
+    # - alleen als er later toch nog een exact 4-uurs edge block hier passeert,
+    #   willen we dat ontmoedigen
+    #
+    # Dus: blokkeer exact de directe creatie van zo'n blok via één plaatsing.
+    if len(block_hours) == 4 and _creates_heavy_edge_block(uren_bij_attr, block_hours):
         return False
 
     # Plaatsen
@@ -615,7 +693,6 @@ def _try_place_block_on_attr(student, block_hours, attr):
 
     student["assigned_attracties"].add(attr)
     return True
-
 
 
 def _try_place_block_any_attr(student, block_hours):
@@ -804,11 +881,17 @@ def _try_place_block_any_attr(student, block_hours):
 def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
     """
     Probeer een reeks opeenvolgende uren te plaatsen.
-    - Standaard: eerst 3, dan 2, dan 1.
-    - Via preferred_sizes kan je lokaal een andere voorkeur afdwingen.
-    - Als niets lukt aan het begin van de reeks, schuif 1 uur op (dat uur gaat voorlopig naar extra),
-      en probeer verder; tweede pass zal het later alsnog proberen op te vullen.
-    Retourneert: lijst 'unplaced' uren die (voorlopig) niet geplaatst raakten.
+
+    Standaard:
+    - eerst 3, dan 2, dan 1
+
+    Extra AS2-logica:
+    - vermijd aan begin/einde van de dag een blok van exact 4 uur,
+      want dat telt daar als 4.5 uur
+    - dus voor zo'n reeks proberen we eerst lichtere opdelingen
+      zoals 3+1, 1+3 of 2+2
+    - alleen als niets daarvan lukt, vallen we uiteindelijk terug
+      op de normale logica
     """
     if not hours_seq:
         return []
@@ -816,16 +899,74 @@ def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
     if preferred_sizes is None:
         preferred_sizes = [3, 2, 1]
 
-    # Probeer blok aan de voorkant volgens voorkeur
+    eerste_open_uur = min(open_uren) if open_uren else None
+    laatste_open_uur = max(open_uren) if open_uren else None
+
+    # -----------------------------
+    # Speciale AS2-vermijding:
+    # exact 4 uur aan begin of einde van de dag liever niet rechtstreeks plaatsen
+    # -----------------------------
+    if (
+        eerste_blok_is_anderhalf_uur
+        and len(hours_seq) == 4
+        and eerste_open_uur is not None
+        and laatste_open_uur is not None
+        and (hours_seq[0] == eerste_open_uur or hours_seq[-1] == laatste_open_uur)
+    ):
+        alternatieven = []
+
+        # Begin van de dag: liefst 1 + 3 of 3 + 1
+        if hours_seq[0] == eerste_open_uur:
+            alternatieven.append(([hours_seq[0]], hours_seq[1:]))
+            alternatieven.append((hours_seq[:3], [hours_seq[3]]))
+            alternatieven.append((hours_seq[:2], hours_seq[2:]))
+
+        # Einde van de dag: liefst 3 + 1 of 2 + 2
+        elif hours_seq[-1] == laatste_open_uur:
+            alternatieven.append((hours_seq[:3], [hours_seq[3]]))
+            alternatieven.append((hours_seq[:2], hours_seq[2:]))
+            alternatieven.append(([hours_seq[0]], hours_seq[1:]))
+
+        for blok1, blok2 in alternatieven:
+            snapshot_assigned_hours = list(student["assigned_hours"])
+            snapshot_assigned_attracties = set(student["assigned_attracties"])
+            snapshot_assigned_map = {
+                k: list(v) for k, v in assigned_map.items()
+            }
+            snapshot_counts = {
+                uur: dict(vals) for uur, vals in per_hour_assigned_counts.items()
+            }
+
+            ok1 = _try_place_block_any_attr(student, blok1)
+            if ok1:
+                ok2 = _try_place_block_any_attr(student, blok2)
+                if ok2:
+                    return []
+            
+            # rollback
+            student["assigned_hours"] = snapshot_assigned_hours
+            student["assigned_attracties"] = snapshot_assigned_attracties
+
+            assigned_map.clear()
+            for k, v in snapshot_assigned_map.items():
+                assigned_map[k] = v
+
+            per_hour_assigned_counts.clear()
+            for uur, vals in snapshot_counts.items():
+                per_hour_assigned_counts[uur] = vals
+
+    # -----------------------------
+    # Normale logica
+    # -----------------------------
     for size in preferred_sizes:
         if len(hours_seq) >= size:
             first_block = hours_seq[:size]
             if _try_place_block_any_attr(student, first_block):
                 return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes)
 
-    # Helemaal niks paste aan de voorkant: markeer eerste uur tijdelijk als 'unplaced' en schuif door
+    # Helemaal niks paste aan de voorkant:
+    # markeer eerste uur tijdelijk als 'unplaced' en schuif door
     return [hours_seq[0]] + _place_block_with_fallback(student, hours_seq[1:], preferred_sizes)
-
 
 # -----------------------------
 # Vinkjes uitlezen voor bloklogica
