@@ -472,7 +472,50 @@ for vp in vaste_plaatsingen:
     student["uren_beschikbaar"] = []
 
 
-studenten_sorted = sorted(studenten_workend, key=lambda s: s["aantal_attracties"])
+# -----------------------------
+# Sorteervolgorde studenten
+# Eerst op aantal attracties,
+# daarna op vaste tie-break regel uit BU2
+# -----------------------------
+bu2_waarde = ws["BU2"].value
+try:
+    tie_break_mode = int(bu2_waarde)
+except:
+    tie_break_mode = 1
+
+if tie_break_mode not in [1, 2, 3, 4, 5]:
+    tie_break_mode = 1
+
+def student_tie_break_key(student):
+    naam = str(student["naam"]).strip().lower()
+
+    if tie_break_mode == 1:
+        # gewone alfabetische volgorde
+        return naam
+
+    elif tie_break_mode == 2:
+        # omgekeerde alfabetische volgorde
+        # opgelost via reversed-string zodat sorted(..., reverse=False) kan blijven werken
+        return "".join(chr(255 - ord(c)) for c in naam)
+
+    elif tie_break_mode == 3:
+        # eerst op aantal letters, daarna gewoon alfabetisch
+        return (len(naam), naam)
+
+    elif tie_break_mode == 4:
+        # alfabetisch op basis van laatste letters
+        return naam[::-1]
+
+    elif tie_break_mode == 5:
+        # omgekeerde van mode 4
+        return "".join(chr(255 - ord(c)) for c in naam[::-1])
+
+    return naam
+
+studenten_sorted = sorted(
+    studenten_workend,
+    key=lambda s: (s["aantal_attracties"], student_tie_break_key(s))
+)
 
 
 # -----------------------------
