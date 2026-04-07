@@ -4508,71 +4508,6 @@ def build_student_per_hour_map(assigned_map):
             student_per_uur[naam][uur] = attr
     return student_per_uur
 
-def extract_hourly_changes(student_per_uur, open_uren):
-    """
-    Bouw per uur alle veranderingen op:
-    - newcomers: studenten die op dit uur starten
-    - movers: studenten die op dit uur van attractie wisselen
-    """
-    changes_per_hour = {}
-
-    for uur in sorted(open_uren):
-        prev_uur = uur - 1
-
-        prev_students = {}
-        curr_students = {}
-
-        for naam, uren_dict in student_per_uur.items():
-            if prev_uur in uren_dict:
-                prev_students[naam] = uren_dict[prev_uur]
-            if uur in uren_dict:
-                curr_students[naam] = uren_dict[uur]
-
-        newcomers = []
-        movers = []
-
-        for naam, curr_attr in curr_students.items():
-            if naam not in prev_students:
-                newcomers.append({
-                    "naam": naam,
-                    "naar": curr_attr
-                })
-            else:
-                prev_attr = prev_students[naam]
-                if prev_attr != curr_attr:
-                    movers.append({
-                        "naam": naam,
-                        "van": prev_attr,
-                        "naar": curr_attr,
-                        "uur": uur,
-                        "type": "normaal"
-                    })
-
-        changes_per_hour[uur] = {
-            "newcomers": newcomers,
-            "movers": movers
-        }
-
-    return changes_per_hour
-
-# -----------------------------
-# DEEL 6: Wissels detecteren, classificeren en exporteren
-# -----------------------------
-
-from collections import defaultdict, deque
-from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
-from openpyxl.utils import get_column_letter
-
-# -----------------------------
-# Helpers
-# -----------------------------
-def build_student_per_hour_map(assigned_map):
-    student_per_uur = defaultdict(dict)
-    for (uur, attr), namen in assigned_map.items():
-        for naam in namen:
-            student_per_uur[naam][uur] = attr
-    return student_per_uur
-
 
 def extract_hourly_changes(student_per_uur, open_uren):
     """
@@ -5008,7 +4943,7 @@ breedtes = {
     1: 22,
     2: 25,
     3: 25,
-    7: 28,
+    7: 24,
     8: 18
 }
 
