@@ -982,6 +982,176 @@ eerste_blok_is_anderhalf_uur = as2_vinkje in [1, True, "WAAR", "X"]
 # -----------------------------
 # Nieuwe assign_student
 # -----------------------------
+# -----------------------------
+# Helpers voor AS2-bescherming tegen 4,5u aan zelfde attractie
+# -----------------------------
+def _find_student_attr_on_hour(student, uur):
+    for attr in attracties_te_plannen:
+        namen = assigned_map.get((uur, attr), [])
+        if student["naam"] in namen:
+            return attr
+    return None
+
+
+def _try_place_block_any_attr_excluding(student, block_hours, forbidden_attrs=None):
+    """
+    Plaats een blok op eender welke attractie die student kan,
+    behalve attracties in forbidden_attrs.
+    Zelfde logica als _try_place_block_any_attr, maar met uitsluiting.
+    """
+    if forbidden_attrs is None:
+        forbidden_attrs = set()
+    else:
+        forbidden_attrs = set(forbidden_attrs)
+
+    def uren_bij_attr(student, attr):
+        uren = set()
+        for h in student["assigned_hours"]:
+            namen = assigned_map.get((h, attr), [])
+            if student["naam"] in namen:
+                uren.add(h)
+        return uren
+
+    def count_runs(uren):
+        if not uren:
+            return 0
+        return len(contiguous_runs(sorted(set(uren))))
+
+    def count_1u_blokken(uren):
+        if not uren:
+            return 0
+        runs = contiguous_runs(sorted(set(uren)))
+        return sum(1 for r in runs if len(r) == 1)
+
+    def candidate_score(attr):
+        bestaande_uren = uren_bij_attr(student, attr)
+        nieuwe_uren_set = set(block_hours)
+        alle_uren_attr = sorted(bestaande_uren | nieuwe_uren_set)
+        runs_attr = contiguous_runs(alle_uren_attr)
+
+        totaal_na_plaatsing = len(alle_uren_attr)
+        reeds_gebruikt = attr in student["assigned_attracties"]
+        huidige_uren_op_attr = len(bestaande_uren)
+
+        # hoeveel attracties zijn voor deze student effectief nog bruikbaar op deze uren?
+        effectieve_opties = 0
+        for a in attracties_te_plannen:
+            if a in forbidden_attrs:
+                continue
+            if not student_kan_attr(student, a):
+                continue
+            if all(_has_capacity(a, h) for h in block_hours):
+                effectieve_opties += 1
+
+        schaarste = sum(1 for s in studenten_workend if attr in s["attracties"])
+
+        # 1. Straf voor 4/5/6 uur totaal op dezelfde attractie
+        urenstraf = 0
+        if totaal_na_plaatsing == 4:
+            urenstraf = 3
+        elif totaal_na_plaatsing == 5:
+            urenstraf = 16
+        elif totaal_na_plaatsing >= 6:
+            urenstraf = 36
+
+        if effectieve_opties >= 7:
+            urenstraf *= 2.6
+        elif effectieve_opties >= 5:
+            urenstraf *= 2.0
+        elif effectieve_opties >= 4:
+            urenstraf *= 1.5
+        elif effectieve_opties <= 2:
+            urenstraf *= 0.6
+
+        # 2. Extra straf op gesplitste runs
+        split_run_straf = 0
+        if totaal_na_plaatsing >= 5 and len(runs_attr) >= 2:
+            if effectieve_opties >= 7:
+                split_run_straf = 120
+            elif effectieve_opties >= 5:
+                split_run_straf = 80
+            elif effectieve_opties >= 4:
+                split_run_straf = 45
+            else:
+                split_run_straf = 10
+
+        if totaal_na_plaatsing >= 6 and effectieve_opties >= 5:
+            split_run_straf += 35
+
+        # 3. Wisselkost
+        wisselkost = 0 if reeds_gebruikt else 7
+
+        # 4. Bonus voor mooie blokvorming
+        blokbonus = 0
+        langste_run_na = max((len(r) for r in runs_attr), default=0)
+        if langste_run_na >= 2:
+            blokbonus -= 2
+        if langste_run_na >= 3:
+            blokbonus -= 2
+
+        # 5. Fragmentatie over de hele dag vermijden
+        huidige_totaaluren = sorted(set(student["assigned_hours"]))
+        nieuwe_totaaluren = sorted(set(student["assigned_hours"]) | nieuwe_uren_set)
+
+        huidige_runs = count_runs(huidige_totaaluren)
+        nieuwe_runs = count_runs(nieuwe_totaaluren)
+
+        huidige_1u = count_1u_blokken(huidige_totaaluren)
+        nieuwe_1u = count_1u_blokken(nieuwe_totaaluren)
+
+        fragmentatiestaf = 0
+        fragmentatiestaf += max(0, nieuwe_runs - huidige_runs) * 5
+        fragmentatiestaf += max(0, nieuwe_1u - huidige_1u) * 8
+
+        # 6. Vaste dag-attractie sterk bevoordelen
+        voorkeur_bonus = 0
+        preferred_attr = preferred_attr_per_student.get(student["naam"])
+
+        if preferred_attr:
+            if attr == preferred_attr:
+                voorkeur_bonus -= 40
+            else:
+                voorkeur_bonus += 30
+
+            if preferred_attr == attr and preferred_attr in student["assigned_attracties"]:
+                voorkeur_bonus -= 15
+
+        # 7. Lichte voorkeur voor kritieke attracties
+        schaarste_bonus = 0
+        if schaarste <= 2:
+            schaarste_bonus -= 4
+        elif schaarste <= 4:
+            schaarste_bonus -= 2
+
+        totaalscore = (
+            urenstraf
+            + split_run_straf
+            + wisselkost
+            + fragmentatiestaf
+            + voorkeur_bonus
+            + schaarste_bonus
+            + blokbonus
+        )
+
+        return (
+            totaalscore,
+            huidige_uren_op_attr,
+            schaarste,
+            attr
+        )
+
+    candidate_attrs = [
+        a for a in attracties_te_plannen
+        if a not in forbidden_attrs and student_kan_attr(student, a)
+    ]
+
+    candidate_attrs.sort(key=candidate_score)
+
+    for attr in candidate_attrs:
+        if _try_place_block_on_attr(student, block_hours, attr):
+            return True
+
+    return False
 
 
 def assign_student(s):
@@ -996,14 +1166,12 @@ def assign_student(s):
       * én AS2 aangevinkt
       * én run start op het eerste open uur
       => probeer expliciet 1 + 3
+      => en probeer die 3 expliciet op een ANDERE attractie dan het eerste uur
     - Speciaal geval einde van de dag:
-      * student met exact 4 effectieve werkuren
-      * én AR2 aangevinkt
-      * én run eindigt op het laatste open uur
-      => probeer expliciet 2 + 2
+      * bij run van exact 4 uren die eindigt op laatste open uur:
+      => liever geen rechtstreeks 4-uursblok aan de rand
     - Blokken die niet passen, gaan voorlopig naar extra_assignments.
     """
-    # Filter op effectieve inzetbare uren
     uren = sorted(u for u in s["uren_beschikbaar"] if u in open_uren)
     if s["is_pauzevlinder"]:
         uren = [u for u in uren if u not in required_pauze_hours]
@@ -1018,33 +1186,30 @@ def assign_student(s):
     for run in runs:
         # -----------------------------
         # Speciaal geval einde van de dag:
-        # bij AR2 aangevinkt willen we voor een run van exact 4 uren
-        # die eindigt op het laatste open uur liever 2 + 2
+        # liever geen direct 4-uurs randblok
         # -----------------------------
         if (
-            laatste_blok_is_anderhalf_uur
+            eerste_blok_is_anderhalf_uur
             and len(run) == 4
             and laatste_open_uur is not None
             and run[-1] == laatste_open_uur
         ):
-            eerste_blok = run[:2]
-            tweede_blok = run[2:]
+            eerste_blok = run[:3]
+            tweede_blok = [run[3]]
 
             if _try_place_block_any_attr(s, eerste_blok):
                 if _try_place_block_any_attr(s, tweede_blok):
                     unplaced = []
                 else:
-                    # Eerste 2 uur zijn al geplaatst, rest valt terug op normale logica
                     unplaced = _place_block_with_fallback(s, tweede_blok)
             else:
-                # Als 2+2 niet lukt, val volledig terug op normale logica
                 unplaced = _place_block_with_fallback(s, run)
 
         # -----------------------------
         # Speciaal geval begin van de dag:
-        # bij AS2 aangevinkt telt het eerste blok als 1,5 uur (9u30-11u),
-        # dus voor een run van exact 4 uren die start op het eerste open uur
-        # proberen we eerst expliciet 1 + 3
+        # bij AS2 telt eerste uur als 1,5 uur
+        # dus een run van 4 uur moet 1 + 3 worden
+        # én liefst op 2 verschillende attracties
         # -----------------------------
         elif (
             eerste_blok_is_anderhalf_uur
@@ -1055,14 +1220,39 @@ def assign_student(s):
             eerste_blok = [run[0]]
             rest_blok = run[1:]
 
-            if _try_place_block_any_attr(s, eerste_blok):
-                if _try_place_block_any_attr(s, rest_blok):
+            snapshot_assigned_hours = list(s["assigned_hours"])
+            snapshot_assigned_attracties = set(s["assigned_attracties"])
+            snapshot_assigned_map = {k: list(v) for k, v in assigned_map.items()}
+            snapshot_counts = {uur: dict(vals) for uur, vals in per_hour_assigned_counts.items()}
+
+            ok_eerste = _try_place_block_any_attr(s, eerste_blok)
+
+            if ok_eerste:
+                eerste_attr = _find_student_attr_on_hour(s, run[0])
+
+                ok_rest = _try_place_block_any_attr_excluding(
+                    s,
+                    rest_blok,
+                    forbidden_attrs={eerste_attr} if eerste_attr else set()
+                )
+
+                if ok_rest:
                     unplaced = []
                 else:
-                    # Eerste uur is al geplaatst, rest valt terug op normale logica
-                    unplaced = _place_block_with_fallback(s, rest_blok)
+                    # rollback en normale fallback op de hele run
+                    s["assigned_hours"] = snapshot_assigned_hours
+                    s["assigned_attracties"] = snapshot_assigned_attracties
+
+                    assigned_map.clear()
+                    for k, v in snapshot_assigned_map.items():
+                        assigned_map[k] = v
+
+                    per_hour_assigned_counts.clear()
+                    for uur, vals in snapshot_counts.items():
+                        per_hour_assigned_counts[uur] = vals
+
+                    unplaced = _place_block_with_fallback(s, run)
             else:
-                # Als 1+3 niet lukt, val volledig terug op normale logica
                 unplaced = _place_block_with_fallback(s, run)
 
         else:
@@ -1071,7 +1261,6 @@ def assign_student(s):
 
         for h in unplaced:
             extra_assignments[h].append(s["naam"])
-
 
 
 for s in studenten_sorted:
