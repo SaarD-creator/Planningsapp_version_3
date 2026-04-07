@@ -1298,6 +1298,84 @@ for sameng in samengestelde_attracties:
 # Voeg tenslotte nog attracties toe die niet in BL16:BL33 stonden
 alle_actieve_attracties = geordende_attracties + overige_attracties
 
+
+# -----------------------------
+# Output-fix: houd studenten zo veel mogelijk
+# op dezelfde plek (1 of 2) per attractie over opeenvolgende uren
+# -----------------------------
+def stabiliseer_assigned_map_voor_output():
+    """
+    Deze functie verandert niets aan WIE waar staat,
+    maar alleen in welke volgorde namen in assigned_map[(uur, attr)] staan.
+
+    Doel:
+    - Als een student meerdere opeenvolgende uren op dezelfde attractie staat,
+      probeer die visueel op dezelfde plek (1 of 2) te houden in Excel.
+    - Dit vermindert verwarrende sprongen tussen 'plek 1' en 'plek 2'.
+
+    Belangrijk:
+    - Bij een attractie met maar 1 plek wordt alles gewoon plek 1.
+    - Als plek 2 op een uur niet beschikbaar is (bv. red spot), dan kan continuïteit
+      uiteraard niet altijd behouden blijven.
+    """
+    for attr in alle_actieve_attracties:
+        vorige_slots = {1: None, 2: None}
+
+        for uur in sorted(open_uren):
+            namen = list(assigned_map.get((uur, attr), []))
+
+            # verwijder eventuele dubbels, behoud volgorde
+            unieke_namen = []
+            for naam in namen:
+                if naam and naam not in unieke_namen:
+                    unieke_namen.append(naam)
+            namen = unieke_namen
+
+            max_pos = aantallen[uur].get(attr, 1)
+            if attr in second_spot_blocked.get(uur, set()):
+                max_pos = 1
+
+            # geen bezetting op dit uur
+            if not namen:
+                assigned_map[(uur, attr)] = []
+                vorige_slots = {1: None, 2: None}
+                continue
+
+            # maar 1 plek beschikbaar: alles naar plek 1
+            if max_pos <= 1:
+                assigned_map[(uur, attr)] = [namen[0]]
+                vorige_slots = {1: namen[0], 2: None}
+                continue
+
+            # max 2 plekken
+            slots = {1: None, 2: None}
+            resterend = namen[:]
+
+            # 1) probeer eerst dezelfde student op dezelfde plek te houden
+            for pos in [1, 2]:
+                vorige_naam = vorige_slots.get(pos)
+                if vorige_naam in resterend:
+                    slots[pos] = vorige_naam
+                    resterend.remove(vorige_naam)
+
+            # 2) vul lege plekken op met de resterende namen
+            for pos in [1, 2]:
+                if slots[pos] is None and resterend:
+                    slots[pos] = resterend.pop(0)
+
+            # 3) schrijf terug in vaste volgorde: plek 1, dan plek 2
+            nieuwe_volgorde = []
+            if slots[1]:
+                nieuwe_volgorde.append(slots[1])
+            if slots[2]:
+                nieuwe_volgorde.append(slots[2])
+
+            assigned_map[(uur, attr)] = nieuwe_volgorde
+            vorige_slots = {1: slots[1], 2: slots[2]}
+
+stabiliseer_assigned_map_voor_output()
+
+
 # -----------------------------
 
 # Excel output
