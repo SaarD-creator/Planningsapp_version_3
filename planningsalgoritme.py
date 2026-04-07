@@ -1570,15 +1570,22 @@ def _count_students_5plus_same_attr():
 
 
 def _student_can_take_hours_on_attr(student, attr, uren):
+    """
+    Gebruik deze helper ALLEEN in het kader van een swap.
+    Dus:
+    - student mag op deze uren al ergens anders staan
+    - attr mag op deze uren nu nog vol zitten,
+      zolang de swap later iemand van attr wegneemt
+    """
     if not student_kan_attr(student, attr):
         return False
 
-    if any(h in student["assigned_hours"] for h in uren):
-        return False
-
+    # Student moet deze uren in principe kunnen werken
+    # (uren_beschikbaar blijft hier de juiste basisvoorwaarde)
     if any(h not in student["uren_beschikbaar"] for h in uren):
         return False
 
+    # Check limieten op deze attractie NA toevoeging van die uren
     huidige = set(_get_student_attr_hours(student, attr))
     totaal = sorted(huidige | set(uren))
 
@@ -1588,10 +1595,9 @@ def _student_can_take_hours_on_attr(student, attr, uren):
     if max_consecutive_hours(totaal) > 4:
         return False
 
+    # Red spots blijven wel verboden
     for h in uren:
         if attr in red_spots.get(h, set()):
-            return False
-        if per_hour_assigned_counts[h][attr] >= _max_spots_for(attr, h):
             return False
 
     return True
@@ -1619,22 +1625,27 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
             return False
         b_attr_per_hour[h] = b_attr
 
-    # student_b moet attr_a kunnen overnemen op alle suffix-uren
+    # student_b moet attr_a inhoudelijk kunnen overnemen
+    # Let op: student_b MAG op die uren al ergens anders staan, want dit is een swap
     if not _student_can_take_hours_on_attr(student_b, attr_a, suffix_hours):
         return False
 
     # student_a moet de vrijgekomen uren van student_b kunnen overnemen
     for h in suffix_hours:
         b_attr = b_attr_per_hour[h]
+
         if not student_kan_attr(student_a, b_attr):
             return False
 
-        # Check limieten voor student_a op b_attr
         huidige = set(_get_student_attr_hours(student_a, b_attr))
         totaal = sorted(huidige | {h})
+
         if len(totaal) > 6:
             return False
         if max_consecutive_hours(totaal) > 4:
+            return False
+
+        if b_attr in red_spots.get(h, set()):
             return False
 
     # KPI vooraf
@@ -1649,69 +1660,81 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
     snapshot_b_hours = list(student_b["assigned_hours"])
     snapshot_b_attrs = set(student_b["assigned_attracties"])
 
-    # Voer swap uur per uur uit
-    for h in suffix_hours:
-        b_attr = b_attr_per_hour[h]
+    try:
+        # Voer swap uur per uur uit
+        for h in suffix_hours:
+            b_attr = b_attr_per_hour[h]
 
-        # verwijder student_a van attr_a op uur h
-        if student_a["naam"] in assigned_map.get((h, attr_a), []):
+            # student_a moet effectief op attr_a staan
+            if student_a["naam"] not in assigned_map.get((h, attr_a), []):
+                raise ValueError("student_a staat niet op attr_a tijdens suffix-uur")
+
+            # student_b moet effectief op b_attr staan
+            if student_b["naam"] not in assigned_map.get((h, b_attr), []):
+                raise ValueError("student_b staat niet op zijn bron-attractie tijdens suffix-uur")
+
+            # Verwijder A van attr_a
             assigned_map[(h, attr_a)].remove(student_a["naam"])
-            if per_hour_assigned_counts[h][attr_a] > 0:
-                per_hour_assigned_counts[h][attr_a] -= 1
+            per_hour_assigned_counts[h][attr_a] -= 1
 
-        # verwijder student_b van b_attr op uur h
-        if student_b["naam"] in assigned_map.get((h, b_attr), []):
+            # Verwijder B van b_attr
             assigned_map[(h, b_attr)].remove(student_b["naam"])
-            if per_hour_assigned_counts[h][b_attr] > 0:
-                per_hour_assigned_counts[h][b_attr] -= 1
+            per_hour_assigned_counts[h][b_attr] -= 1
 
-        # zet student_b op attr_a
-        assigned_map[(h, attr_a)].append(student_b["naam"])
-        per_hour_assigned_counts[h][attr_a] += 1
+            # Zet B op attr_a
+            assigned_map[(h, attr_a)].append(student_b["naam"])
+            per_hour_assigned_counts[h][attr_a] += 1
 
-        # zet student_a op b_attr
-        assigned_map[(h, b_attr)].append(student_a["naam"])
-        per_hour_assigned_counts[h][b_attr] += 1
+            # Zet A op b_attr
+            assigned_map[(h, b_attr)].append(student_a["naam"])
+            per_hour_assigned_counts[h][b_attr] += 1
 
-    # Bouw student_a metadata opnieuw op
-    student_a["assigned_hours"] = []
-    student_a["assigned_attracties"] = set()
-    for uur in open_uren:
-        for attr in attracties_te_plannen:
-            if student_a["naam"] in assigned_map.get((uur, attr), []):
-                student_a["assigned_hours"].append(uur)
-                student_a["assigned_attracties"].add(attr)
+            # Finale capaciteitscheck NA de swap
+            if per_hour_assigned_counts[h][attr_a] > _max_spots_for(attr_a, h):
+                raise ValueError("capaciteit overschreden op attr_a")
+            if per_hour_assigned_counts[h][b_attr] > _max_spots_for(b_attr, h):
+                raise ValueError("capaciteit overschreden op b_attr")
 
-    # Bouw student_b metadata opnieuw op
-    student_b["assigned_hours"] = []
-    student_b["assigned_attracties"] = set()
-    for uur in open_uren:
-        for attr in attracties_te_plannen:
-            if student_b["naam"] in assigned_map.get((uur, attr), []):
-                student_b["assigned_hours"].append(uur)
-                student_b["assigned_attracties"].add(attr)
+        # Bouw metadata opnieuw op
+        student_a["assigned_hours"] = []
+        student_a["assigned_attracties"] = set()
+        for uur in open_uren:
+            for attr in attracties_te_plannen:
+                if student_a["naam"] in assigned_map.get((uur, attr), []):
+                    student_a["assigned_hours"].append(uur)
+                    student_a["assigned_attracties"].add(attr)
 
-    switches_after = _count_total_switches()
-    long_after = _count_students_5plus_same_attr()
+        student_b["assigned_hours"] = []
+        student_b["assigned_attracties"] = set()
+        for uur in open_uren:
+            for attr in attracties_te_plannen:
+                if student_b["naam"] in assigned_map.get((uur, attr), []):
+                    student_b["assigned_hours"].append(uur)
+                    student_b["assigned_attracties"].add(attr)
 
-    # student_a moet echt verbeterd zijn op attr_a
-    a_hours_after = _get_student_attr_hours(student_a, attr_a)
-    a_runs_after = contiguous_runs(a_hours_after)
-    still_bad = (
-        len(a_hours_after) >= 5
-        or any(len(r) >= 5 for r in a_runs_after)
-    )
+        switches_after = _count_total_switches()
+        long_after = _count_students_5plus_same_attr()
 
-    accepted = False
-    if not still_bad and switches_after <= switches_before + 1:
-        accepted = True
-    elif long_after < long_before and switches_after <= switches_before + 1:
-        accepted = True
-    elif long_after == long_before and switches_after < switches_before:
-        accepted = True
+        a_hours_after = _get_student_attr_hours(student_a, attr_a)
+        a_runs_after = contiguous_runs(a_hours_after)
+        still_bad = (
+            len(a_hours_after) >= 5
+            or any(len(r) >= 5 for r in a_runs_after)
+        )
 
-    if accepted:
-        return True
+        accepted = False
+        if not still_bad and switches_after <= switches_before + 1:
+            accepted = True
+        elif long_after < long_before and switches_after <= switches_before + 1:
+            accepted = True
+        elif long_after == long_before and switches_after < switches_before:
+            accepted = True
+
+        if accepted:
+            return True
+
+    except Exception:
+        pass
 
     # rollback
     assigned_map.clear()
@@ -1728,7 +1751,7 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
     student_b["assigned_attracties"] = snapshot_b_attrs
 
     return False
-
+    
 
 def _postprocess_simple_long_attr_swaps(max_iterations=6):
     """
