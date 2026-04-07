@@ -4926,21 +4926,19 @@ niet_groen = totaal_wissels - aantal_auto
 ws_wissels = wb_out.create_sheet(title="Wissels")
 
 # -----------------------------
-# KPI bovenaan tonen
+# KPI rechts van de tabel (kolom G)
 # -----------------------------
-ws_wissels.cell(1, 1, "KPI Wissels").font = Font(bold=True)
+ws_wissels.cell(1, 7, "KPI Wissels").font = Font(bold=True)
 
-ws_wissels.cell(2, 1, "Totaal wissels:")
-ws_wissels.cell(2, 2, totaal_wissels)
+ws_wissels.cell(2, 7, "Totaal wissels:")
+ws_wissels.cell(2, 8, totaal_wissels)
 
-ws_wissels.cell(3, 1, "Volledig automatisch:")
-ws_wissels.cell(3, 2, aantal_auto)
+ws_wissels.cell(3, 7, "Volledig automatisch:")
+ws_wissels.cell(3, 8, aantal_auto)
 
-ws_wissels.cell(4, 1, "Niet-groen (KPI):")
-ws_wissels.cell(4, 2, niet_groen)
-
-# beetje visueel accent
-ws_wissels.cell(4, 2).font = Font(bold=True)
+ws_wissels.cell(4, 7, "Niet-groen (KPI):")
+ws_wissels.cell(4, 8, niet_groen)
+ws_wissels.cell(4, 8).font = Font(bold=True)
 
 center_align = Alignment(horizontal="center", vertical="center")
 thin_border = Border(
@@ -4952,8 +4950,9 @@ thin_border = Border(
 
 green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
 yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+orange_fill = PatternFill(start_color="F4B084", end_color="F4B084", fill_type="solid")
 
-current_row = 6
+current_row = 1
 
 
 for uur in sorted(wissels_per_uur.keys()):
@@ -4963,8 +4962,8 @@ for uur in sorted(wissels_per_uur.keys()):
     title_cell.alignment = center_align
     current_row += 1
 
-    # Header
-    headers = ["Student", "Van", "Naar", "Type"]
+    # Headers
+    headers = ["Student", "Van", "Naar"]
     for col_idx, header in enumerate(headers, start=1):
         cell = ws_wissels.cell(current_row, col_idx, header)
         cell.font = Font(bold=True)
@@ -4977,14 +4976,14 @@ for uur in sorted(wissels_per_uur.keys()):
         ws_wissels.cell(current_row, 1, w["naam"])
         ws_wissels.cell(current_row, 2, w["van"])
         ws_wissels.cell(current_row, 3, w["naar"])
-        ws_wissels.cell(current_row, 4, w["type"])
 
-        for col_idx in range(1, 5):
+        # Basis layout
+        for col_idx in range(1, 4):
             cell = ws_wissels.cell(current_row, col_idx)
             cell.alignment = center_align
             cell.border = thin_border
 
-        # Kleuren enkel in B en C
+        # Kleuren enkel op kolom B en C
         if w["type"] == "volledig automatisch":
             ws_wissels.cell(current_row, 2).fill = green_fill
             ws_wissels.cell(current_row, 3).fill = green_fill
@@ -4993,7 +4992,10 @@ for uur in sorted(wissels_per_uur.keys()):
             ws_wissels.cell(current_row, 2).fill = yellow_fill
             ws_wissels.cell(current_row, 3).fill = yellow_fill
 
-        # half-start blijft bewust wit
+        elif w["type"] == "half-start":
+            ws_wissels.cell(current_row, 2).fill = orange_fill
+            ws_wissels.cell(current_row, 3).fill = orange_fill
+
         current_row += 1
 
     # Lege rij tussen uren
@@ -5006,7 +5008,6 @@ breedtes = {
     1: 22,  # Student
     2: 25,  # Van
     3: 25,  # Naar
-    4: 22   # Type
 }
 
 for col_idx, breedte in breedtes.items():
