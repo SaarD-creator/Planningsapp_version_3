@@ -484,6 +484,16 @@ for vp in vaste_plaatsingen:
     ]
 
 
+studenten_sorted = sorted(
+    studenten_workend,
+    key=lambda s: (
+        s["aantal_attracties"],
+        len(s["uren_beschikbaar"]),
+        s["naam"]
+    )
+)
+
+
 # -----------------------------
 # Voorbereiden: expand naar posities per uur
 # -----------------------------
