@@ -5005,9 +5005,11 @@ for uur in sorted(wissels_per_uur.keys()):
 # Stap 5: kolombreedtes
 # -----------------------------
 breedtes = {
-    1: 22,  # Student
-    2: 25,  # Van
-    3: 25,  # Naar
+    1: 22,
+    2: 25,
+    3: 25,
+    7: 28,
+    8: 18
 }
 
 for col_idx, breedte in breedtes.items():
