@@ -599,11 +599,14 @@ def _try_place_block_on_attr(student, block_hours, attr):
 
 
 def _try_place_block_any_attr(student, block_hours):
-    """Probeer dit blok te plaatsen op eender welke attractie die student kan.
-    Fairness-regel:
-    - Studenten met veel mogelijke attracties moeten minder snel naar 5e/6e uur
-      op dezelfde attractie gaan.
-    - Studenten met weinig mogelijke attracties blijven soepeler behandeld.
+    """
+    Probeer dit blok te plaatsen op eender welke attractie die student kan.
+
+    Doel van deze scoring:
+    - zo weinig mogelijk wissels in totaal
+    - 5e/6e uur op dezelfde attractie alleen als het echt logisch is
+    - brede studenten sneller spreiden dan smalle profielen
+    - geen overdreven drang om voor elk uur te wisselen
     """
 
     def uren_bij_attr(student, attr):
@@ -614,45 +617,121 @@ def _try_place_block_any_attr(student, block_hours):
                 uren.add(h)
         return uren
 
+    def count_runs(uren):
+        if not uren:
+            return 0
+        return len(contiguous_runs(sorted(set(uren))))
+
+    def count_1u_blokken(uren):
+        if not uren:
+            return 0
+        runs = contiguous_runs(sorted(set(uren)))
+        return sum(1 for r in runs if len(r) == 1)
+
     def candidate_score(attr):
-        # Hoeveel studenten kunnen deze attractie? Lager = kritieker
+        # Hoe schaars is deze attractie?
+        # Lager = kritieker, dus iets meer voorkeur om die te benutten
         schaarste = sum(1 for s in studenten_workend if attr in s["attracties"])
 
         bestaande_uren = uren_bij_attr(student, attr)
-        totaal_na_plaatsing = len(bestaande_uren | set(block_hours))
+        nieuwe_uren_set = set(block_hours)
+        totaal_na_plaatsing = len(bestaande_uren | nieuwe_uren_set)
         reeds_gebruikt = attr in student["assigned_attracties"]
 
         # Hoe breed is deze student inzetbaar?
-        # We nemen aantal_attracties als hoofdsignaal, met fallback op echte lijstlengte
         breedte_profiel = student.get("aantal_attracties", len(student.get("attracties", [])))
 
-        # Fairness-straf:
-        # - Studenten met veel attracties krijgen zware straf als ze naar uur 5/6
-        #   op dezelfde attractie gaan.
-        # - Studenten met weinig attracties krijgen weinig of geen straf.
-        fairness_straf = 0
+        # Hoeveel uren heeft deze student totaal (na eventuele plaatsing)?
+        totaal_werkuren_na = len(set(student["assigned_hours"]) | nieuwe_uren_set)
 
+        # Verhouding flexibiliteit versus werkuren
+        # Hoge ratio = breed inzetbaar profiel
+        flex_ratio = breedte_profiel / max(1, totaal_werkuren_na)
+
+        # ---------------------------------
+        # 1. Straf voor veel uren op dezelfde attractie
+        # ---------------------------------
+        urenstraf = 0
+        if totaal_na_plaatsing == 4:
+            urenstraf = 4
+        elif totaal_na_plaatsing == 5:
+            urenstraf = 18
+        elif totaal_na_plaatsing >= 6:
+            urenstraf = 40
+
+        # Brede studenten harder straffen als ze lang op dezelfde attractie blijven
+        if flex_ratio >= 0.85:
+            urenstraf *= 2.4
+        elif flex_ratio >= 0.70:
+            urenstraf *= 1.9
+        elif flex_ratio >= 0.55:
+            urenstraf *= 1.4
+        elif flex_ratio <= 0.35:
+            urenstraf *= 0.65
+
+        # ---------------------------------
+        # 2. Wisselkost
+        # ---------------------------------
+        # Nieuwe attractie = mogelijk extra wissel
+        # Maar niet té zwaar, anders blijven brede studenten alsnog te lang hangen
+        wisselkost = 0 if reeds_gebruikt else 7
+
+        # ---------------------------------
+        # 3. Bonus voor mooie blokvorming
+        # ---------------------------------
+        alle_uren_attr = sorted(bestaande_uren | nieuwe_uren_set)
+        langste_run_na = max_consecutive_hours(alle_uren_attr)
+
+        blokbonus = 0
+        if langste_run_na >= 2:
+            blokbonus -= 2
+        if langste_run_na >= 3:
+            blokbonus -= 2
+
+        # ---------------------------------
+        # 4. Fragmentatiestraf
+        # ---------------------------------
+        # We willen geen wilde versnippering creëren om koste wat kost 5/6 uur te vermijden
+        huidige_totaaluren = sorted(set(student["assigned_hours"]))
+        nieuwe_totaaluren = sorted(set(student["assigned_hours"]) | nieuwe_uren_set)
+
+        huidige_runs = count_runs(huidige_totaaluren)
+        nieuwe_runs = count_runs(nieuwe_totaaluren)
+
+        huidige_1u = count_1u_blokken(huidige_totaaluren)
+        nieuwe_1u = count_1u_blokken(nieuwe_totaaluren)
+
+        fragmentatiestaf = 0
+        fragmentatiestaf += max(0, nieuwe_runs - huidige_runs) * 5
+        fragmentatiestaf += max(0, nieuwe_1u - huidige_1u) * 8
+
+        # ---------------------------------
+        # 5. Extra straf als brede student naar 5/6 uur op dezelfde attractie gaat
+        # ---------------------------------
+        brede_profiel_straf = 0
         if totaal_na_plaatsing > 4:
-            if breedte_profiel >= 6:
-                fairness_straf = 100
+            if breedte_profiel >= 8:
+                brede_profiel_straf = 25
+            elif breedte_profiel >= 6:
+                brede_profiel_straf = 14
             elif breedte_profiel >= 5:
-                fairness_straf = 60
-            elif breedte_profiel >= 4:
-                fairness_straf = 25
-            else:
-                fairness_straf = 0
+                brede_profiel_straf = 8
 
-        # Lichte voorkeur om eerst nieuwe attracties te gebruiken,
-        # maar minder belangrijk dan fairness boven 4 uur.
-        hergebruik_straf = 1 if reeds_gebruikt else 0
-
-        # Eventueel nog mini-voorkeur voor attracties waar student nog 0 uur stond
-        # en pas daarna voor attracties met al wat uren.
+        # ---------------------------------
+        # 6. Lichte voorkeur voor attracties waar student nog weinig uren op stond
+        # ---------------------------------
         huidige_uren_op_attr = len(bestaande_uren)
 
+        totaalscore = (
+            urenstraf
+            + wisselkost
+            + fragmentatiestaf
+            + brede_profiel_straf
+            + blokbonus
+        )
+
         return (
-            fairness_straf,
-            hergebruik_straf,
+            totaalscore,
             huidige_uren_op_attr,
             schaarste,
             attr
@@ -807,6 +886,254 @@ def assign_student(s):
 for s in studenten_sorted:
     assign_student(s)
 
+
+
+# -----------------------------
+# KPI helpers + post-processing om lange clusters af te bouwen
+# -----------------------------
+
+def get_student_attr_hours(student, attr):
+    uren = set()
+    for h in student["assigned_hours"]:
+        namen = assigned_map.get((h, attr), [])
+        if student["naam"] in namen:
+            uren.add(h)
+    return sorted(uren)
+
+def get_student_total_hours(student):
+    return sorted(set(student["assigned_hours"]))
+
+def count_switches_for_student(student):
+    uren = sorted(set(student["assigned_hours"]))
+    if len(uren) <= 1:
+        return 0
+
+    switches = 0
+    vorige_attr = None
+
+    for uur in uren:
+        huidige_attr = None
+        for attr in attracties_te_plannen:
+            namen = assigned_map.get((uur, attr), [])
+            if student["naam"] in namen:
+                huidige_attr = attr
+                break
+
+        if huidige_attr is None:
+            continue
+
+        if vorige_attr is not None and huidige_attr != vorige_attr:
+            switches += 1
+
+        vorige_attr = huidige_attr
+
+    return switches
+
+def count_total_switches():
+    totaal = 0
+    for s in studenten_workend:
+        totaal += count_switches_for_student(s)
+    return totaal
+
+def count_students_with_long_attr_hours():
+    count = 0
+    for s in studenten_workend:
+        for attr in attracties_te_plannen:
+            if len(get_student_attr_hours(s, attr)) >= 5:
+                count += 1
+                break
+    return count
+
+def compute_kpi_snapshot():
+    return {
+        "total_switches": count_total_switches(),
+        "students_5plus_same_attr": count_students_with_long_attr_hours(),
+        "extra_hours": sum(len(v) for v in extra_assignments.values())
+    }
+
+def _student_has_assignment_on_hour(student, uur):
+    return uur in set(student["assigned_hours"])
+
+def _student_can_take_attr_on_hour(student, attr, uur):
+    if not student_kan_attr(student, attr):
+        return False
+    if uur not in open_uren:
+        return False
+    if uur not in student["uren_beschikbaar"] and uur not in student["assigned_hours"]:
+        return False
+    if not _has_capacity(attr, uur):
+        return False
+    return True
+
+def _remove_student_from_attr_hour(student, attr, uur):
+    namen = assigned_map.get((uur, attr), [])
+    if student["naam"] in namen:
+        namen.remove(student["naam"])
+        assigned_map[(uur, attr)] = namen
+
+    if per_hour_assigned_counts[uur][attr] > 0:
+        per_hour_assigned_counts[uur][attr] -= 1
+
+    if uur in student["assigned_hours"]:
+        student["assigned_hours"].remove(uur)
+
+    # Alleen uit set verwijderen als student nergens anders meer op deze attractie staat
+    nog_op_attr = False
+    for h in student["assigned_hours"]:
+        if student["naam"] in assigned_map.get((h, attr), []):
+            nog_op_attr = True
+            break
+    if not nog_op_attr and attr in student["assigned_attracties"]:
+        student["assigned_attracties"].remove(attr)
+
+def _add_student_to_attr_hour(student, attr, uur):
+    assigned_map[(uur, attr)].append(student["naam"])
+    per_hour_assigned_counts[uur][attr] += 1
+    student["assigned_hours"].append(uur)
+    student["assigned_attracties"].add(attr)
+
+def _would_respect_attr_limits(student, attr, extra_hours):
+    huidige = set(get_student_attr_hours(student, attr))
+    totaal = sorted(huidige | set(extra_hours))
+
+    if len(totaal) > 6:
+        return False
+
+    if max_consecutive_hours(totaal) > 4:
+        return False
+
+    return True
+
+def _find_attr_of_student_on_hour(student, uur):
+    for attr in attracties_te_plannen:
+        namen = assigned_map.get((uur, attr), [])
+        if student["naam"] in namen:
+            return attr
+    return None
+
+def _try_reduce_long_same_attr_clusters(max_iterations=4):
+    """
+    Probeer studenten met 5 of 6 uur op dezelfde attractie af te bouwen,
+    maar alleen als de globale KPI verbetert of minstens gelijk blijft
+    zonder extra rommel te creëren.
+
+    Idee:
+    - focus op laatste 1 of 2 uur van een te lange cluster
+    - zoek een overnemer die die uren ook kan doen
+    - accepteer alleen moves die:
+      * het aantal 5+/zelfde-attractie gevallen verlagen
+      * en het aantal wissels niet te hard verhogen
+    """
+    for _ in range(max_iterations):
+        changes_made = False
+        baseline_kpi = compute_kpi_snapshot()
+
+        # Prioriteit: studenten met brede profielen én lange bezetting op zelfde attractie
+        studenten_volgorde = sorted(
+            studenten_workend,
+            key=lambda s: (
+                -max(
+                    [len(get_student_attr_hours(s, a)) for a in attracties_te_plannen] + [0]
+                ),
+                -s.get("aantal_attracties", len(s.get("attracties", [])))
+            )
+        )
+
+        for student in studenten_volgorde:
+            breedte_profiel = student.get("aantal_attracties", len(student.get("attracties", [])))
+
+            for attr in attracties_te_plannen:
+                uren_attr = get_student_attr_hours(student, attr)
+                if len(uren_attr) < 5:
+                    continue
+
+                runs = contiguous_runs(uren_attr)
+
+                # Enkel te lange runs bekijken
+                for run in runs:
+                    if len(run) < 5:
+                        continue
+
+                    # We proberen eerst de laatste 2 uur af te geven, dan de laatste 1 uur
+                    kandidaat_suffixen = []
+                    if len(run) >= 6:
+                        kandidaat_suffixen.append(run[-2:])
+                    kandidaat_suffixen.append([run[-1]])
+
+                    for suffix in kandidaat_suffixen:
+                        for overnemer in studenten_workend:
+                            if overnemer["naam"] == student["naam"]:
+                                continue
+
+                            # overnemer moet alle suffix-uren kunnen overnemen
+                            if not student_kan_attr(overnemer, attr):
+                                continue
+
+                            if any(_student_has_assignment_on_hour(overnemer, h) for h in suffix):
+                                continue
+
+                            if any(h not in overnemer["uren_beschikbaar"] for h in suffix):
+                                continue
+
+                            if not _would_respect_attr_limits(overnemer, attr, suffix):
+                                continue
+
+                            # Simuleer KPI voor en na
+                            switches_before = count_total_switches()
+                            long_before = count_students_with_long_attr_hours()
+
+                            # Pas tijdelijk toe
+                            for h in suffix:
+                                _remove_student_from_attr_hour(student, attr, h)
+                                _add_student_to_attr_hour(overnemer, attr, h)
+
+                            switches_after = count_total_switches()
+                            long_after = count_students_with_long_attr_hours()
+
+                            # Beslisregel:
+                            # 1. voorkeur voor minder 5+ gevallen
+                            # 2. wissels mogen een beetje stijgen, maar niet ontsporen
+                            # 3. brede profielen strenger behandelen
+                            accepted = False
+
+                            max_toegelaten_switch_stijging = 0
+                            if breedte_profiel >= 8:
+                                max_toegelaten_switch_stijging = 1
+                            elif breedte_profiel >= 6:
+                                max_toegelaten_switch_stijging = 0
+                            else:
+                                max_toegelaten_switch_stijging = 0
+
+                            if long_after < long_before and switches_after <= switches_before + max_toegelaten_switch_stijging:
+                                accepted = True
+                            elif long_after == long_before and switches_after < switches_before:
+                                accepted = True
+
+                            if accepted:
+                                changes_made = True
+                                baseline_kpi = compute_kpi_snapshot()
+                                break
+                            else:
+                                # rollback
+                                for h in suffix:
+                                    _remove_student_from_attr_hour(overnemer, attr, h)
+                                    _add_student_to_attr_hour(student, attr, h)
+
+                        if changes_made:
+                            break
+                    if changes_made:
+                        break
+                if changes_made:
+                    break
+            if changes_made:
+                break
+
+        if not changes_made:
+            break
+
+# Run deze optimalisatie vóór de bestaande doorschuif-post-processing
+_try_reduce_long_same_attr_clusters(max_iterations=4)
+
 # -----------------------------
 # Post-processing: lege plekken opvullen door doorschuiven
 # -----------------------------
@@ -814,60 +1141,130 @@ for s in studenten_sorted:
 def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
     if stap > max_stappen:
         return False
+
     namen = assigned_map.get((uur, attr), [])
     naam = namen[pos_idx-1] if pos_idx-1 < len(namen) else ""
     if naam:
         return False
 
     kandidaten = []
+
+    extra_student = next((s for s in studenten_workend if s["naam"] == student_naam), None)
+    if not extra_student:
+        return False
+
     for b_attr in attracties_te_plannen:
         b_namen = assigned_map.get((uur, b_attr), [])
         for b_pos, b_naam in enumerate(b_namen):
             if not b_naam or b_naam == student_naam:
                 continue
+
             cand_student = next((s for s in studenten_workend if s["naam"] == b_naam), None)
             if not cand_student:
                 continue
-            # Mag deze student de lege attractie doen?
-            if attr not in cand_student["attracties"]:
+
+            # Kandidaatstudent moet de lege attractie kunnen doen
+            if not student_kan_attr(cand_student, attr):
                 continue
-            # Mag de extra de vrijgekomen plek doen?
-            extra_student = next((s for s in studenten_workend if s["naam"] == student_naam), None)
-            if not extra_student:
+
+            # Extra moet de vrijgekomen plek kunnen doen
+            if not student_kan_attr(extra_student, b_attr):
                 continue
-            if b_attr not in extra_student["attracties"]:
+
+            # Respecteer limieten per attractie
+            cand_attr_uren_zonder_uur = set(get_student_attr_hours(cand_student, attr))
+            if uur not in cand_attr_uren_zonder_uur:
+                cand_attr_uren_zonder_uur.add(uur)
+            if len(cand_attr_uren_zonder_uur) > 6:
                 continue
-            # Score: zo min mogelijk 1-uursblokken creëren
+            if max_consecutive_hours(sorted(cand_attr_uren_zonder_uur)) > 4:
+                continue
+
+            extra_attr_uren = set(get_student_attr_hours(extra_student, b_attr)) | {uur}
+            if len(extra_attr_uren) > 6:
+                continue
+            if max_consecutive_hours(sorted(extra_attr_uren)) > 4:
+                continue
+
+            # KPI-score simuleren
+            switches_before = count_total_switches()
+            long_before = count_students_with_long_attr_hours()
+
+            # Tijdelijke swap
+            assigned_map[(uur, b_attr)][b_pos] = student_naam
+            assigned_map[(uur, attr)].insert(pos_idx-1, b_naam)
+            assigned_map[(uur, attr)] = assigned_map[(uur, attr)][:aantallen[uur].get(attr, 1)]
+
+            cand_student["assigned_hours"].remove(uur)
+            cand_student["assigned_hours"].append(uur)
+            cand_student["assigned_attracties"].discard(b_attr)
+            cand_student["assigned_attracties"].add(attr)
+
+            extra_student["assigned_hours"].append(uur)
+            extra_student["assigned_attracties"].add(b_attr)
+
+            switches_after = count_total_switches()
+            long_after = count_students_with_long_attr_hours()
+
+            # rollback tijdelijke simulatie
+            assigned_map[(uur, attr)].remove(b_naam)
+            assigned_map[(uur, b_attr)][b_pos] = b_naam
+
+            cand_student["assigned_hours"].remove(uur)
+            cand_student["assigned_hours"].append(uur)
+            cand_student["assigned_attracties"].discard(attr)
+            cand_student["assigned_attracties"].add(b_attr)
+
+            extra_student["assigned_hours"].remove(uur)
+            # alleen verwijderen uit attracties-set als student daar verder niet meer op staat
+            nog_op_b_attr = any(
+                extra_student["naam"] in assigned_map.get((h, b_attr), [])
+                for h in extra_student["assigned_hours"]
+            )
+            if not nog_op_b_attr:
+                extra_student["assigned_attracties"].discard(b_attr)
+
+            # Ook 1-uursblokken meewegen
             uren_cand = sorted([u for u in cand_student["assigned_hours"] if u != uur] + [uur])
             uren_extra = sorted(extra_student["assigned_hours"] + [uur])
+
             def count_1u_blokken(uren):
                 if not uren:
                     return 0
                 runs = contiguous_runs(uren)
                 return sum(1 for r in runs if len(r) == 1)
-            score = count_1u_blokken(uren_cand) + count_1u_blokken(uren_extra)
+
+            score = (
+                max(0, switches_after - switches_before) * 12
+                + max(0, long_after - long_before) * 20
+                + count_1u_blokken(uren_cand)
+                + count_1u_blokken(uren_extra)
+            )
+
             kandidaten.append((score, b_attr, b_pos, b_naam, cand_student))
+
     kandidaten.sort()
 
     for score, b_attr, b_pos, b_naam, cand_student in kandidaten:
         extra_student = next((s for s in studenten_workend if s["naam"] == student_naam), None)
         if not extra_student:
             continue
-        # Voer de swap uit
+
         assigned_map[(uur, b_attr)][b_pos] = student_naam
         extra_student["assigned_hours"].append(uur)
         extra_student["assigned_attracties"].add(b_attr)
-        per_hour_assigned_counts[uur][b_attr] += 0  # netto gelijk
+
         assigned_map[(uur, attr)].insert(pos_idx-1, b_naam)
         assigned_map[(uur, attr)] = assigned_map[(uur, attr)][:aantallen[uur].get(attr, 1)]
-        cand_student["assigned_hours"].remove(uur)
+
+        if uur in cand_student["assigned_hours"]:
+            cand_student["assigned_hours"].remove(uur)
         cand_student["assigned_attracties"].discard(b_attr)
         cand_student["assigned_hours"].append(uur)
         cand_student["assigned_attracties"].add(attr)
-        per_hour_assigned_counts[uur][attr] += 0  # netto gelijk
-        # Check of alles klopt (geen dubbele, geen restricties overtreden)
-        # (optioneel: extra checks toevoegen)
+
         return True
+
     return False
 
 max_iterations = 5
