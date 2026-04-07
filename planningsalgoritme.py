@@ -902,6 +902,338 @@ for _ in range(max_iterations):
         break
 
 
+
+# -----------------------------
+# Post-processing: wissel laatste blok van 2 of 3 uren
+# als iemand 5 of 6 uur op 1 attractie staat
+# -----------------------------
+
+vaste_studenten = {vp["naam"] for vp in vaste_plaatsingen}
+
+def get_student_by_name(naam):
+    return next((s for s in studenten_workend if s["naam"] == naam), None)
+
+def get_student_attr_on_hour(student_naam, uur):
+    for attr in actieve_attracties_per_uur.get(uur, set()):
+        if student_naam in assigned_map.get((uur, attr), []):
+            return attr
+    return None
+
+def get_hours_on_attr(student, attr):
+    uren = []
+    for uur in sorted(set(student["assigned_hours"])):
+        if student["naam"] in assigned_map.get((uur, attr), []):
+            uren.append(uur)
+    return sorted(uren)
+
+def get_runs_on_attr(student, attr):
+    uren = get_hours_on_attr(student, attr)
+    return contiguous_runs(uren)
+
+def count_attr_switches(student):
+    uur_attr = []
+    for uur in sorted(set(student["assigned_hours"])):
+        attr = get_student_attr_on_hour(student["naam"], uur)
+        if attr:
+            uur_attr.append((uur, attr))
+
+    if not uur_attr:
+        return 0
+
+    switches = 0
+    prev_attr = uur_attr[0][1]
+    for _, attr in uur_attr[1:]:
+        if attr != prev_attr:
+            switches += 1
+        prev_attr = attr
+    return switches
+
+def remove_assignment(student, uur, attr):
+    namen = assigned_map.get((uur, attr), [])
+    if student["naam"] in namen:
+        namen.remove(student["naam"])
+    if uur in student["assigned_hours"]:
+        student["assigned_hours"].remove(uur)
+
+def add_assignment(student, uur, attr):
+    assigned_map[(uur, attr)].append(student["naam"])
+    student["assigned_hours"].append(uur)
+    student["assigned_attracties"].add(attr)
+
+def rebuild_student_attrs(student):
+    attrs = set()
+    for uur in sorted(set(student["assigned_hours"])):
+        attr = get_student_attr_on_hour(student["naam"], uur)
+        if attr:
+            attrs.add(attr)
+    student["assigned_attracties"] = attrs
+
+def is_valid_attr_for_student_on_hours(student, attr, uren):
+    # vaste dagplaatsingen niet aanpassen
+    if student["naam"] in vaste_studenten:
+        return False
+
+    # student moet attractie kunnen doen
+    if not student_kan_attr(student, attr):
+        return False
+
+    # attractie moet op al die uren actief en geldig zijn
+    for uur in uren:
+        if attr not in actieve_attracties_per_uur.get(uur, set()):
+            return False
+        if attr in red_spots.get(uur, set()):
+            return False
+
+    return True
+
+def respects_student_attr_rules(student, attr):
+    uren = get_hours_on_attr(student, attr)
+    if len(uren) > 6:
+        return False
+    if max_consecutive_hours(uren) > 4:
+        return False
+    return True
+
+def can_swap_exact_block(student_a, attr_a, block_hours, student_b, attr_b):
+    # zelfde student of zelfde attractie heeft geen zin
+    if student_a["naam"] == student_b["naam"]:
+        return False
+    if attr_a == attr_b:
+        return False
+
+    # beide richtingen moeten kunnen
+    if not is_valid_attr_for_student_on_hours(student_a, attr_b, block_hours):
+        return False
+    if not is_valid_attr_for_student_on_hours(student_b, attr_a, block_hours):
+        return False
+
+    # student_b moet op exact deze uren ook éénzelfde blok hebben op attr_b
+    for uur in block_hours:
+        if student_b["naam"] not in assigned_map.get((uur, attr_b), []):
+            return False
+        # en niet tegelijk nog ergens anders zitten
+        current_attr = get_student_attr_on_hour(student_b["naam"], uur)
+        if current_attr != attr_b:
+            return False
+
+    # student_a moet natuurlijk ook exact daar staan
+    for uur in block_hours:
+        if student_a["naam"] not in assigned_map.get((uur, attr_a), []):
+            return False
+        current_attr = get_student_attr_on_hour(student_a["naam"], uur)
+        if current_attr != attr_a:
+            return False
+
+    return True
+
+def count_problem_attrs(student):
+    """
+    Tel voor hoeveel attracties deze student meer dan 4 uur ingepland staat.
+    """
+    count = 0
+    for attr in list(student["assigned_attracties"]):
+        if len(get_hours_on_attr(student, attr)) > 4:
+            count += 1
+    return count
+
+def total_overflow_hours(student):
+    """
+    Hoeveel 'uren te veel' heeft deze student boven de grens van 4 uur per attractie?
+    Voorbeeld:
+    - 5 uur op 1 attractie => overflow 1
+    - 6 uur op 1 attractie => overflow 2
+    """
+    overflow = 0
+    for attr in list(student["assigned_attracties"]):
+        uren = len(get_hours_on_attr(student, attr))
+        if uren > 4:
+            overflow += (uren - 4)
+    return overflow
+
+def try_swap_last_block(student, attr):
+    """
+    Zoek het laatste blok op deze attractie.
+    Alleen als:
+    - student momenteel >4 uur op deze attractie staat
+    - het laatste blok exact 2 of 3 uur lang is
+    - een andere student op exact die uren ook een blok van gelijke uren heeft
+    - alle regels geldig blijven
+    - er max 1 extra wissel bijkomt
+    - de swap het probleem effectief VERBETERT
+    """
+    uren_op_attr = get_hours_on_attr(student, attr)
+    if len(uren_op_attr) <= 4:
+        return False
+
+    runs = get_runs_on_attr(student, attr)
+    if not runs:
+        return False
+
+    laatste_run = runs[-1]
+    if len(laatste_run) not in [2, 3]:
+        return False
+
+    block_hours = laatste_run
+
+    orig_switches_a = count_attr_switches(student)
+    orig_problem_count_a = count_problem_attrs(student)
+    orig_overflow_a = total_overflow_hours(student)
+
+    kandidaten = []
+
+    for andere_student in studenten_workend:
+        if andere_student["naam"] == student["naam"]:
+            continue
+        if andere_student["naam"] in vaste_studenten:
+            continue
+
+        eerste_uur = block_hours[0]
+        attr_b = get_student_attr_on_hour(andere_student["naam"], eerste_uur)
+        if not attr_b or attr_b == attr:
+            continue
+
+        # Andere student moet op exact hetzelfde blok exact dezelfde attractie hebben
+        if not can_swap_exact_block(student, attr, block_hours, andere_student, attr_b):
+            continue
+
+        # Beide studenten moeten elkaars attractie op die uren mogen doen
+        if not is_valid_attr_for_student_on_hours(student, attr_b, block_hours):
+            continue
+        if not is_valid_attr_for_student_on_hours(andere_student, attr, block_hours):
+            continue
+
+        kandidaten.append((andere_student["naam"], attr_b, andere_student))
+
+    for _, attr_b, andere_student in kandidaten:
+        orig_switches_b = count_attr_switches(andere_student)
+        orig_problem_count_b = count_problem_attrs(andere_student)
+        orig_overflow_b = total_overflow_hours(andere_student)
+
+        # --- tijdelijke swap uitvoeren ---
+        for uur in block_hours:
+            remove_assignment(student, uur, attr)
+            remove_assignment(andere_student, uur, attr_b)
+
+        for uur in block_hours:
+            add_assignment(student, uur, attr_b)
+            add_assignment(andere_student, uur, attr)
+
+        rebuild_student_attrs(student)
+        rebuild_student_attrs(andere_student)
+
+        valid = True
+
+        # Regels voor beide studenten / beide betrokken attracties
+        for s, a in [
+            (student, attr),
+            (student, attr_b),
+            (andere_student, attr),
+            (andere_student, attr_b),
+        ]:
+            if not respects_student_attr_rules(s, a):
+                valid = False
+
+        # Max 1 extra wissel in totaal
+        new_switches_a = count_attr_switches(student)
+        new_switches_b = count_attr_switches(andere_student)
+        extra_wissels = (new_switches_a - orig_switches_a) + (new_switches_b - orig_switches_b)
+
+        if extra_wissels > 1:
+            valid = False
+
+        # --- BELANGRIJKSTE NIEUWE CHECK ---
+        # De swap moet het probleem effectief verbeteren:
+        # ofwel minder probleem-attracties >4u,
+        # ofwel bij gelijk aantal toch minder overflow-uren.
+        new_problem_count_a = count_problem_attrs(student)
+        new_problem_count_b = count_problem_attrs(andere_student)
+        new_overflow_a = total_overflow_hours(student)
+        new_overflow_b = total_overflow_hours(andere_student)
+
+        orig_total_problem_count = orig_problem_count_a + orig_problem_count_b
+        new_total_problem_count = new_problem_count_a + new_problem_count_b
+
+        orig_total_overflow = orig_overflow_a + orig_overflow_b
+        new_total_overflow = new_overflow_a + new_overflow_b
+
+        verbetering = (
+            (new_total_problem_count < orig_total_problem_count)
+            or (
+                new_total_problem_count == orig_total_problem_count
+                and new_total_overflow < orig_total_overflow
+            )
+        )
+
+        if not verbetering:
+            valid = False
+
+        if valid:
+            return True
+
+        # --- rollback ---
+        for uur in block_hours:
+            remove_assignment(student, uur, attr_b)
+            remove_assignment(andere_student, uur, attr)
+
+        for uur in block_hours:
+            add_assignment(student, uur, attr)
+            add_assignment(andere_student, uur, attr_b)
+
+        rebuild_student_attrs(student)
+        rebuild_student_attrs(andere_student)
+
+    return False
+
+
+# Iteratief toepassen tot er niets meer verandert
+max_block_swap_passes = 5
+for _ in range(max_block_swap_passes):
+    wijziging = False
+
+    for student in studenten_workend:
+        # alleen attracties bekijken waar student momenteel >4 uur staat
+        probleem_attracties = [
+            a for a in list(student["assigned_attracties"])
+            if len(get_hours_on_attr(student, a)) > 4
+        ]
+
+        # eerst zwaarste problemen proberen
+        probleem_attracties.sort(
+            key=lambda a: (
+                -len(get_hours_on_attr(student, a)),
+                -max(get_hours_on_attr(student, a))
+            )
+        )
+
+        for attr in probleem_attracties:
+            if try_swap_last_block(student, attr):
+                wijziging = True
+                break
+
+    if not wijziging:
+        break
+
+
+
+# Iteratief toepassen tot er niets meer verandert
+max_block_swap_passes = 10
+for _ in range(max_block_swap_passes):
+    wijziging = False
+
+    for student in studenten_workend:
+        # werk met een kopie, want assigned_attracties kan tijdens swaps wijzigen
+        for attr in list(student["assigned_attracties"]):
+            uren = get_hours_on_attr(student, attr)
+            if len(uren) in [5, 6]:
+                if try_swap_last_block(student, attr):
+                    wijziging = True
+                    break
+
+    if not wijziging:
+        break
+
+
+
 # -----------------------------
 # Volgorde attracties uit Input!BL16:BL33
 # -----------------------------
