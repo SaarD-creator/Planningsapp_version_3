@@ -1391,7 +1391,7 @@ def _find_attr_of_student_on_hour(student, uur):
             return attr
     return None
 
-def _try_reduce_long_same_attr_clusters(max_iterations=4):
+def _try_reduce_long_same_attr_clusters(max_iterations=10):
     """
     Probeer studenten met 5/6 uur op dezelfde attractie OF met gesplitste lange runs
     (bv. 3+3) af te bouwen, maar alleen als de KPI verbetert.
@@ -1937,7 +1937,7 @@ def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
 
 _postprocess_simple_long_attr_swaps(max_iterations=6)
 
-max_iterations = 5
+max_iterations = 15
 for _ in range(max_iterations):
     changes_made = False
     for uur in open_uren:
