@@ -1612,12 +1612,19 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
     - student_b neemt attr_a over op suffix_hours
     - student_a neemt de oorspronkelijke attracties van student_b over op die uren
 
-    Alleen als ALLE suffix-uren lukt.
+    Deze versie is bewust directer:
+    - minder 'voorzichtige' KPI-remmen
+    - accepteer zodra student_a duidelijk minder lang op attr_a staat
+      en het aantal wissels niet ontspoort
     """
     if not suffix_hours:
         return False
 
-    # Bepaal op welke attracties student_b staat tijdens suffix_hours
+    # bescherm vaste-dag-studenten
+    if student_a["naam"] in locked_whole_day_students or student_b["naam"] in locked_whole_day_students:
+        return False
+
+    # student_b moet op elk suffix-uur ergens staan
     b_attr_per_hour = {}
     for h in suffix_hours:
         b_attr = _find_student_attr_on_hour(student_b, h)
@@ -1625,8 +1632,7 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
             return False
         b_attr_per_hour[h] = b_attr
 
-    # student_b moet attr_a inhoudelijk kunnen overnemen
-    # Let op: student_b MAG op die uren al ergens anders staan, want dit is een swap
+    # student_b moet attr_a kunnen doen op alle suffix-uren
     if not _student_can_take_hours_on_attr(student_b, attr_a, suffix_hours):
         return False
 
@@ -1637,22 +1643,15 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
         if not student_kan_attr(student_a, b_attr):
             return False
 
-        huidige = set(_get_student_attr_hours(student_a, b_attr))
-        totaal = sorted(huidige | {h})
-
-        if len(totaal) > 6:
-            return False
-        if max_consecutive_hours(totaal) > 4:
-            return False
-
         if b_attr in red_spots.get(h, set()):
             return False
 
     # KPI vooraf
     switches_before = _count_total_switches()
-    long_before = _count_students_5plus_same_attr()
+    a_attr_hours_before = len(_get_student_attr_hours(student_a, attr_a))
+    a_runs_before = len(contiguous_runs(_get_student_attr_hours(student_a, attr_a)))
+    b_attr_hours_before = len(_get_student_attr_hours(student_b, attr_a))
 
-    # Snapshot voor rollback
     snapshot_assigned_map = {k: list(v) for k, v in assigned_map.items()}
     snapshot_counts = {uur: dict(vals) for uur, vals in per_hour_assigned_counts.items()}
     snapshot_a_hours = list(student_a["assigned_hours"])
@@ -1661,41 +1660,39 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
     snapshot_b_attrs = set(student_b["assigned_attracties"])
 
     try:
-        # Voer swap uur per uur uit
+        # Simuleer de swap
         for h in suffix_hours:
             b_attr = b_attr_per_hour[h]
 
-            # student_a moet effectief op attr_a staan
             if student_a["naam"] not in assigned_map.get((h, attr_a), []):
                 raise ValueError("student_a staat niet op attr_a tijdens suffix-uur")
 
-            # student_b moet effectief op b_attr staan
             if student_b["naam"] not in assigned_map.get((h, b_attr), []):
-                raise ValueError("student_b staat niet op zijn bron-attractie tijdens suffix-uur")
+                raise ValueError("student_b staat niet op bron-attractie tijdens suffix-uur")
 
-            # Verwijder A van attr_a
+            # verwijder A van attr_a
             assigned_map[(h, attr_a)].remove(student_a["naam"])
             per_hour_assigned_counts[h][attr_a] -= 1
 
-            # Verwijder B van b_attr
+            # verwijder B van b_attr
             assigned_map[(h, b_attr)].remove(student_b["naam"])
             per_hour_assigned_counts[h][b_attr] -= 1
 
-            # Zet B op attr_a
+            # zet B op attr_a
             assigned_map[(h, attr_a)].append(student_b["naam"])
             per_hour_assigned_counts[h][attr_a] += 1
 
-            # Zet A op b_attr
+            # zet A op b_attr
             assigned_map[(h, b_attr)].append(student_a["naam"])
             per_hour_assigned_counts[h][b_attr] += 1
 
-            # Finale capaciteitscheck NA de swap
+            # finale capaciteitscheck
             if per_hour_assigned_counts[h][attr_a] > _max_spots_for(attr_a, h):
                 raise ValueError("capaciteit overschreden op attr_a")
             if per_hour_assigned_counts[h][b_attr] > _max_spots_for(b_attr, h):
                 raise ValueError("capaciteit overschreden op b_attr")
 
-        # Bouw metadata opnieuw op
+        # metadata opnieuw opbouwen
         student_a["assigned_hours"] = []
         student_a["assigned_attracties"] = set()
         for uur in open_uren:
@@ -1712,22 +1709,38 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
                     student_b["assigned_hours"].append(uur)
                     student_b["assigned_attracties"].add(attr)
 
+        # KPI na
         switches_after = _count_total_switches()
-        long_after = _count_students_5plus_same_attr()
+        a_attr_hours_after = len(_get_student_attr_hours(student_a, attr_a))
+        a_runs_after = len(contiguous_runs(_get_student_attr_hours(student_a, attr_a)))
+        b_attr_hours_after = len(_get_student_attr_hours(student_b, attr_a))
 
-        a_hours_after = _get_student_attr_hours(student_a, attr_a)
-        a_runs_after = contiguous_runs(a_hours_after)
-        still_bad = (
-            len(a_hours_after) >= 5
-            or any(len(r) >= 5 for r in a_runs_after)
-        )
-
+        # Duidelijke winstvoorwaarden:
+        # - A moet minder uren op attr_a hebben
+        # - en liefst <= 4 eindigen
+        # - of minder runs op attr_a hebben
+        # - en wissels mogen max +1 stijgen
         accepted = False
-        if not still_bad and switches_after <= switches_before + 1:
+
+        if (
+            a_attr_hours_after < a_attr_hours_before
+            and a_attr_hours_after <= 4
+            and switches_after <= switches_before + 1
+        ):
             accepted = True
-        elif long_after < long_before and switches_after <= switches_before + 1:
+
+        elif (
+            a_attr_hours_after < a_attr_hours_before
+            and a_runs_after < a_runs_before
+            and switches_after <= switches_before + 1
+        ):
             accepted = True
-        elif long_after == long_before and switches_after < switches_before:
+
+        elif (
+            a_attr_hours_after < a_attr_hours_before
+            and b_attr_hours_after > b_attr_hours_before
+            and switches_after < switches_before
+        ):
             accepted = True
 
         if accepted:
@@ -1752,16 +1765,18 @@ def _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
 
     return False
     
+    
 
-def _postprocess_simple_long_attr_swaps(max_iterations=6):
+def _postprocess_simple_long_attr_swaps(max_iterations=10):
     """
     Zoek studenten die >4 uur totaal op dezelfde attractie staan
-    en probeer een eenvoudige suffix-swap met een andere student.
+    en probeer een eenvoudige swap met een andere student.
 
-    Focus:
-    - laatste 2 uur, anders laatste 1 uur
-    - brede profielen eerst
-    - vaste hele-dag-studenten met rust laten
+    Verbeteringen t.o.v. vorige versie:
+    - kijkt niet alleen naar de laatste run
+    - probeert ALLE runs van achter naar voor
+    - probeert eerst suffix van 2 uur, dan 1 uur
+    - geeft voorrang aan student_b die attr_a nog niet heeft gedaan
     """
     for _ in range(max_iterations):
         changes_made = False
@@ -1775,7 +1790,7 @@ def _postprocess_simple_long_attr_swaps(max_iterations=6):
         )
 
         for student_a in studenten_volgorde:
-            if "locked_whole_day_students" in globals() and student_a["naam"] in locked_whole_day_students:
+            if student_a["naam"] in locked_whole_day_students:
                 continue
 
             for attr_a in attracties_te_plannen:
@@ -1787,29 +1802,49 @@ def _postprocess_simple_long_attr_swaps(max_iterations=6):
                 if not runs:
                     continue
 
-                # werk vooral op de laatste run
-                doel_run = runs[-1]
+                # probeer runs van achter naar voor
+                runs_te_proberen = list(reversed(runs))
 
-                kandidaat_suffixen = []
-                if len(doel_run) >= 2:
-                    kandidaat_suffixen.append(doel_run[-2:])
-                kandidaat_suffixen.append([doel_run[-1]])
+                for doel_run in runs_te_proberen:
+                    kandidaat_suffixen = []
 
-                for suffix_hours in kandidaat_suffixen:
-                    for student_b in studenten_workend:
-                        if student_b["naam"] == student_a["naam"]:
-                            continue
-                        if "locked_whole_day_students" in globals() and student_b["naam"] in locked_whole_day_students:
-                            continue
+                    if len(doel_run) >= 2:
+                        kandidaat_suffixen.append(doel_run[-2:])
+                    kandidaat_suffixen.append([doel_run[-1]])
 
-                        # student_b moet op alle suffix-uren effectief ergens staan
-                        if any(_find_student_attr_on_hour(student_b, h) is None for h in suffix_hours):
-                            continue
+                    for suffix_hours in kandidaat_suffixen:
+                        # Kandidaten B: eerst studenten die attr_a nog NIET hebben gedaan
+                        kandidaten_b = sorted(
+                            [s for s in studenten_workend if s["naam"] != student_a["naam"]],
+                            key=lambda s: (
+                                len(_get_student_attr_hours(s, attr_a)) > 0,
+                                s.get("aantal_attracties", len(s.get("attracties", [])))
+                            )
+                        )
 
-                        if _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
-                            changes_made = True
+                        for student_b in kandidaten_b:
+                            if student_b["naam"] in locked_whole_day_students:
+                                continue
+
+                            # student_b moet op alle suffix-uren effectief ergens staan
+                            if any(_find_student_attr_on_hour(student_b, h) is None for h in suffix_hours):
+                                continue
+
+                            # student_b moet op elk suffix-uur een concrete attractie hebben
+                            b_attrs = [_find_student_attr_on_hour(student_b, h) for h in suffix_hours]
+                            if any(a is None for a in b_attrs):
+                                continue
+
+                            # student_a moet elk van die attracties kunnen overnemen
+                            if any(not student_kan_attr(student_a, b_attr) for b_attr in b_attrs):
+                                continue
+
+                            if _swap_suffix_between_students(student_a, attr_a, suffix_hours, student_b):
+                                changes_made = True
+                                break
+
+                        if changes_made:
                             break
-
                     if changes_made:
                         break
                 if changes_made:
