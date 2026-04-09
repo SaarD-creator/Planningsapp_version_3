@@ -593,88 +593,10 @@ def student_tie_break_key(student):
 
     return naam
 
-def effectieve_uren(student):
-    uren = sorted(u for u in student["uren_beschikbaar"] if u in open_uren)
-    if student["is_pauzevlinder"]:
-        uren = [u for u in uren if u not in required_pauze_hours]
-    return uren
-
-def run_starts(student):
-    uren = effectieve_uren(student)
-    return [run[0] for run in contiguous_runs(uren)]
-
-def shift_signature(student):
-    """
-    Gebruik de echte structuur van de shift/runs.
-    Als twee studenten exact dezelfde shiftstructuur hebben,
-    dan willen we daarna gewoon terugvallen op BU2.
-    """
-    uren = effectieve_uren(student)
-    runs = contiguous_runs(uren)
-    return tuple((run[0], run[-1], len(run)) for run in runs)
-
-def student_specifieke_uur_nood(student, uur):
-    score = 0
-    for attr in actieve_attracties_per_uur.get(uur, set()):
-        if attr in red_spots.get(uur, set()):
-            continue
-        if student_kan_attr(student, attr):
-            score += aantallen[uur].get(attr, 0)
-    return score
-
-def run_start_alignment_score(student):
-    starts = run_starts(student)
-    if not starts:
-        return 0
-
-    score = 0
-    eerste_open = min(open_uren) if open_uren else None
-
-    for h in starts:
-        score += student_specifieke_uur_nood(student, h)
-
-        if eerste_open is not None and h > eerste_open and (h - 1) in open_uren:
-            score += max(
-                0,
-                student_specifieke_uur_nood(student, h)
-                - student_specifieke_uur_nood(student, h - 1)
-            )
-
-    return score
-
-def run_start_alignment_score(student):
-    """
-    Hogere score = beter aansluitende student.
-    We kijken naar de starturen van de runs.
-    Extra bonus als een run start op een uur waar de nood
-    hoger is dan het uur ervoor.
-    """
-    starts = run_starts(student)
-    if not starts:
-        return 0
-
-    score = 0
-    eerste_open = min(open_uren) if open_uren else None
-
-    for h in starts:
-        score += uur_nood_score(h)
-
-        # Bonus als dit echt een 'instapmoment' is
-        # waar de nood stijgt tegenover het vorige uur
-        if eerste_open is not None and h > eerste_open and (h - 1) in open_uren:
-            score += max(0, uur_nood_score(h) - uur_nood_score(h - 1))
-
-    return score
-
-def student_sort_key(student):
-    return (
-        student["aantal_attracties"],      # bestaande hoofdregel blijft
-        -run_start_alignment_score(student),  # beter aansluitende shifts eerst
-        shift_signature(student),          # zelfde shifts groeperen
-        student_tie_break_key(student)     # binnen gelijke shiftstructuur blijft BU2 leidend
-    )
-
-studenten_sorted = sorted(studenten_workend, key=student_sort_key)
+studenten_sorted = sorted(
+    studenten_workend,
+    key=lambda s: (s["aantal_attracties"], student_tie_break_key(s))
+)
 
 
 # -----------------------------
@@ -748,6 +670,46 @@ def student_kan_attr(student, attr):
     return all(o in student["attracties"] for o in onderdelen)
 
 
+def attr_parts(attr):
+    """
+    Geeft de genormaliseerde onderdelen van een attractie terug.
+    'Attractie 1 + Attractie 2' -> {'attractie 1', 'attractie 2'}
+    'Attractie 1' -> {'attractie 1'}
+    """
+    if not attr:
+        return set()
+    return {normalize_attr(x.strip()) for x in str(attr).split("+")}
+
+def attrs_zijn_zelfde_familie(attr_a, attr_b):
+    """
+    Twee attracties horen bij dezelfde 'doorloop-familie' als
+    de ene een subset is van de andere.
+    Voorbeeld:
+    - '1+2' en '1' => True
+    - '1+2' en '2' => True
+    - '1' en '2'   => False
+    """
+    parts_a = attr_parts(attr_a)
+    parts_b = attr_parts(attr_b)
+    if not parts_a or not parts_b:
+        return False
+    return parts_a.issubset(parts_b) or parts_b.issubset(parts_a)
+
+def kandidaat_attrs_op_uur(student, uur):
+    """
+    Alle attracties die dit uur actief zijn, capaciteit hebben
+    en die de student mag doen.
+    """
+    kandidaten = []
+    for attr in actieve_attracties_per_uur.get(uur, set()):
+        if not student_kan_attr(student, attr):
+            continue
+        if not _has_capacity(attr, uur):
+            continue
+        kandidaten.append(attr)
+    return kandidaten
+
+
 def _max_spots_for(attr, uur):
     """Houd rekening met red_spots: 2e plek dicht als het rood is."""
     max_spots = aantallen[uur].get(attr, 1)
@@ -808,6 +770,126 @@ def _try_place_block_on_attr(student, block_hours, attr):
 
     student["assigned_attracties"].add(attr)
     return True
+
+
+def _kan_plaatsen_op_exact_attr(student, uur, attr):
+    if not student_kan_attr(student, attr):
+        return False
+    if not _has_capacity(attr, uur):
+        return False
+    return True
+
+def _respecteert_attr_regels_na_mix(student, uur_attr_pairs):
+    """
+    Checkt je bestaande regels, maar per exacte attractie binnen een gemengd blok.
+    """
+    toekomstige_uren_per_attr = {}
+
+    # Bestaande uren ophalen
+    for attr in attracties_te_plannen:
+        uren = set()
+        for h in student["assigned_hours"]:
+            if student["naam"] in assigned_map.get((h, attr), []):
+                uren.add(h)
+        toekomstige_uren_per_attr[attr] = uren
+
+    # Nieuwe uren toevoegen
+    for h, attr in uur_attr_pairs:
+        toekomstige_uren_per_attr.setdefault(attr, set()).add(h)
+
+    # Zelfde regels als in je bestaande code
+    for attr, uren in toekomstige_uren_per_attr.items():
+        uren_sorted = sorted(uren)
+        if len(uren_sorted) > 6:
+            return False
+        if max_consecutive_hours(uren_sorted) > 4:
+            return False
+
+    return True
+
+
+def _try_place_three_hour_family_block(student, block_hours):
+    """
+    Speciale logica voor blokken van exact 3 uur:
+    laat een blok doorlopen tussen een samengevoegde attractie
+    en een losse attractie uit dezelfde familie.
+
+    Voorbeelden die hier wél mogen:
+    - [1+2, 1, 1]
+    - [1+2, 2, 2]
+    - [1, 1, 1+2]
+    - [2, 2, 1+2]
+
+    Maar alleen als de student elke gekozen attractie echt mag doen.
+    Dus voor 1+2 moet student beide kunnen.
+    """
+    if len(block_hours) != 3:
+        return False
+
+    h1, h2, h3 = block_hours
+
+    cand1 = kandidaat_attrs_op_uur(student, h1)
+    cand2 = kandidaat_attrs_op_uur(student, h2)
+    cand3 = kandidaat_attrs_op_uur(student, h3)
+
+    if not cand1 or not cand2 or not cand3:
+        return False
+
+    # Zoek enkel families waar minstens 1 samengesteld uur in zit
+    # en de andere uren daarop logisch kunnen doorlopen.
+    sequenties = []
+
+    for a1 in cand1:
+        for a2 in cand2:
+            for a3 in cand3:
+                # Alle drie uren moeten binnen één doorloopfamilie passen:
+                # ofwel a1~a2 en a2~a3, of exact gelijk
+                if not attrs_zijn_zelfde_familie(a1, a2):
+                    continue
+                if not attrs_zijn_zelfde_familie(a2, a3):
+                    continue
+
+                # We willen echt focussen op gevallen met minstens 1 samengestelde attractie
+                if all(len(attr_parts(a)) == 1 for a in [a1, a2, a3]):
+                    continue
+
+                # Extra voorkeur:
+                # liever een blok dat na de samenvoeging "stabiel" blijft
+                # bv. [1+2, 1, 1] boven [1+2, 1, 2]
+                score = (
+                    0 if a2 == a3 else 1,
+                    0 if a1 == a2 else 1,
+                    str(a1), str(a2), str(a3)
+                )
+                sequenties.append((score, (a1, a2, a3)))
+
+    sequenties.sort(key=lambda x: x[0])
+
+    for _, seq in sequenties:
+        a1, a2, a3 = seq
+
+        # Regels per exact gekozen attractie respecteren
+        if not _kan_plaatsen_op_exact_attr(student, h1, a1):
+            continue
+        if not _kan_plaatsen_op_exact_attr(student, h2, a2):
+            continue
+        if not _kan_plaatsen_op_exact_attr(student, h3, a3):
+            continue
+
+        # Tijdelijke check op 6 uur max en 4 aaneengesloten uren
+        if not _respecteert_attr_regels_na_mix(student, [(h1, a1), (h2, a2), (h3, a3)]):
+            continue
+
+        # Plaatsen
+        for h, attr in [(h1, a1), (h2, a2), (h3, a3)]:
+            assigned_map[(h, attr)].append(student["naam"])
+            per_hour_assigned_counts[h][attr] += 1
+            student["assigned_hours"].append(h)
+            student["assigned_attracties"].add(attr)
+
+        return True
+
+    return False
 
 
 
@@ -885,8 +967,14 @@ def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
     Probeer een reeks opeenvolgende uren te plaatsen.
     - Standaard: eerst 3, dan 2, dan 1.
     - Via preferred_sizes kan je lokaal een andere voorkeur afdwingen.
-    - Als niets lukt aan het begin van de reeks, schuif 1 uur op (dat uur gaat voorlopig naar extra),
-      en probeer verder; tweede pass zal het later alsnog proberen op te vullen.
+    - NIEUW: bij een blok van exact 3 uur proberen we eerst een
+      'family block' via samengestelde attracties, bv.:
+        [1+2, 1, 1] of [1+2, 2, 2]
+      zolang de student alle betrokken attracties echt kan.
+    - Als niets lukt aan het begin van de reeks, schuif 1 uur op
+      (dat uur gaat voorlopig naar extra), en probeer verder;
+      tweede pass zal het later alsnog proberen op te vullen.
+
     Retourneert: lijst 'unplaced' uren die (voorlopig) niet geplaatst raakten.
     """
     if not hours_seq:
@@ -899,11 +987,34 @@ def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
     for size in preferred_sizes:
         if len(hours_seq) >= size:
             first_block = hours_seq[:size]
-            if _try_place_block_any_attr(student, first_block):
-                return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes)
 
-    # Helemaal niks paste aan de voorkant: markeer eerste uur tijdelijk als 'unplaced' en schuif door
-    return [hours_seq[0]] + _place_block_with_fallback(student, hours_seq[1:], preferred_sizes)
+            # NIEUW:
+            # Bij een blok van exact 3 uur eerst proberen of we
+            # een doorlopend blok kunnen maken over een samengestelde attractie
+            # en daarna een losse attractie uit dezelfde familie.
+            if size == 3:
+                if _try_place_three_hour_family_block(student, first_block):
+                    return _place_block_with_fallback(
+                        student,
+                        hours_seq[size:],
+                        preferred_sizes
+                    )
+
+            # Bestaande logica: probeer het blok op één gewone attractie
+            if _try_place_block_any_attr(student, first_block):
+                return _place_block_with_fallback(
+                    student,
+                    hours_seq[size:],
+                    preferred_sizes
+                )
+
+    # Helemaal niks paste aan de voorkant:
+    # markeer eerste uur tijdelijk als 'unplaced' en schuif door
+    return [hours_seq[0]] + _place_block_with_fallback(
+        student,
+        hours_seq[1:],
+        preferred_sizes
+    )
 
 
 # -----------------------------
