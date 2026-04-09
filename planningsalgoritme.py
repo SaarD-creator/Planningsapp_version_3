@@ -593,10 +593,71 @@ def student_tie_break_key(student):
 
     return naam
 
-studenten_sorted = sorted(
-    studenten_workend,
-    key=lambda s: (s["aantal_attracties"], student_tie_break_key(s))
-)
+def effectieve_uren(student):
+    uren = sorted(u for u in student["uren_beschikbaar"] if u in open_uren)
+    if student["is_pauzevlinder"]:
+        uren = [u for u in uren if u not in required_pauze_hours]
+    return uren
+
+def run_starts(student):
+    uren = effectieve_uren(student)
+    return [run[0] for run in contiguous_runs(uren)]
+
+def shift_signature(student):
+    """
+    Gebruik de echte structuur van de shift/runs.
+    Als twee studenten exact dezelfde shiftstructuur hebben,
+    dan willen we daarna gewoon terugvallen op BU2.
+    """
+    uren = effectieve_uren(student)
+    runs = contiguous_runs(uren)
+    return tuple((run[0], run[-1], len(run)) for run in runs)
+
+def uur_nood_score(uur):
+    """
+    Hoeveel 'nood' zit er op dit uur?
+    Simpele en bruikbare benadering:
+    aantal actieve plekken op dit uur.
+    """
+    return sum(
+        aantallen[uur].get(attr, 0)
+        for attr in actieve_attracties_per_uur.get(uur, set())
+        if attr not in red_spots.get(uur, set())
+    )
+
+def run_start_alignment_score(student):
+    """
+    Hogere score = beter aansluitende student.
+    We kijken naar de starturen van de runs.
+    Extra bonus als een run start op een uur waar de nood
+    hoger is dan het uur ervoor.
+    """
+    starts = run_starts(student)
+    if not starts:
+        return 0
+
+    score = 0
+    eerste_open = min(open_uren) if open_uren else None
+
+    for h in starts:
+        score += uur_nood_score(h)
+
+        # Bonus als dit echt een 'instapmoment' is
+        # waar de nood stijgt tegenover het vorige uur
+        if eerste_open is not None and h > eerste_open and (h - 1) in open_uren:
+            score += max(0, uur_nood_score(h) - uur_nood_score(h - 1))
+
+    return score
+
+def student_sort_key(student):
+    return (
+        student["aantal_attracties"],      # bestaande hoofdregel blijft
+        -run_start_alignment_score(student),  # beter aansluitende shifts eerst
+        shift_signature(student),          # zelfde shifts groeperen
+        student_tie_break_key(student)     # binnen gelijke shiftstructuur blijft BU2 leidend
+    )
+
+studenten_sorted = sorted(studenten_workend, key=student_sort_key)
 
 
 # -----------------------------
