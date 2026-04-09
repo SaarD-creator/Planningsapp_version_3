@@ -613,17 +613,34 @@ def shift_signature(student):
     runs = contiguous_runs(uren)
     return tuple((run[0], run[-1], len(run)) for run in runs)
 
-def uur_nood_score(uur):
-    """
-    Hoeveel 'nood' zit er op dit uur?
-    Simpele en bruikbare benadering:
-    aantal actieve plekken op dit uur.
-    """
-    return sum(
-        aantallen[uur].get(attr, 0)
-        for attr in actieve_attracties_per_uur.get(uur, set())
-        if attr not in red_spots.get(uur, set())
-    )
+def student_specifieke_uur_nood(student, uur):
+    score = 0
+    for attr in actieve_attracties_per_uur.get(uur, set()):
+        if attr in red_spots.get(uur, set()):
+            continue
+        if student_kan_attr(student, attr):
+            score += aantallen[uur].get(attr, 0)
+    return score
+
+def run_start_alignment_score(student):
+    starts = run_starts(student)
+    if not starts:
+        return 0
+
+    score = 0
+    eerste_open = min(open_uren) if open_uren else None
+
+    for h in starts:
+        score += student_specifieke_uur_nood(student, h)
+
+        if eerste_open is not None and h > eerste_open and (h - 1) in open_uren:
+            score += max(
+                0,
+                student_specifieke_uur_nood(student, h)
+                - student_specifieke_uur_nood(student, h - 1)
+            )
+
+    return score
 
 def run_start_alignment_score(student):
     """
