@@ -1228,36 +1228,108 @@ for _ in range(max_iterations):
 
 vaste_studenten = {vp["naam"] for vp in vaste_plaatsingen}
 
+
 def get_student_by_name(naam):
     return next((s for s in studenten_workend if s["naam"] == naam), None)
 
+
+def attr_parts(attr):
+    """
+    Exacte attractienaam -> genormaliseerde onderdelenset.
+    'Attractie 1 + Attractie 2' -> {'attractie 1', 'attractie 2'}
+    'Attractie 1' -> {'attractie 1'}
+    """
+    if not attr:
+        return set()
+    return {normalize_attr(x.strip()) for x in str(attr).split("+")}
+
+
+def is_family_related(attr_a, attr_b):
+    """
+    True als twee attracties tot dezelfde doorloopfamilie kunnen behoren.
+    Voorbeelden:
+    - 1 en 1+2 -> True
+    - 2 en 1+2 -> True
+    - 1+2 en 1+2 -> True
+    - 1 en 2 -> False
+    """
+    parts_a = attr_parts(attr_a)
+    parts_b = attr_parts(attr_b)
+    if not parts_a or not parts_b:
+        return False
+    return parts_a.issubset(parts_b) or parts_b.issubset(parts_a)
+
+
+def family_key(attr):
+    """
+    Geef een sleutel voor de familie van een attractie.
+    Voor losse attracties is dat gewoon hun eigen onderdeel.
+    Voor samengestelde attracties is dat de volledige set onderdelen.
+    """
+    return frozenset(attr_parts(attr))
+
+
 def get_student_attr_on_hour(student_naam, uur):
-    return get_student_primary_attr_on_hour(student_naam, uur)
+    for attr in actieve_attracties_per_uur.get(uur, set()):
+        if student_naam in assigned_map.get((uur, attr), []):
+            return attr
+    return None
+
 
 def get_hours_on_attr(student, attr):
-    return get_hours_on_attr_family(student, attr)
+    """
+    FAMILY-AWARE:
+    telt uren op attracties die logisch bij dezelfde familie horen.
+    Dus voor attr='1+2' of attr='1' tellen uren op '1' en '1+2' samen mee,
+    maar NIET uren op '2' alleen.
+    """
+    target_parts = attr_parts(attr)
+    uren = []
+
+    for uur in sorted(set(student["assigned_hours"])):
+        huidige_attr = get_student_attr_on_hour(student["naam"], uur)
+        if not huidige_attr:
+            continue
+
+        huidige_parts = attr_parts(huidige_attr)
+
+        # Zelfde familie via subsetrelatie
+        if target_parts.issubset(huidige_parts) or huidige_parts.issubset(target_parts):
+            uren.append(uur)
+
+    return sorted(uren)
+
 
 def get_runs_on_attr(student, attr):
-    uren = get_hours_on_attr_family(student, attr)
+    uren = get_hours_on_attr(student, attr)
     return contiguous_runs(uren)
 
+
 def count_attr_switches(student):
+    """
+    FAMILY-AWARE:
+    overgang 1 -> 1+2 of 1+2 -> 1 telt NIET als wissel.
+    1 -> 2 telt WEL als wissel.
+    """
     uur_attr = []
     for uur in sorted(set(student["assigned_hours"])):
-        groep = get_student_attr_group_on_hour(student["naam"], uur)
-        if groep:
-            uur_attr.append((uur, groep))
+        attr = get_student_attr_on_hour(student["naam"], uur)
+        if attr:
+            uur_attr.append((uur, attr))
 
     if not uur_attr:
         return 0
 
     switches = 0
-    prev_groep = uur_attr[0][1]
-    for _, groep in uur_attr[1:]:
-        if not (groep.issubset(prev_groep) or prev_groep.issubset(groep)):
+    prev_attr = uur_attr[0][1]
+
+    for _, attr in uur_attr[1:]:
+        if not is_family_related(prev_attr, attr):
             switches += 1
-        prev_groep = groep
+        prev_attr = attr
+
     return switches
+
 
 def remove_assignment(student, uur, attr):
     namen = assigned_map.get((uur, attr), [])
@@ -1266,10 +1338,12 @@ def remove_assignment(student, uur, attr):
     if uur in student["assigned_hours"]:
         student["assigned_hours"].remove(uur)
 
+
 def add_assignment(student, uur, attr):
     assigned_map[(uur, attr)].append(student["naam"])
     student["assigned_hours"].append(uur)
     student["assigned_attracties"].add(attr)
+
 
 def rebuild_student_attrs(student):
     attrs = set()
@@ -1279,16 +1353,19 @@ def rebuild_student_attrs(student):
             attrs.add(attr)
     student["assigned_attracties"] = attrs
 
+
 def is_valid_attr_for_student_on_hours(student, attr, uren):
-    # vaste dagplaatsingen niet aanpassen
+    """
+    Exacte validatie:
+    student moet deze exacte attractie op al die uren mogen doen.
+    Dus bij '1+2' moet student beide onderdelen kunnen.
+    """
     if student["naam"] in vaste_studenten:
         return False
 
-    # student moet attractie kunnen doen
     if not student_kan_attr(student, attr):
         return False
 
-    # attractie moet op al die uren actief en geldig zijn
     for uur in uren:
         if attr not in actieve_attracties_per_uur.get(uur, set()):
             return False
@@ -1297,73 +1374,59 @@ def is_valid_attr_for_student_on_hours(student, attr, uren):
 
     return True
 
+
 def respects_student_attr_rules(student, attr):
-    uren = get_hours_on_attr_family(student, attr)
+    """
+    FAMILY-AWARE:
+    max 6 uur en max 4 aaneengesloten uren gelden over de familie.
+    Dus 1 en 1+2 tellen samen.
+    """
+    uren = get_hours_on_attr(student, attr)
     if len(uren) > 6:
         return False
     if max_consecutive_hours(uren) > 4:
         return False
     return True
 
-def can_swap_exact_block(student_a, attr_a, block_hours, student_b, attr_b):
-    # zelfde student of zelfde attractie heeft geen zin
-    if student_a["naam"] == student_b["naam"]:
-        return False
-    if attr_a == attr_b:
-        return False
-
-    # beide richtingen moeten kunnen
-    if not is_valid_attr_for_student_on_hours(student_a, attr_b, block_hours):
-        return False
-    if not is_valid_attr_for_student_on_hours(student_b, attr_a, block_hours):
-        return False
-
-    # student_b moet op exact deze uren ook éénzelfde blok hebben op attr_b
-    for uur in block_hours:
-        if student_b["naam"] not in assigned_map.get((uur, attr_b), []):
-            return False
-        # en niet tegelijk nog ergens anders zitten
-        current_attr = get_student_attr_on_hour(student_b["naam"], uur)
-        if current_attr != attr_b:
-            return False
-
-    # student_a moet natuurlijk ook exact daar staan
-    for uur in block_hours:
-        if student_a["naam"] not in assigned_map.get((uur, attr_a), []):
-            return False
-        current_attr = get_student_attr_on_hour(student_a["naam"], uur)
-        if current_attr != attr_a:
-            return False
-
-    return True
 
 def count_problem_attrs(student):
     """
-    Tel voor hoeveel attracties deze student meer dan 4 uur ingepland staat.
+    FAMILY-AWARE:
+    tel voor hoeveel families deze student boven 4 uur komt.
     """
-    count = 0
+    families = {}
     for attr in list(student["assigned_attracties"]):
-        if len(get_hours_on_attr(student, attr)) > 4:
+        families[family_key(attr)] = attr
+
+    count = 0
+    for _, representatieve_attr in families.items():
+        uren = get_hours_on_attr(student, representatieve_attr)
+        if len(uren) > 4:
             count += 1
     return count
 
+
 def total_overflow_hours(student):
     """
-    Tel hoeveel uren boven de limiet van 4 uur deze student in totaal heeft.
-    Voorbeeld:
-    - 5 uur op een attractie => +1
-    - 6 uur op een attractie => +2
+    FAMILY-AWARE:
+    tel hoeveel uren boven 4 er in totaal zijn over alle families.
     """
-    overflow = 0
+    families = {}
     for attr in list(student["assigned_attracties"]):
-        uren = len(get_hours_on_attr(student, attr))
+        families[family_key(attr)] = attr
+
+    overflow = 0
+    for _, representatieve_attr in families.items():
+        uren = len(get_hours_on_attr(student, representatieve_attr))
         if uren > 4:
             overflow += (uren - 4)
     return overflow
 
+
 def can_use_block_as_swap_target(student, attr, block_hours):
     """
-    Check of student op exact deze uren op exact dezelfde attractie staat.
+    Check of student op exact deze uren op exact deze attractie staat.
+    Deze blijft exact, want we willen weten wat er NU echt staat.
     """
     for uur in block_hours:
         if student["naam"] not in assigned_map.get((uur, attr), []):
@@ -1373,16 +1436,59 @@ def can_use_block_as_swap_target(student, attr, block_hours):
             return False
     return True
 
+
+def student_exact_attr_block_on_hours(student, block_hours):
+    """
+    Haal voor elk uur van het blok de exacte attractie op waarop student staat.
+    Retourneert lijst van (uur, attr) of None als iets ontbreekt.
+    """
+    resultaat = []
+    for uur in block_hours:
+        attr = get_student_attr_on_hour(student["naam"], uur)
+        if not attr:
+            return None
+        resultaat.append((uur, attr))
+    return resultaat
+
+
+def block_is_family_coherent(uur_attr_pairs):
+    """
+    Een blok is family-coherent als opeenvolgende uren telkens binnen
+    dezelfde doorloopfamilie vallen.
+    Voorbeeld:
+    [1, 1+2, 1+2] -> True
+    [1+2, 1, 1]   -> True
+    [1, 2, 1+2]   -> False
+    """
+    attrs = [attr for _, attr in uur_attr_pairs]
+    if not attrs:
+        return False
+
+    for i in range(1, len(attrs)):
+        if not is_family_related(attrs[i-1], attrs[i]):
+            return False
+    return True
+
+
+def candidate_family_representatives(student):
+    """
+    Unieke representatieve attracties per familie.
+    """
+    reps = {}
+    for attr in list(student["assigned_attracties"]):
+        reps[family_key(attr)] = attr
+    return list(reps.values())
+
+
 def try_swap_specific_block(student, attr, block_hours):
     """
     Probeer één specifiek blok (eerste OF laatste) van student/attr te wisselen.
-    Alleen als:
-    - het blok 2 of 3 uur lang is
-    - de andere student op exact die uren ook één blok op één attractie heeft
-    - alle regels geldig blijven
-    - max 1 extra wissel ontstaat
-    - het totaal aantal >4u-problemen niet stijgt
-    - en liefst daalt
+
+    NIEUW:
+    - blok mag family-aware zijn, bv. [1, 1+2, 1+2]
+    - andere student moet op exact die uren ook een coherent familieblok hebben
+    - elke exacte attractie in de swap moet door de andere student gekund zijn
+    - dus als er 1+2 in het blok zit, moet die student beide attracties kunnen
     """
     if len(block_hours) not in [2, 3]:
         return False
@@ -1390,6 +1496,12 @@ def try_swap_specific_block(student, attr, block_hours):
     orig_switches_a = count_attr_switches(student)
     orig_problem_count_a = count_problem_attrs(student)
     orig_overflow_a = total_overflow_hours(student)
+
+    blok_a = student_exact_attr_block_on_hours(student, block_hours)
+    if not blok_a:
+        return False
+    if not block_is_family_coherent(blok_a):
+        return False
 
     eerste_uur = block_hours[0]
     kandidaten = []
@@ -1400,49 +1512,71 @@ def try_swap_specific_block(student, attr, block_hours):
         if andere_student["naam"] in vaste_studenten:
             continue
 
-        attr_b = get_student_attr_on_hour(andere_student["naam"], eerste_uur)
-        if not attr_b or attr_b == attr:
+        blok_b = student_exact_attr_block_on_hours(andere_student, block_hours)
+        if not blok_b:
+            continue
+        if not block_is_family_coherent(blok_b):
             continue
 
-        # Andere student moet exact op dit hele blok op dezelfde attractie staan
-        if not can_use_block_as_swap_target(andere_student, attr_b, block_hours):
+        # Eerste uur moet effectief bezet zijn door die andere student
+        attr_b_start = get_student_attr_on_hour(andere_student["naam"], eerste_uur)
+        if not attr_b_start:
             continue
 
-        # Beide studenten moeten elkaars attractie op die uren mogen doen
-        if not is_valid_attr_for_student_on_hours(student, attr_b, block_hours):
-            continue
-        if not is_valid_attr_for_student_on_hours(andere_student, attr, block_hours):
+        # Exacte uur-per-uur validatie in beide richtingen
+        geldig = True
+
+        # student moet elk exact attr uit blok_b kunnen
+        for uur, attr_b in blok_b:
+            if not is_valid_attr_for_student_on_hours(student, attr_b, [uur]):
+                geldig = False
+                break
+
+        if not geldig:
             continue
 
-        kandidaten.append((andere_student["naam"], attr_b, andere_student))
+        # andere_student moet elk exact attr uit blok_a kunnen
+        for uur, attr_a in blok_a:
+            if not is_valid_attr_for_student_on_hours(andere_student, attr_a, [uur]):
+                geldig = False
+                break
 
-    for _, attr_b, andere_student in kandidaten:
+        if not geldig:
+            continue
+
+        kandidaten.append((andere_student, blok_b))
+
+    for andere_student, blok_b in kandidaten:
         orig_switches_b = count_attr_switches(andere_student)
         orig_problem_count_b = count_problem_attrs(andere_student)
         orig_overflow_b = total_overflow_hours(andere_student)
 
         # --- tijdelijke swap uitvoeren ---
-        for uur in block_hours:
-            remove_assignment(student, uur, attr)
+        for uur, attr_a in blok_a:
+            remove_assignment(student, uur, attr_a)
+        for uur, attr_b in blok_b:
             remove_assignment(andere_student, uur, attr_b)
 
-        for uur in block_hours:
+        for uur, attr_b in blok_b:
             add_assignment(student, uur, attr_b)
-            add_assignment(andere_student, uur, attr)
+        for uur, attr_a in blok_a:
+            add_assignment(andere_student, uur, attr_a)
 
         rebuild_student_attrs(student)
         rebuild_student_attrs(andere_student)
 
         valid = True
 
-        # Regels voor beide studenten / beide attracties
-        for s, a in [
-            (student, attr),
-            (student, attr_b),
-            (andere_student, attr),
-            (andere_student, attr_b),
-        ]:
-            if not respects_student_attr_rules(s, a):
+        # Controleer alle betrokken families van beide studenten
+        betrokken_attrs = set(
+            [a for _, a in blok_a] +
+            [a for _, a in blok_b]
+        )
+
+        for a in betrokken_attrs:
+            if not respects_student_attr_rules(student, a):
+                valid = False
+            if not respects_student_attr_rules(andere_student, a):
                 valid = False
 
         # Max 1 extra wissel in totaal
@@ -1489,12 +1623,14 @@ def try_swap_specific_block(student, attr, block_hours):
             return True
 
         # --- rollback ---
-        for uur in block_hours:
+        for uur, attr_b in blok_b:
             remove_assignment(student, uur, attr_b)
-            remove_assignment(andere_student, uur, attr)
+        for uur, attr_a in blok_a:
+            remove_assignment(andere_student, uur, attr_a)
 
-        for uur in block_hours:
-            add_assignment(student, uur, attr)
+        for uur, attr_a in blok_a:
+            add_assignment(student, uur, attr_a)
+        for uur, attr_b in blok_b:
             add_assignment(andere_student, uur, attr_b)
 
         rebuild_student_attrs(student)
@@ -1502,11 +1638,12 @@ def try_swap_specific_block(student, attr, block_hours):
 
     return False
 
+
 def try_swap_last_or_first_block(student, attr):
     """
-    Probeer eerst het laatste blok op deze attractie te wisselen.
+    Probeer eerst het laatste blok binnen deze familie te wisselen.
     Lukt dat niet, probeer dan het eerste blok.
-    Alleen relevant als student >4 uur op deze attractie staat.
+    Alleen relevant als student >4 uur op deze familie staat.
     """
     uren_op_attr = get_hours_on_attr(student, attr)
     if len(uren_op_attr) <= 4:
@@ -1519,14 +1656,11 @@ def try_swap_last_or_first_block(student, attr):
     laatste_run = runs[-1]
     eerste_run = runs[0]
 
-    # Eerst laatste blok proberen
     if len(laatste_run) in [2, 3]:
         if try_swap_specific_block(student, attr, laatste_run):
             return True
 
-    # Daarna eerste blok proberen
     if len(eerste_run) in [2, 3]:
-        # niet dubbel proberen als er maar 1 run is en die identiek is
         if eerste_run != laatste_run:
             if try_swap_specific_block(student, attr, eerste_run):
                 return True
@@ -1534,8 +1668,9 @@ def try_swap_last_or_first_block(student, attr):
     return False
 
 
+
 # Iteratief toepassen tot er niets meer verandert
-max_block_swap_passes = 5
+max_block_swap_passes = 15
 for _ in range(max_block_swap_passes):
     wijziging = False
 
