@@ -1,4 +1,4 @@
-#betere verdeling 3 uur blokken, maar te veel 6 uur bij zelfde attractie & 1+3 logica voor 9u30 ipv 3+1 & 2+2 logica voor 4 uur opt einde
+#1+3 logica voor 9u30 ipv 3+1 & 2+2 logica voor 4 uur opt einde & 6 uur op een dag is toegelaten, maar wordt vermeden door post-processing
 
 #uitschakelen attracties op bepaalde uren lijkt te werken!
 #samenvoegen attracties per uur werkttttt!!! Kleine bug is er uit gehaald
@@ -104,6 +104,87 @@ def parse_header_uur(header):
         return int(s)
     except:
         return None
+
+
+def attr_onderdelen(attr):
+    """Geef de genormaliseerde onderdelen van een attractie terug.
+    - 'Attractie 1' -> {'attractie'}
+    - 'Attractie 1 + Attractie 2' -> {'attractie 1', 'attractie 2'}
+    """
+    if not attr:
+        return set()
+    s = str(attr).strip()
+    if " + " in s:
+        return {normalize_attr(x.strip()) for x in s.split("+") if str(x).strip()}
+    return {normalize_attr(s)}
+
+def attrs_zijn_compatibel_voor_blok(attr_a, attr_b):
+    """
+    Twee attracties zijn compatibel voor blokcontinuïteit als de ene een deelverzameling
+    van de andere is. Daardoor telt bv. 'A' -> 'A + B' of 'A + B' -> 'A' als hetzelfde blok,
+    maar 'A' -> 'A + B' mag alleen als de student effectief ook B kan.
+    """
+    onderdelen_a = attr_onderdelen(attr_a)
+    onderdelen_b = attr_onderdelen(attr_b)
+    if not onderdelen_a or not onderdelen_b:
+        return False
+    return onderdelen_a.issubset(onderdelen_b) or onderdelen_b.issubset(onderdelen_a)
+
+def student_kan_attr_uitbreiding_doen(student, van_attr, naar_attr):
+    """
+    Extra veiligheidscheck voor overgang van losse attractie naar samengestelde attractie.
+    Voorbeeld:
+    - van 'Attractie 1' naar 'Attractie 1 + 2' mag alleen als student attractie 2 ook kan.
+    """
+    if not student_kan_attr(student, naar_attr):
+        return False
+
+    van_set = attr_onderdelen(van_attr)
+    naar_set = attr_onderdelen(naar_attr)
+
+    # Gewone compatibele overgang zonder uitbreiding
+    if naar_set.issubset(van_set):
+        return True
+
+    # Uitbreiding: student moet alle nieuwe onderdelen ook kunnen
+    return all(student_kan_attr(student, onderdeel) for onderdeel in naar_set - van_set)
+
+def get_student_attrs_on_hour(student_naam, uur):
+    attrs = []
+    for attr in actieve_attracties_per_uur.get(uur, set()):
+        if student_naam in assigned_map.get((uur, attr), []):
+            attrs.append(attr)
+    return attrs
+
+def get_student_primary_attr_on_hour(student_naam, uur):
+    attrs = get_student_attrs_on_hour(student_naam, uur)
+    if not attrs:
+        return None
+    # liefst de "meest volledige" attractie teruggeven
+    attrs.sort(key=lambda a: (-len(attr_onderdelen(a)), a))
+    return attrs[0]
+
+def get_student_attr_group_on_hour(student_naam, uur):
+    attrs = get_student_attrs_on_hour(student_naam, uur)
+    if not attrs:
+        return set()
+    groep = set()
+    for attr in attrs:
+        groep |= attr_onderdelen(attr)
+    return groep
+
+def get_hours_on_attr_family(student, attr):
+    """
+    Geeft alle uren waarop student op een compatibele attractiefamilie stond.
+    Zo tellen 'A' en 'A + B' als één familie zolang de overlap logisch is.
+    """
+    target = attr_onderdelen(attr)
+    uren = []
+    for uur in sorted(set(student["assigned_hours"])):
+        groep = get_student_attr_group_on_hour(student["naam"], uur)
+        if groep and (groep.issubset(target) or target.issubset(groep)):
+            uren.append(uur)
+    return sorted(set(uren))
 
 # -----------------------------
 # Studenten inlezen
@@ -605,28 +686,38 @@ def _has_capacity(attr, uur):
 def _try_place_block_on_attr(student, block_hours, attr):
     """Check capaciteit in alle uren en plaats dan in één keer.
     Regels:
-    - max 6 uur totaal per attractie per dag
-    - max 4 aaneengesloten uren op dezelfde attractie
+    - max 6 uur totaal per attractiefamilie per dag
+    - max 4 aaneengesloten uren binnen dezelfde compatibele familie
+    - overgang 'A' -> 'A + B' mag alleen als student B ook effectief kan
     """
     # Capaciteit check
     for h in block_hours:
         if not _has_capacity(attr, h):
             return False
 
-    # Verzamel alle uren waarop deze student al bij deze attractie staat
-    uren_bij_attr = set()
-    for h in student["assigned_hours"]:
-        namen = assigned_map.get((h, attr), [])
-        if student["naam"] in namen:
-            uren_bij_attr.add(h)
+    # Compatibiliteit met al bestaande omliggende uren van deze student
+    for buur_uur in [min(block_hours) - 1, max(block_hours) + 1]:
+        if buur_uur not in open_uren:
+            continue
+        bestaand_attr = get_student_primary_attr_on_hour(student["naam"], buur_uur)
+        if not bestaand_attr:
+            continue
+        if attrs_zijn_compatibel_voor_blok(bestaand_attr, attr):
+            if not student_kan_attr_uitbreiding_doen(student, bestaand_attr, attr):
+                return False
+            if not student_kan_attr_uitbreiding_doen(student, attr, bestaand_attr):
+                return False
 
-    # Check max 6 unieke uren per attractie per dag
+    # Verzamel alle uren waarop deze student al in dezelfde compatibele attractiefamilie staat
+    uren_bij_attr_familie = set(get_hours_on_attr_family(student, attr))
+
+    # Check max 6 unieke uren per attractiefamilie per dag
     nieuwe_uren = set(block_hours)
-    totaal_uren = uren_bij_attr | nieuwe_uren
+    totaal_uren = uren_bij_attr_familie | nieuwe_uren
     if len(totaal_uren) > 6:
         return False
 
-    # Check max 4 aaneengesloten uren op dezelfde attractie
+    # Check max 4 aaneengesloten uren binnen dezelfde compatibele familie
     alle_uren_attr = sorted(totaal_uren)
     if max_consecutive_hours(alle_uren_attr) > 4:
         return False
@@ -651,12 +742,7 @@ def _try_place_block_any_attr(student, block_hours):
     """
 
     def uren_bij_attr(student, attr):
-        uren = set()
-        for h in student["assigned_hours"]:
-            namen = assigned_map.get((h, attr), [])
-            if student["naam"] in namen:
-                uren.add(h)
-        return uren
+        return set(get_hours_on_attr_family(student, attr))
 
     def candidate_score(attr):
         # Hoeveel studenten kunnen deze attractie? Lager = kritieker
@@ -957,38 +1043,31 @@ def get_student_by_name(naam):
     return next((s for s in studenten_workend if s["naam"] == naam), None)
 
 def get_student_attr_on_hour(student_naam, uur):
-    for attr in actieve_attracties_per_uur.get(uur, set()):
-        if student_naam in assigned_map.get((uur, attr), []):
-            return attr
-    return None
+    return get_student_primary_attr_on_hour(student_naam, uur)
 
 def get_hours_on_attr(student, attr):
-    uren = []
-    for uur in sorted(set(student["assigned_hours"])):
-        if student["naam"] in assigned_map.get((uur, attr), []):
-            uren.append(uur)
-    return sorted(uren)
+    return get_hours_on_attr_family(student, attr)
 
 def get_runs_on_attr(student, attr):
-    uren = get_hours_on_attr(student, attr)
+    uren = get_hours_on_attr_family(student, attr)
     return contiguous_runs(uren)
 
 def count_attr_switches(student):
     uur_attr = []
     for uur in sorted(set(student["assigned_hours"])):
-        attr = get_student_attr_on_hour(student["naam"], uur)
-        if attr:
-            uur_attr.append((uur, attr))
+        groep = get_student_attr_group_on_hour(student["naam"], uur)
+        if groep:
+            uur_attr.append((uur, groep))
 
     if not uur_attr:
         return 0
 
     switches = 0
-    prev_attr = uur_attr[0][1]
-    for _, attr in uur_attr[1:]:
-        if attr != prev_attr:
+    prev_groep = uur_attr[0][1]
+    for _, groep in uur_attr[1:]:
+        if not (groep.issubset(prev_groep) or prev_groep.issubset(groep)):
             switches += 1
-        prev_attr = attr
+        prev_groep = groep
     return switches
 
 def remove_assignment(student, uur, attr):
@@ -1030,7 +1109,7 @@ def is_valid_attr_for_student_on_hours(student, attr, uren):
     return True
 
 def respects_student_attr_rules(student, attr):
-    uren = get_hours_on_attr(student, attr)
+    uren = get_hours_on_attr_family(student, attr)
     if len(uren) > 6:
         return False
     if max_consecutive_hours(uren) > 4:
