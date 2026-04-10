@@ -6453,6 +6453,456 @@ def lm4_try_fill_empty_slots_from_extras(ctx, start_uur):
 # ------------------------------------------------------------
 # Bouw de last-minute planning
 # ------------------------------------------------------------
+
+
+# ------------------------------------------------------------
+# Extra helpers voor kettingwissels en blokgebaseerd herverdelen
+# ------------------------------------------------------------
+def lm4_student_current_attr_on_hour(ctx, naam, uur):
+    """
+    Op welke attractie staat deze student nu in de nieuwe last-minute context op dit uur?
+    Geeft alleen een attractie terug, nooit Extra of PV.
+    """
+    for (h, attr), namen in ctx["assigned_map"].items():
+        if h == uur and naam in namen:
+            return attr
+    return None
+
+def lm4_student_has_exact_block_on_attr(ctx, naam, attr, block_hours):
+    """
+    Staat student op exact deze uren op exact dezelfde attractie?
+    """
+    for uur in block_hours:
+        huidige_attr = lm4_student_current_attr_on_hour(ctx, naam, uur)
+        if huidige_attr != attr:
+            return False
+    return True
+
+def lm4_remove_student_from_attr_hours(ctx, student, attr, uren):
+    """
+    Haal student weg van een attractie op gegeven uren.
+    """
+    for uur in uren:
+        namen = ctx["assigned_map"].get((uur, attr), [])
+        if student["naam"] in namen:
+            namen.remove(student["naam"])
+            if ctx["per_hour_assigned_counts"][uur][attr] > 0:
+                ctx["per_hour_assigned_counts"][uur][attr] -= 1
+
+def lm4_get_hours_student_on_attr(ctx, student, attr):
+    uren = []
+    for uur in sorted(set(student["assigned_hours"])):
+        if student["naam"] in ctx["assigned_map"].get((uur, attr), []):
+            uren.append(uur)
+    return sorted(uren)
+
+def lm4_rebuild_student_assigned_attracties(ctx, student):
+    attrs = set()
+    for (uur, attr), namen in ctx["assigned_map"].items():
+        if student["naam"] in namen:
+            attrs.add(attr)
+    # behoud ook Extra / PV-markers als die al bestonden
+    for a in list(student["assigned_attracties"]):
+        if a in ["Extra", "Pauzevlinder-vervanging"]:
+            attrs.add(a)
+    student["assigned_attracties"] = attrs
+
+def lm4_count_switches_for_student(ctx, student):
+    uur_attr = []
+    for uur in sorted(set(student["assigned_hours"])):
+        attr = lm4_student_current_attr_on_hour(ctx, student["naam"], uur)
+        if attr:
+            uur_attr.append((uur, attr))
+
+    if not uur_attr:
+        return 0
+
+    switches = 0
+    prev_attr = uur_attr[0][1]
+    for _, attr in uur_attr[1:]:
+        if attr != prev_attr:
+            switches += 1
+        prev_attr = attr
+    return switches
+
+def lm4_block_fits_student_rules_after_swap(ctx, student, attr):
+    """
+    Controleer opnieuw max 6 uur per attractie en max 4 aaneengesloten uren.
+    """
+    uren = lm4_get_hours_student_on_attr(ctx, student, attr)
+    if len(uren) > 6:
+        return False
+    if max_consecutive_hours(uren) > 4:
+        return False
+    return True
+
+def lm4_can_student_take_attr_block(ctx, student, attr, block_hours):
+    """
+    Kan deze student DIT blok op deze attractie overnemen?
+    """
+    if not lm4_student_can_attr(student, attr):
+        return False
+
+    for uur in block_hours:
+        hstate = ctx["hour_states"].get(uur)
+        if not hstate:
+            return False
+
+        if attr not in hstate["active"]:
+            return False
+
+        if attr in hstate["red_spots"]:
+            return False
+
+        # PV op dat uur => kan niet
+        pv_assignment_now = lm4_active_pv_assignment_for_hour(ctx, uur)
+        if student["naam"] in set(pv_assignment_now.values()):
+            return False
+
+        # student mag op dat uur niet tegelijk elders blijven staan
+        huidige_attr = lm4_student_current_attr_on_hour(ctx, student["naam"], uur)
+        if huidige_attr and huidige_attr != attr:
+            return False
+
+        max_spots = hstate["counts"].get(attr, 0)
+        if attr in hstate["second_spot_blocked"]:
+            max_spots = min(max_spots, 1)
+
+        current_count = ctx["per_hour_assigned_counts"][uur][attr]
+        already_here = student["naam"] in ctx["assigned_map"].get((uur, attr), [])
+        effective_count = current_count if already_here else current_count + 1
+
+        if effective_count > max_spots:
+            return False
+
+    # 6u / 4u-regel
+    bestaande = sorted([
+        h for h in set(student["assigned_hours"])
+        if student["naam"] in ctx["assigned_map"].get((h, attr), [])
+    ])
+    totaal = sorted(set(bestaande) | set(block_hours))
+
+    if len(totaal) > 6:
+        return False
+    if max_consecutive_hours(totaal) > 4:
+        return False
+
+    return True
+
+def lm4_try_direct_fill_from_released_students(ctx, released_students, missing_slots_by_hour):
+    """
+    Eerst de simpele stap:
+    kan een vrijgekomen student rechtstreeks een lege plek opvullen?
+    """
+    any_change = False
+
+    for uur in sorted(missing_slots_by_hour.keys()):
+        slots = missing_slots_by_hour[uur]
+        if not slots:
+            continue
+
+        remaining_released = list(released_students.get(uur, []))
+        new_slots = []
+
+        for (attr, pos, rijlabel) in slots:
+            gevuld = False
+
+            kandidaten = []
+            for naam in remaining_released:
+                student = ctx["student_states"][naam]
+                if lm4_can_student_take_attr_block(ctx, student, attr, [uur]):
+                    orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
+                    kandidaten.append((
+                        0 if normalize_attr(orig_attr) == normalize_attr(attr) else 1,
+                        0 if normalize_attr(ctx["prev_attr"].get(naam, "")) == normalize_attr(attr) else 1,
+                        ctx["changes_count"][naam],
+                        naam
+                    ))
+
+            if kandidaten:
+                kandidaten.sort()
+                gekozen = kandidaten[0][3]
+                student = ctx["student_states"][gekozen]
+
+                lm4_place_student_on_attr(ctx, student, attr, [uur])
+
+                if gekozen in remaining_released:
+                    remaining_released.remove(gekozen)
+
+                orig_attr = ctx["base_maps"]["student_hour_attr"].get((gekozen, uur), "")
+                if normalize_attr(orig_attr) != normalize_attr(attr):
+                    ctx["changes_count"][gekozen] += 1
+
+                gevuld = True
+                any_change = True
+
+            if not gevuld:
+                new_slots.append((attr, pos, rijlabel))
+
+        released_students[uur] = remaining_released
+        missing_slots_by_hour[uur] = new_slots
+
+    return any_change
+
+def lm4_find_same_block_students(ctx, block_hours, exclude_names=None):
+    """
+    Zoek studenten die op exact dit uurblok op exact één attractie staan.
+    """
+    if exclude_names is None:
+        exclude_names = set()
+
+    kandidaten = []
+
+    alle_namen = sorted(ctx["student_states"].keys())
+    for naam in alle_namen:
+        if naam in exclude_names:
+            continue
+
+        attrs = set()
+        ok = True
+
+        for uur in block_hours:
+            attr = lm4_student_current_attr_on_hour(ctx, naam, uur)
+            if not attr:
+                ok = False
+                break
+            attrs.add(attr)
+
+        if ok and len(attrs) == 1:
+            attr = list(attrs)[0]
+            kandidaten.append((naam, attr))
+
+    return kandidaten
+
+def lm4_try_chain_swap_for_block(ctx, released_student_name, target_attr, block_hours):
+    """
+    Kernlogica:
+    - released student R kan target_attr niet rechtstreeks doen
+    - zoek student S die op exact hetzelfde blok bij attr_B staat
+    - R moet attr_B kunnen
+    - S moet target_attr kunnen
+    - voer wissel uit als alle regels geldig blijven
+    """
+    released_student = ctx["student_states"][released_student_name]
+
+    kandidaten = lm4_find_same_block_students(
+        ctx=ctx,
+        block_hours=block_hours,
+        exclude_names={released_student_name}
+    )
+
+    for andere_naam, attr_b in kandidaten:
+        if attr_b == target_attr:
+            continue
+
+        andere_student = ctx["student_states"][andere_naam]
+
+        # released student moet attr_b kunnen
+        if not lm4_student_can_attr(released_student, attr_b):
+            continue
+
+        # andere student moet target_attr kunnen
+        if not lm4_student_can_attr(andere_student, target_attr):
+            continue
+
+        # released student moet attr_b-blok mogen opnemen
+        if not lm4_can_student_take_attr_block(ctx, released_student, attr_b, block_hours):
+            continue
+
+        # andere student moet target_attr-blok mogen opnemen
+        # eerst tijdelijk capaciteit vrijmaken door andere student uit attr_b te halen
+        orig_switches_r = lm4_count_switches_for_student(ctx, released_student)
+        orig_switches_o = lm4_count_switches_for_student(ctx, andere_student)
+
+        # save huidige toestand
+        saved_assigned_map = copy.deepcopy(ctx["assigned_map"])
+        saved_counts = copy.deepcopy(ctx["per_hour_assigned_counts"])
+        saved_hours_r = list(released_student["assigned_hours"])
+        saved_hours_o = list(andere_student["assigned_hours"])
+        saved_attrs_r = set(released_student["assigned_attracties"])
+        saved_attrs_o = set(andere_student["assigned_attracties"])
+        saved_prev = dict(ctx["prev_attr"])
+
+        # 1) haal andere student weg uit attr_b op block_hours
+        lm4_remove_student_from_attr_hours(ctx, andere_student, attr_b, block_hours)
+
+        # 2) zet released student op attr_b
+        if not lm4_can_student_take_attr_block(ctx, released_student, attr_b, block_hours):
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        lm4_place_student_on_attr(ctx, released_student, attr_b, block_hours)
+
+        # 3) zet andere student op target_attr
+        if not lm4_can_student_take_attr_block(ctx, andere_student, target_attr, block_hours):
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        lm4_place_student_on_attr(ctx, andere_student, target_attr, block_hours)
+
+        lm4_rebuild_student_assigned_attracties(ctx, released_student)
+        lm4_rebuild_student_assigned_attracties(ctx, andere_student)
+
+        if not lm4_block_fits_student_rules_after_swap(ctx, released_student, attr_b):
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        if not lm4_block_fits_student_rules_after_swap(ctx, andere_student, target_attr):
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        new_switches_r = lm4_count_switches_for_student(ctx, released_student)
+        new_switches_o = lm4_count_switches_for_student(ctx, andere_student)
+
+        extra_switches = (new_switches_r - orig_switches_r) + (new_switches_o - orig_switches_o)
+
+        # hou het beperkt
+        if extra_switches > 1:
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        # wijziging accepteren
+        ctx["changes_count"][released_student_name] += 1
+        ctx["changes_count"][andere_naam] += 1
+        return True
+
+    return False
+
+def lm4_try_fill_missing_with_chain_swaps(ctx, released_students, missing_slots_by_hour, start_uur):
+    """
+    Voor lege plekken:
+    - probeer eerst blok 3
+    - dan blok 2
+    - dan blok 1
+    exact op dezelfde uren.
+    """
+    any_change = False
+
+    future_hours = [u for u in sorted(open_uren) if u >= start_uur]
+
+    for block_size in [3, 2, 1]:
+        for i in range(len(future_hours) - block_size + 1):
+            block_hours = future_hours[i:i + block_size]
+
+            # zoek target attr die op ALLE uren van dit blok nog mist
+            target_attrs = None
+            for uur in block_hours:
+                attrs_this_hour = set(attr for attr, _pos, _rijlabel in missing_slots_by_hour.get(uur, []))
+                if target_attrs is None:
+                    target_attrs = attrs_this_hour
+                else:
+                    target_attrs &= attrs_this_hour
+
+            if not target_attrs:
+                continue
+
+            for target_attr in sorted(target_attrs):
+                # zoek een released student die op dit volledige blok vrij is
+                kandidaten_released = []
+                for naam in sorted(set(n for uur in block_hours for n in released_students.get(uur, []))):
+                    if all(naam in released_students.get(uur, []) for uur in block_hours):
+                        kandidaten_released.append(naam)
+
+                for released_name in kandidaten_released:
+                    # eerst rechtstreekse plaatsing proberen
+                    released_student = ctx["student_states"][released_name]
+                    if lm4_can_student_take_attr_block(ctx, released_student, target_attr, block_hours):
+                        lm4_place_student_on_attr(ctx, released_student, target_attr, block_hours)
+                        for uur in block_hours:
+                            if released_name in released_students[uur]:
+                                released_students[uur].remove(released_name)
+                            missing_slots_by_hour[uur] = [
+                                x for x in missing_slots_by_hour[uur]
+                                if not (x[0] == target_attr)
+                            ][1:] if False else [
+                                x for idx, x in enumerate(missing_slots_by_hour[uur])
+                                if not (x[0] == target_attr and idx == next((j for j, y in enumerate(missing_slots_by_hour[uur]) if y[0] == target_attr), -1))
+                            ]
+                        any_change = True
+                        break
+
+                    # anders kettingwissel
+                    if lm4_try_chain_swap_for_block(ctx, released_name, target_attr, block_hours):
+                        for uur in block_hours:
+                            if released_name in released_students[uur]:
+                                released_students[uur].remove(released_name)
+
+                            removed = False
+                            nieuwe = []
+                            for item in missing_slots_by_hour[uur]:
+                                if item[0] == target_attr and not removed:
+                                    removed = True
+                                    continue
+                                nieuwe.append(item)
+                            missing_slots_by_hour[uur] = nieuwe
+
+                        any_change = True
+                        break
+
+    return any_change
+
+def lm4_collect_released_students_and_missing_slots(ctx, base_maps, start_uur):
+    """
+    Na het herberekenen per uur:
+    - released_students = studenten die hun originele plek kwijt zijn en nog geen nieuwe plek hebben
+    - missing_slots = attractieplekken die nog leeg zijn
+    """
+    released_students = defaultdict(list)
+    missing_slots_by_hour = defaultdict(list)
+
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+
+        present_attraction_students = lm4_present_attraction_students_on_hour(ctx, uur)
+        hstate = ctx["hour_states"][uur]
+        target_slots, _inactive = lm4_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
+
+        # lege slots
+        for attr, pos, rijlabel in target_slots:
+            namen = ctx["assigned_map"].get((uur, attr), [])
+            if len(namen) < pos:
+                missing_slots_by_hour[uur].append((attr, pos, rijlabel))
+
+        # released students = aanwezig voor attracties, maar nog nergens op attractie gezet
+        for naam in present_attraction_students:
+            student = ctx["student_states"][naam]
+            if uur not in student["assigned_hours"]:
+                released_students[uur].append(naam)
+
+    return released_students, missing_slots_by_hour
+
+
 def lm4_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm4_extract_base_maps(base_bytes)
     ctx = lm4_init_context(base_maps, absentees, start_uur)
@@ -6461,7 +6911,9 @@ def lm4_build_lastminute_context(base_bytes, absentees, start_uur):
     merge_priority = lm4_extract_merge_priority()
     disable_priority = lm4_extract_disable_priority()
 
-    # Eerst uur per uur herberekenen
+    # --------------------------------------------------------
+    # STAP 1: uur per uur herberekenen van capaciteit
+    # --------------------------------------------------------
     for uur in sorted(open_uren):
         if uur < start_uur:
             continue
@@ -6476,7 +6928,16 @@ def lm4_build_lastminute_context(base_bytes, absentees, start_uur):
         )
         ctx["hour_states"][uur] = hour_state
 
-        target_slots, _inactive_rows = lm4_build_target_slots_for_hour(base_maps["attr_rows"], hour_state)
+    # --------------------------------------------------------
+    # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
+    # --------------------------------------------------------
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+
+        hstate = ctx["hour_states"][uur]
+        target_slots, _inactive_rows = lm4_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
+        present_attraction_students = lm4_present_attraction_students_on_hour(ctx, uur)
 
         used_students, assigned_rows = lm4_seed_same_place_first(
             ctx=ctx,
@@ -6494,13 +6955,51 @@ def lm4_build_lastminute_context(base_bytes, absentees, start_uur):
             assigned_rows=assigned_rows
         )
 
-    # Dan blokken proberen te vormen
+    # --------------------------------------------------------
+    # STAP 3: verzamel vrijgekomen studenten en lege plekken
+    # --------------------------------------------------------
+    released_students, missing_slots_by_hour = lm4_collect_released_students_and_missing_slots(
+        ctx=ctx,
+        base_maps=base_maps,
+        start_uur=start_uur
+    )
+
+    # --------------------------------------------------------
+    # STAP 4: eerst directe invulling met vrijgekomen studenten
+    # --------------------------------------------------------
+    lm4_try_direct_fill_from_released_students(
+        ctx=ctx,
+        released_students=released_students,
+        missing_slots_by_hour=missing_slots_by_hour
+    )
+
+    # --------------------------------------------------------
+    # STAP 5: dan kettingwissels op exact hetzelfde blok
+    # --------------------------------------------------------
+    max_chain_passes = 5
+    for _ in range(max_chain_passes):
+        changed = lm4_try_fill_missing_with_chain_swaps(
+            ctx=ctx,
+            released_students=released_students,
+            missing_slots_by_hour=missing_slots_by_hour,
+            start_uur=start_uur
+        )
+        if not changed:
+            break
+
+    # --------------------------------------------------------
+    # STAP 6: blokken 3/2/1 vormen voor alles wat nog open staat
+    # --------------------------------------------------------
     lm4_assign_future_blocks(ctx, start_uur)
 
-    # Dan exact 1 plek per gewerkt uur afdwingen
+    # --------------------------------------------------------
+    # STAP 7: iedereen exact 1 keer per gewerkt uur
+    # --------------------------------------------------------
     lm4_force_exactly_one_assignment_per_hour(ctx, start_uur)
 
-    # Dan lege plekken opvullen door Extra's te verplaatsen
+    # --------------------------------------------------------
+    # STAP 8: lege plekken opvullen via Extra -> attractie
+    # --------------------------------------------------------
     lm4_try_fill_empty_slots_from_extras(ctx, start_uur)
 
     return ctx, base_maps
