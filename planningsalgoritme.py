@@ -5620,10 +5620,9 @@ st.download_button(
 
 #DEELLL 8 OFZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 
-
-
 # ============================================================
-# LAST-MINUTE AFWEZIGEN
+# LAST-MINUTE AFWEZIGEN V2
+# Vervangt de vorige last-minute patch volledig
 # Plakken ONDER de bestaande st.download_button("Download planning", ...)
 # ============================================================
 
@@ -5634,10 +5633,10 @@ from collections import defaultdict
 from openpyxl import load_workbook
 from openpyxl.styles import PatternFill
 
-# -----------------------------
-# Kleine helpers
-# -----------------------------
-def lm_split_display_label(label):
+# ------------------------------------------------------------
+# Helpers
+# ------------------------------------------------------------
+def lm2_split_display_label(label):
     """
     'Botsauto 2' -> ('Botsauto', 2)
     'Botsauto'   -> ('Botsauto', 1)
@@ -5651,367 +5650,395 @@ def lm_split_display_label(label):
         return parts[0].strip(), int(parts[1])
     return s, 1
 
-def lm_is_pauze_row(label):
+def lm2_is_pauze_row(label):
     return str(label).strip().lower().startswith("pauzevlinder")
 
-def lm_is_extra_row(label):
+def lm2_is_extra_row(label):
     return str(label).strip().lower().startswith("extra")
 
-def lm_build_student_lookup(studenten_lijst):
+def lm2_student_lookup(studenten_lijst):
     return {str(s["naam"]).strip(): s for s in studenten_lijst}
 
-def lm_student_can_attr(student, attr_name):
+def lm2_get_student_by_name(naam):
+    return next((s for s in studenten if str(s["naam"]).strip() == str(naam).strip()), None)
+
+def lm2_student_can_attr(student, attr_name):
     """
-    Gebruikt je bestaande student_kan_attr indien mogelijk.
-    attr_name is zonder volgnummer (dus bv. 'X' of 'A + B').
+    Harde check op basis van je originele logica.
     """
+    if not student:
+        return False
     try:
         return student_kan_attr(student, attr_name)
     except:
-        # veilige fallback
         if " + " not in attr_name:
             if attr_name.lower() in student_blacklist.get(student["naam"], set()):
                 return False
             return attr_name in student.get("attracties", [])
-        onderdelen = [x.strip() for x in attr_name.split("+")]
+        onderdelen = [a.strip() for a in attr_name.split("+")]
         for o in onderdelen:
             if o.lower() in student_blacklist.get(student["naam"], set()):
                 return False
         return all(o in student.get("attracties", []) for o in onderdelen)
 
-def lm_get_original_schedule_from_sheet(ws_planning_sheet, uren_lijst):
+def lm2_extract_merge_order(ws_input):
     """
-    Leest het bestaande resultaatblad 'Planning' in.
-    Geeft terug:
-    - student_hour_row[(naam, uur)] = rijlabel waarin student oorspronkelijk staat
-    - hour_row_students[(uur, rijlabel)] = [namen]
-    - attr_rows = alle attractierijen (geen pauze, geen extra)
-    - extra_rows = alle extra-rijen
-    - pv_rows = alle pauzevlinder-rijen
-    - uur_to_col = map uur -> kolomindex in outputblad
+    Eerst exact AS14:AU16, fallback AS14:AU21.
     """
-    uur_to_col = {}
-    for col in range(2, ws_planning_sheet.max_column + 1):
-        uur = parse_header_uur(ws_planning_sheet.cell(1, col).value)
-        if uur in uren_lijst and uur not in uur_to_col:
-            uur_to_col[uur] = col
-
-    student_hour_row = {}
-    hour_row_students = defaultdict(list)
-    attr_rows = []
-    extra_rows = []
-    pv_rows = []
-
-    for row in range(2, ws_planning_sheet.max_row + 1):
-        rijlabel = ws_planning_sheet.cell(row, 1).value
-        if not rijlabel:
-            continue
-        rijlabel = str(rijlabel).strip()
-
-        if lm_is_pauze_row(rijlabel):
-            pv_rows.append((row, rijlabel))
-        elif lm_is_extra_row(rijlabel):
-            extra_rows.append((row, rijlabel))
-        else:
-            attr_rows.append((row, rijlabel))
-
-        for uur, col in uur_to_col.items():
-            naam = ws_planning_sheet.cell(row, col).value
-            if naam and str(naam).strip():
-                naam = str(naam).strip()
-                student_hour_row[(naam, uur)] = rijlabel
-                hour_row_students[(uur, rijlabel)].append(naam)
-
-    return student_hour_row, hour_row_students, attr_rows, extra_rows, pv_rows, uur_to_col
-
-def lm_get_working_students_of_day(student_hour_row, uren_lijst):
-    work = set()
-    for (naam, uur), _rij in student_hour_row.items():
-        if uur in uren_lijst:
-            work.add(naam)
-    return sorted(work)
-
-def lm_get_all_round_students(student_hour_row, start_uur):
-    """
-    Alle studenten die vanaf start_uur ergens in de bestaande planning staan.
-    """
-    names = set()
-    for (naam, uur), _rij in student_hour_row.items():
-        if uur >= start_uur:
-            names.add(naam)
-    return names
-
-def lm_extract_merge_order_from_input(ws_input):
-    """
-    Probeer eerst exact AS14:AU16 zoals gevraagd.
-    Als daar niets bruikbaars staat, val terug op AS14:AU21.
-    """
-    groups = []
-
-    def read_group_rows(r1, r2):
-        out = []
+    groepen = []
+    for r1, r2 in [(14, 16), (14, 21)]:
+        groepen = []
         for rij in range(r1, r2 + 1):
             groep = []
-            for col in range(45, 48):  # AS, AT, AU
+            for col in range(45, 48):  # AS:AU
                 val = ws_input.cell(rij, col).value
                 if val:
                     groep.append(str(val).strip())
             if len(groep) >= 2:
-                out.append(groep)
-        return out
+                groepen.append(groep)
+        if groepen:
+            return groepen
+    return []
 
-    groups = read_group_rows(14, 16)
-    if not groups:
-        groups = read_group_rows(14, 21)
-
-    return groups
-
-def lm_extract_disable_order_from_input(ws_input):
-    """
-    Volgorde uit AS24:AS29
-    """
+def lm2_extract_disable_order(ws_input):
     out = []
-    for rij in range(24, 30):
-        val = ws_input.cell(rij, 45).value  # AS
+    for rij in range(24, 30):  # AS24:AS29
+        val = ws_input.cell(rij, 45).value
         if val:
             out.append(str(val).strip())
     return out
 
-def lm_base_counts_for_hour(uur):
+def lm2_output_sheet_maps(ws_plan, uren_lijst):
+    uur_to_col = {}
+    for col in range(2, ws_plan.max_column + 1):
+        uur = parse_header_uur(ws_plan.cell(1, col).value)
+        if uur in uren_lijst and uur not in uur_to_col:
+            uur_to_col[uur] = col
+
+    attr_rows = []
+    extra_rows = []
+    pv_rows = []
+    original_by_student_hour = {}
+    names_on_row_hour = defaultdict(list)
+
+    for row in range(2, ws_plan.max_row + 1):
+        label = ws_plan.cell(row, 1).value
+        if not label:
+            continue
+        label = str(label).strip()
+
+        if lm2_is_pauze_row(label):
+            pv_rows.append((row, label))
+        elif lm2_is_extra_row(label):
+            extra_rows.append((row, label))
+        else:
+            attr_rows.append((row, label))
+
+        for uur, col in uur_to_col.items():
+            naam = ws_plan.cell(row, col).value
+            if naam and str(naam).strip():
+                naam = str(naam).strip()
+                original_by_student_hour[(naam, uur)] = label
+                names_on_row_hour[(uur, label)].append(naam)
+
+    return uur_to_col, attr_rows, extra_rows, pv_rows, original_by_student_hour, names_on_row_hour
+
+def lm2_present_students_this_hour_from_original(original_by_student_hour, uur, absentees_set):
     """
-    Vertrekt van je bestaande structuren:
-    - actieve_attracties_per_uur
-    - aantallen
+    Wie stond er oorspronkelijk op dit uur ingepland en is niet afwezig?
+    """
+    out = []
+    seen = set()
+    for (naam, uur2), _label in original_by_student_hour.items():
+        if uur2 == uur and naam not in absentees_set and naam not in seen:
+            seen.add(naam)
+            out.append(naam)
+    return out
+
+def lm2_count_available_non_pv_for_hour(original_by_student_hour, uur, absentees_set, pv_replacements_inverse):
+    """
+    Aantal aanwezige studenten die op dat uur voor attracties/extras inzetbaar zijn.
+    Een pauzevlinder-vervanger telt op pauze-uren NIET mee als attractiebezetting.
+    """
+    names = lm2_present_students_this_hour_from_original(original_by_student_hour, uur, absentees_set)
+    count = 0
+    for naam in names:
+        if naam in pv_replacements_inverse.get(uur, set()):
+            continue
+        count += 1
+    return count
+
+def lm2_build_dynamic_hour_state(uur, available_non_pv_count, merge_order_groups, disable_order):
+    """
+    Herbouwt voor dit uur:
+    - actieve attracties
+    - counts per attractie
     - second_spot_blocked
+    - red_spots
+    Rekening houdend met afwezigen en eventuele nieuwe samenvoegingen / uitschakelingen.
     """
+    # start vanaf de basis van je originele uurstructuur
     counts = {}
-    for attr in actieve_attracties_per_uur.get(uur, set()):
-        max_spots = aantallen[uur].get(attr, 1)
-        if attr in second_spot_blocked.get(uur, set()):
-            max_spots = 1
-        if max_spots > 0:
-            counts[attr] = max_spots
-    return counts
+    active = set()
 
-def lm_apply_dynamic_shortage_logic(uur, counts_in, available_people, merge_order_groups, disable_order):
-    """
-    Als er te weinig mensen zijn:
-    1. probeer attracties samen te voegen volgens volgorde
-    2. als dat na max 3 samenvoegingen nog niet genoeg is, schakel attracties uit volgens volgorde
+    for attr in attracties_te_plannen:
+        # individuele attracties eerst
+        if " + " in str(attr):
+            continue
 
-    counts_in: {'A':1/2, 'B':1/2, 'A + B':1/2, ...}
-    output: aangepaste counts {'attr': spots}
-    """
-    counts = dict(counts_in)
+        if uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
+            counts[attr] = 0
+        else:
+            active.add(attr)
+            counts[attr] = 1 if aantallen_raw.get(attr, 0) >= 1 else 0
 
-    def active_min_spots(cdict):
-        return sum(1 for _a, c in cdict.items() if c >= 1)
+    # start met de samenvoegingen die oorspronkelijk op dit uur bestaan
+    groepen = []
+    for groep in uur_samenvoegingen.get(uur, []):
+        groep = [str(x).strip() for x in groep]
+        groepen.append(groep)
 
-    # -----------------------------
-    # 1) Samenvoegen
-    # -----------------------------
-    merges_used = 0
+    # originele samenvoegingen toepassen
+    for groep in groepen:
+        sameng = " + ".join(groep)
+        active.add(sameng)
+        counts[sameng] = 1
+        for onderdeel in groep:
+            if onderdeel in active:
+                active.remove(onderdeel)
+            counts[onderdeel] = 0
+
+    def active_min_spots():
+        return sum(1 for a in active if counts.get(a, 0) >= 1)
+
+    # extra samenvoegen indien nodig, max 3
+    extra_merges_used = 0
     for groep in merge_order_groups:
-        if active_min_spots(counts) <= available_people:
+        if active_min_spots() <= available_non_pv_count:
             break
-        if merges_used >= 3:
+        if extra_merges_used >= 3:
             break
 
-        onderdelen = [str(x).strip() for x in groep]
-        sameng = " + ".join(onderdelen)
+        groep = [str(x).strip() for x in groep]
+        sameng = " + ".join(groep)
 
-        # enkel als de losse onderdelen echt actief zijn
-        if all(counts.get(o, 0) >= 1 for o in onderdelen):
-            for o in onderdelen:
+        if all(counts.get(o, 0) >= 1 for o in groep):
+            for o in groep:
                 counts[o] = 0
+                if o in active:
+                    active.remove(o)
             counts[sameng] = 1
-            merges_used += 1
+            active.add(sameng)
+            extra_merges_used += 1
+            if groep not in groepen:
+                groepen.append(groep)
 
-    # -----------------------------
-    # 2) Uitschakelen
-    # -----------------------------
+    # uitschakelen indien nog nodig
     for attr in disable_order:
-        if active_min_spots(counts) <= available_people:
+        if active_min_spots() <= available_non_pv_count:
             break
         attr = str(attr).strip()
         if counts.get(attr, 0) >= 1:
             counts[attr] = 0
+            if attr in active:
+                active.remove(attr)
 
-    # 3) Als er daarna nog overschot aan mensen is, laat 2e plekken waar mogelijk bestaan
-    #    maar NOOIT ten koste van minimumbezetting.
-    #    Hier doen we niets extra, want basis-counts kwamen al uit je originele planning.
-    return counts
+    # tweede plekken opnieuw berekenen
+    second_spot_blocked_lm = set()
+    base_spots = sum(1 for a in active if counts.get(a, 0) >= 1)
+    extra_spots = available_non_pv_count - base_spots
 
-def lm_candidate_score(
-    naam,
-    doel_attr,
-    uur,
-    original_row_by_student_hour,
-    assigned_prev_hour_attr,
-    changes_counter,
-    student_lookup
-):
+    for attr in second_priority_order:
+        if attr in active and aantallen_raw.get(attr) == 2:
+            if extra_spots > 0:
+                counts[attr] = 2
+                extra_spots -= 1
+            else:
+                counts[attr] = 1
+                second_spot_blocked_lm.add(attr)
+
+    # red spots opnieuw opbouwen
+    red_spots_lm = set()
+
+    samengestelde_actief = set(" + ".join(g) for g in groepen)
+    losse_in_samenvoeging = set(a for g in groepen for a in g)
+
+    # losse attracties die in samenvoeging zitten => red
+    for attr in losse_in_samenvoeging:
+        red_spots_lm.add(attr)
+
+    # samengestelde attracties die dit uur NIET actief zijn => red
+    for sameng in samengevoegde_attracties:
+        if sameng not in samengestelde_actief:
+            red_spots_lm.add(sameng)
+
+    # dichte attracties ook red maken
+    for attr in list(active) + list(counts.keys()):
+        if " + " not in str(attr) and uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
+            red_spots_lm.add(attr)
+
+    return {
+        "active": active,
+        "counts": counts,
+        "second_spot_blocked": second_spot_blocked_lm,
+        "red_spots": red_spots_lm,
+        "groepen": groepen
+    }
+
+def lm2_build_target_rows_for_hour(attr_rows, hour_state):
     """
-    Lager = beter.
-    We proberen:
-    1. zelfde attractie als origineel op dit uur
-    2. zelfde attractie als in vorig nieuw uur
-    3. zo weinig mogelijk totale wijzigingen
-    4. student moet attractie kunnen
+    Bepaalt exact welke attractierijen actief zijn op dit uur.
     """
-    student = student_lookup.get(naam)
-    if not student:
-        return (999, 999, 999, naam)
+    target_rows = []
+    inactive_rows = set()
 
-    if not lm_student_can_attr(student, doel_attr):
-        return (999, 999, 999, naam)
+    for _row, rijlabel in attr_rows:
+        attr_name, pos = lm2_split_display_label(rijlabel)
+        allowed = hour_state["counts"].get(attr_name, 0)
 
-    originele_rij = original_row_by_student_hour.get((naam, uur), "")
-    originele_attr, _orig_pos = lm_split_display_label(originele_rij)
+        if attr_name in hour_state["red_spots"]:
+            allowed = 0
+        if attr_name in hour_state["second_spot_blocked"] and pos == 2:
+            allowed = 0
 
-    zelfde_als_origineel = 0 if normalize_attr(originele_attr) == normalize_attr(doel_attr) else 1
-    zelfde_als_vorig_nieuw = 0 if normalize_attr(assigned_prev_hour_attr.get(naam, "")) == normalize_attr(doel_attr) else 1
+        if allowed >= pos:
+            target_rows.append(rijlabel)
+        else:
+            inactive_rows.add(rijlabel)
 
-    return (
-        zelfde_als_origineel,
-        zelfde_als_vorig_nieuw,
-        changes_counter.get(naam, 0),
-        naam
-    )
+    return target_rows, inactive_rows
 
-def lm_pick_pv_replacement(
-    absent_pv_names,
-    selected_pv,
-    student_lookup,
-    working_from_start,
-    absentees_set,
-    start_uur
-):
+def lm2_pick_pv_replacements(absent_pv_names, start_uur, original_by_student_hour, absentees_set):
     """
-    Kies voor elke afwezige pauzevlinder een vervanger:
-    - moet ALLE attracties kunnen
-    - liefst zo weinig mogelijk schade aan originele planning
-    - bij gelijke topkandidaten: willekeurige keuze
+    Kies vervangers voor afwezige pauzevlinders.
+    Moeten ALLE individuele attracties kunnen.
+    Zo weinig mogelijk verstoring: kies liefst studenten met veel brede inzet,
+    maar behoud originele planning zo veel mogelijk.
     """
-    pv_names = {str(pv["naam"]).strip() for pv in selected_pv}
-    absent_pv_names = [x for x in absent_pv_names if x in pv_names]
+    pv_names = {str(pv["naam"]).strip() for pv in selected}
+    absent_pv_names = [n for n in absent_pv_names if n in pv_names]
 
-    # alle 'gewone' individuele attracties die echt bestaan
-    all_single_attrs = sorted({
-        a for a in attracties_te_plannen
-        if " + " not in str(a)
-    })
+    all_single_attrs = sorted({a for a in attracties_te_plannen if " + " not in str(a)})
 
-    def can_all_attr(student):
-        for attr in all_single_attrs:
-            if not lm_student_can_attr(student, attr):
-                return False
-        return True
+    def can_all(student):
+        return all(lm2_student_can_attr(student, attr) for attr in all_single_attrs)
 
     chosen = {}
     already_taken = set()
 
+    # kandidaten vanaf start_uur die op die uren effectief werken
+    working_from_start = set()
+    for (naam, uur), _label in original_by_student_hour.items():
+        if uur >= start_uur and naam not in absentees_set:
+            working_from_start.add(naam)
+
     for pvnaam in absent_pv_names:
         candidates = []
-        for naam in working_from_start:
-            if naam in absentees_set:
-                continue
+        for naam in sorted(working_from_start):
             if naam in pv_names:
                 continue
             if naam in already_taken:
                 continue
 
-            student = student_lookup.get(naam)
-            if not student:
-                continue
-            if not can_all_attr(student):
+            student = lm2_get_student_by_name(naam)
+            if not student or not can_all(student):
                 continue
 
-            # zo weinig mogelijk verstoring:
-            # tel hoeveel uren deze student vanaf start in attracties staat
-            orig_hours = sum(
-                1 for (n, uur2), _r in original_student_hour_row.items()
-                if n == naam and uur2 >= start_uur
-            )
-            candidates.append((orig_hours, naam))
+            # zo weinig mogelijk schade:
+            # liefst iemand die in originele planning vaak "Extra" stond of breed inzetbaar is
+            extra_count = 0
+            total_future = 0
+            for (n, uur), rijlabel in original_by_student_hour.items():
+                if n == naam and uur >= start_uur:
+                    total_future += 1
+                    if "extra" in str(rijlabel).lower():
+                        extra_count += 1
+
+            candidates.append((-extra_count, total_future, naam))
 
         if candidates:
             candidates.sort()
-            top_bucket = [naam for score, naam in candidates[:min(3, len(candidates))]]
-            gekozen = random.choice(top_bucket)
+            top = [x[2] for x in candidates[:min(3, len(candidates))]]
+            gekozen = random.choice(top)
             chosen[pvnaam] = gekozen
             already_taken.add(gekozen)
 
     return chosen
 
-def lm_clear_hour_cells(ws_planning_sheet, uur_to_col, uur, attr_rows, extra_rows, pv_rows):
-    col = uur_to_col[uur]
+def lm2_score_candidate(naam, doel_attr, uur, original_by_student_hour, prev_new_attr, change_count):
+    """
+    Lager = beter.
+    Prioriteiten:
+    1. zelfde attractie als origineel op dit uur
+    2. zelfde als in vorig nieuw uur
+    3. zo weinig mogelijk nieuwe wissels
+    """
+    student = lm2_get_student_by_name(naam)
+    if not lm2_student_can_attr(student, doel_attr):
+        return (999, 999, 999, naam)
+
+    original_label = original_by_student_hour.get((naam, uur), "")
+    original_attr, _ = lm2_split_display_label(original_label)
+
+    same_original = 0 if normalize_attr(original_attr) == normalize_attr(doel_attr) else 1
+    same_previous = 0 if normalize_attr(prev_new_attr.get(naam, "")) == normalize_attr(doel_attr) else 1
+
+    return (same_original, same_previous, change_count.get(naam, 0), naam)
+
+def lm2_clear_hour(ws_plan, uur_col, attr_rows, extra_rows, pv_rows):
     for row, _label in attr_rows + extra_rows + pv_rows:
-        ws_planning_sheet.cell(row, col).value = ""
+        ws_plan.cell(row, uur_col).value = ""
 
-def lm_set_gray_if_inactive(ws_planning_sheet, row, col, is_inactive):
-    """
-    Kleurt enkel grijs als de plek niet gebruikt mag worden.
-    Anders laat existing fill staan.
-    """
-    if is_inactive:
-        ws_planning_sheet.cell(row, col).fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
-
-def lm_recolor_student_cell(ws_planning_sheet, row, col, naam):
-    cell = ws_planning_sheet.cell(row, col)
+def lm2_fill_student_color(cell, naam):
     if naam and naam in student_kleuren:
         cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
 
-def lm_write_last_minute_planning(
-    wb_lm,
-    ws_input,
-    absentees,
-    start_uur,
-    pv_replacements
-):
+def lm2_set_gray(cell):
+    cell.fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+
+def lm2_rebuild_last_minute_workbook(base_bytes, absentees, start_uur):
+    wb_lm = load_workbook(BytesIO(base_bytes))
     ws_plan = wb_lm["Planning"]
+    ws_input = wb["Input"]
 
-    (
-        original_student_hour_row,
-        original_hour_row_students,
-        attr_rows,
-        extra_rows,
-        pv_rows,
-        uur_to_col
-    ) = lm_get_original_schedule_from_sheet(ws_plan, open_uren)
+    uur_to_col, attr_rows, extra_rows, pv_rows, original_by_student_hour, names_on_row_hour = lm2_output_sheet_maps(ws_plan, open_uren)
+    abs_set = {str(x).strip() for x in absentees}
 
-    student_lookup = lm_build_student_lookup(studenten)
+    # bepaal afwezige pauzevlinders
+    pv_names = {str(pv["naam"]).strip() for pv in selected}
+    absent_pv = [n for n in abs_set if n in pv_names]
 
-    abs_set = set(absentees)
-    all_working_from_start = lm_get_all_round_students(original_student_hour_row, start_uur)
+    # kies vervangers
+    pv_replacements = lm2_pick_pv_replacements(
+        absent_pv_names=absent_pv,
+        start_uur=start_uur,
+        original_by_student_hour=original_by_student_hour,
+        absentees_set=abs_set
+    )
 
-    # studenten die vanaf start nog inzetbaar zijn in attracties/extras
-    present_pool = {naam for naam in all_working_from_start if naam not in abs_set}
-
-    # vervangers voor afwezige pauzevlinders blokkeren tijdens pauze-uren
+    # map uur -> set studenten die als pv-vervanger vastzitten
     pv_reserved_by_hour = defaultdict(set)
     for pvnaam, vervanger in pv_replacements.items():
         for uur in required_pauze_hours:
             if uur >= start_uur:
                 pv_reserved_by_hour[uur].add(vervanger)
 
-    merge_order_groups = lm_extract_merge_order_from_input(ws_input)
-    disable_order = lm_extract_disable_order_from_input(ws_input)
+    prev_new_attr = {}
+    change_count = defaultdict(int)
 
-    # map rowlabel -> rownummer
-    rownum_by_label = {label: row for row, label in attr_rows + extra_rows + pv_rows}
+    # uren vóór start onaangeroerd laten, maar wel prev_new_attr opbouwen
+    for uur in sorted(open_uren):
+        if uur >= start_uur:
+            break
+        for (naam, uur2), rijlabel in original_by_student_hour.items():
+            if uur2 == uur and naam not in abs_set:
+                attr0, _ = lm2_split_display_label(rijlabel)
+                prev_new_attr[naam] = attr0
 
-    # trackers om zo weinig mogelijk wissels te houden
-    assigned_prev_hour_attr = {}
-    changes_counter = defaultdict(int)
+    info_per_hour = {}
 
-    # uren vóór start blijven onaangeraakt
     for uur in sorted(open_uren):
         if uur < start_uur:
-            for (naam, uur2), rij in original_student_hour_row.items():
-                if uur2 == uur:
-                    attr0, _p0 = lm_split_display_label(rij)
-                    assigned_prev_hour_attr[naam] = attr0
             continue
 
         if uur not in uur_to_col:
@@ -6019,79 +6046,58 @@ def lm_write_last_minute_planning(
 
         col = uur_to_col[uur]
 
-        # Maak uur leeg vanaf start
-        lm_clear_hour_cells(ws_plan, uur_to_col, uur, attr_rows, extra_rows, pv_rows)
+        # wie werkt oorspronkelijk dit uur en is niet afwezig?
+        original_present = lm2_present_students_this_hour_from_original(original_by_student_hour, uur, abs_set)
 
-        # -----------------------------
-        # bepaal wie effectief beschikbaar is op dit uur
-        # -----------------------------
-        originally_here = {
-            naam for (naam, uur2), _rij in original_student_hour_row.items()
-            if uur2 == uur
-        }
+        # pv-vervangers trekken we uit de attractiepool tijdens pauze-uren
+        pv_reserved_now = set(pv_reserved_by_hour.get(uur, set()))
+        attraction_pool = [naam for naam in original_present if naam not in pv_reserved_now]
 
-        present_here = [naam for naam in originally_here if naam not in abs_set]
-
-        # studenten die als PV-vervanger dienen op dit uur, vallen weg uit attracties
-        blocked_for_pv = pv_reserved_by_hour.get(uur, set())
-        attraction_pool = [naam for naam in present_here if naam not in blocked_for_pv]
-
-        # -----------------------------
-        # bepaal benodigde attracties/spots op basis van tekortlogica
-        # -----------------------------
-        base_counts = lm_base_counts_for_hour(uur)
-        adjusted_counts = lm_apply_dynamic_shortage_logic(
+        # herbereken uurstaat met het ECHTE aantal beschikbare attractiemensen
+        hour_state = lm2_build_dynamic_hour_state(
             uur=uur,
-            counts_in=base_counts,
-            available_people=len(attraction_pool),
-            merge_order_groups=merge_order_groups,
-            disable_order=disable_order
+            available_non_pv_count=len(attraction_pool),
+            merge_order_groups=lm2_extract_merge_order(ws_input),
+            disable_order=lm2_extract_disable_order(ws_input)
         )
 
-        # Doel-rijen voor dit uur
-        target_rows = []
-        inactive_attr_rows = set()
+        target_rows, inactive_rows = lm2_build_target_rows_for_hour(attr_rows, hour_state)
 
-        for row, rijlabel in attr_rows:
-            attr_name, pos = lm_split_display_label(rijlabel)
-            allowed_spots = adjusted_counts.get(attr_name, 0)
-            if allowed_spots >= pos:
-                target_rows.append(rijlabel)
-            else:
-                inactive_attr_rows.add(rijlabel)
+        # maak uur leeg
+        lm2_clear_hour(ws_plan, col, attr_rows, extra_rows, pv_rows)
 
-        # 1) eerst exact behouden wat perfect kan blijven staan
-        new_assignments = {}          # rijlabel -> naam
+        # 1) eerst exact behouden waar mogelijk
+        assigned_rows = {}
         used_students = set()
 
         for rijlabel in target_rows:
-            orig_names = list(original_hour_row_students.get((uur, rijlabel), []))
-            for naam in orig_names:
+            doel_attr, _pos = lm2_split_display_label(rijlabel)
+            originele_namen = list(names_on_row_hour.get((uur, rijlabel), []))
+
+            for naam in originele_namen:
                 if naam in attraction_pool and naam not in used_students:
-                    student = student_lookup.get(naam)
-                    doel_attr, _p = lm_split_display_label(rijlabel)
-                    if student and lm_student_can_attr(student, doel_attr):
-                        new_assignments[rijlabel] = naam
+                    student = lm2_get_student_by_name(naam)
+                    if lm2_student_can_attr(student, doel_attr):
+                        assigned_rows[rijlabel] = naam
                         used_students.add(naam)
                         break
 
-        # 2) vul resterende plekken zo stabiel mogelijk aan
-        remaining_rows = [r for r in target_rows if r not in new_assignments]
+        # 2) resterende actieve plekken vullen
+        remaining_rows = [r for r in target_rows if r not in assigned_rows]
         remaining_students = [n for n in attraction_pool if n not in used_students]
 
         for rijlabel in remaining_rows:
-            doel_attr, _p = lm_split_display_label(rijlabel)
-
+            doel_attr, _pos = lm2_split_display_label(rijlabel)
             kandidaten = []
+
             for naam in remaining_students:
-                score = lm_candidate_score(
+                score = lm2_score_candidate(
                     naam=naam,
                     doel_attr=doel_attr,
                     uur=uur,
-                    original_row_by_student_hour=original_student_hour_row,
-                    assigned_prev_hour_attr=assigned_prev_hour_attr,
-                    changes_counter=changes_counter,
-                    student_lookup=student_lookup
+                    original_by_student_hour=original_by_student_hour,
+                    prev_new_attr=prev_new_attr,
+                    change_count=change_count
                 )
                 if score[0] < 999:
                     kandidaten.append((score, naam))
@@ -6099,188 +6105,200 @@ def lm_write_last_minute_planning(
             if kandidaten:
                 kandidaten.sort()
                 gekozen = kandidaten[0][1]
-                new_assignments[rijlabel] = gekozen
+                assigned_rows[rijlabel] = gekozen
                 used_students.add(gekozen)
                 remaining_students.remove(gekozen)
 
-                orig_rij = original_student_hour_row.get((gekozen, uur), "")
-                if orig_rij != rijlabel:
-                    changes_counter[gekozen] += 1
+                original_label = original_by_student_hour.get((gekozen, uur), "")
+                if original_label != rijlabel:
+                    change_count[gekozen] += 1
 
-        # 3) rest naar Extra, met voorkeur om wie al extra was weer extra te laten
-        extra_slots = [label for _row, label in extra_rows]
-        extra_slots_filled = {}
+        # 3) iedereen die niet afwezig is moet exact 1 plaats krijgen dit uur
+        #    dus rest gaat naar Extra
+        extra_assign = {}
+        free_extra_rows = [label for _row, label in extra_rows]
 
-        if remaining_students and extra_slots:
-            remaining_students.sort(
-                key=lambda naam: (
-                    0 if "extra" in original_student_hour_row.get((naam, uur), "").lower() else 1,
-                    changes_counter.get(naam, 0),
-                    naam
-                )
+        remaining_students.sort(
+            key=lambda naam: (
+                0 if "extra" in str(original_by_student_hour.get((naam, uur), "")).lower() else 1,
+                change_count.get(naam, 0),
+                naam
             )
+        )
 
-            for idx, naam in enumerate(remaining_students):
-                if idx >= len(extra_slots):
-                    break
-                slot = extra_slots[idx]
-                extra_slots_filled[slot] = naam
-                orig_rij = original_student_hour_row.get((naam, uur), "")
-                if orig_rij != slot:
-                    changes_counter[naam] += 1
+        for idx, naam in enumerate(remaining_students):
+            if idx >= len(free_extra_rows):
+                break
+            slot = free_extra_rows[idx]
+            extra_assign[slot] = naam
+            original_label = original_by_student_hour.get((naam, uur), "")
+            if original_label != slot:
+                change_count[naam] += 1
 
-        # 4) schrijf attractierijen
+        # 4) veiligheid: elke aanwezige student moet exact 1x voorkomen
+        assigned_names_total = set(assigned_rows.values()) | set(extra_assign.values()) | pv_reserved_now
+        missing = [n for n in original_present if n not in assigned_names_total]
+
+        # als er toch nog missings zijn, probeer extra-rijen verder te vullen
+        extra_idx_start = len(extra_assign)
+        for naam in missing:
+            if extra_idx_start < len(free_extra_rows):
+                slot = free_extra_rows[extra_idx_start]
+                extra_assign[slot] = naam
+                extra_idx_start += 1
+
+        # 5) schrijf attractierijen
         for row, rijlabel in attr_rows:
-            is_inactive = rijlabel in inactive_attr_rows
-            lm_set_gray_if_inactive(ws_plan, row, col, is_inactive)
+            cell = ws_plan.cell(row, col)
+            if rijlabel in inactive_rows:
+                lm2_set_gray(cell)
 
-            naam = new_assignments.get(rijlabel, "")
-            ws_plan.cell(row, col).value = naam
+            naam = assigned_rows.get(rijlabel, "")
+            cell.value = naam
             if naam:
-                lm_recolor_student_cell(ws_plan, row, col, naam)
-                attr_name, _p = lm_split_display_label(rijlabel)
-                assigned_prev_hour_attr[naam] = attr_name
+                lm2_fill_student_color(cell, naam)
+                attr_name, _pos = lm2_split_display_label(rijlabel)
+                prev_new_attr[naam] = attr_name
 
-        # 5) schrijf extras
+        # 6) schrijf extra-rijen
         for row, rijlabel in extra_rows:
-            naam = extra_slots_filled.get(rijlabel, "")
-            ws_plan.cell(row, col).value = naam
+            cell = ws_plan.cell(row, col)
+            naam = extra_assign.get(rijlabel, "")
+            cell.value = naam
             if naam:
-                lm_recolor_student_cell(ws_plan, row, col, naam)
-                assigned_prev_hour_attr[naam] = "Extra"
+                lm2_fill_student_color(cell, naam)
+                prev_new_attr[naam] = "Extra"
 
-        # 6) schrijf pauzevlinders
-        #   - afwezige PV => vervanger tonen
-        #   - niet-afwezige PV blijft gewoon staan
-        pv_name_set = {str(pv["naam"]).strip() for pv in selected}
-
+        # 7) schrijf pauzevlinders
+        #    - aanwezige PV blijft zichzelf
+        #    - afwezige PV krijgt vervanger
         for idx, (row, rijlabel) in enumerate(pv_rows, start=1):
-            originele_pv_naam = ""
-            if idx <= len(selected):
-                originele_pv_naam = str(selected[idx - 1]["naam"]).strip()
+            cell = ws_plan.cell(row, col)
+            pvnaam = str(selected[idx - 1]["naam"]).strip() if idx <= len(selected) else ""
 
-            naam_voor_dit_uur = ""
+            naam = ""
             if uur in required_pauze_hours:
-                if originele_pv_naam in abs_set:
-                    naam_voor_dit_uur = pv_replacements.get(originele_pv_naam, "")
+                if pvnaam in abs_set:
+                    naam = pv_replacements.get(pvnaam, "")
                 else:
-                    naam_voor_dit_uur = originele_pv_naam
+                    naam = pvnaam
 
-            ws_plan.cell(row, col).value = naam_voor_dit_uur
-            if naam_voor_dit_uur:
-                lm_recolor_student_cell(ws_plan, row, col, naam_voor_dit_uur)
+            cell.value = naam
+            if naam:
+                lm2_fill_student_color(cell, naam)
+
+        info_per_hour[uur] = {
+            "original_present": list(original_present),
+            "assigned_rows": dict(assigned_rows),
+            "extra_assign": dict(extra_assign),
+            "pv_reserved_now": set(pv_reserved_now),
+            "hour_state": hour_state
+        }
+
+    # extra infoblad
+    if "Last-minute info" in wb_lm.sheetnames:
+        wb_lm.remove(wb_lm["Last-minute info"])
+    ws_info = wb_lm.create_sheet("Last-minute info")
+
+    ws_info["A1"] = "Afwezige studenten"
+    for i, naam in enumerate(sorted(abs_set), start=2):
+        ws_info.cell(i, 1).value = naam
+
+    ws_info["C1"] = "Herplanning vanaf"
+    ws_info["C2"] = f"{start_uur}:00"
+
+    ws_info["E1"] = "PV-vervangers"
+    r = 2
+    for pvnaam, vervanger in pv_replacements.items():
+        ws_info.cell(r, 5).value = pvnaam
+        ws_info.cell(r, 6).value = vervanger
+        r += 1
+
+    # harde validatieblad
+    if "Last-minute checks" in wb_lm.sheetnames:
+        wb_lm.remove(wb_lm["Last-minute checks"])
+    ws_check = wb_lm.create_sheet("Last-minute checks")
+    ws_check["A1"] = "Uur"
+    ws_check["B1"] = "Student"
+    ws_check["C1"] = "Aantal keer ingepland"
+    ws_check["D1"] = "OK?"
+
+    rr = 2
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+
+        col = uur_to_col[uur]
+        present_names = lm2_present_students_this_hour_from_original(original_by_student_hour, uur, abs_set)
+
+        count_per_name = defaultdict(int)
+        for row, _label in attr_rows + extra_rows + pv_rows:
+            naam = ws_plan.cell(row, col).value
+            if naam and str(naam).strip():
+                count_per_name[str(naam).strip()] += 1
+
+        for naam in present_names:
+            cnt = count_per_name.get(naam, 0)
+            ok = "OK" if cnt == 1 else "FOUT"
+            ws_check.cell(rr, 1).value = uur
+            ws_check.cell(rr, 2).value = naam
+            ws_check.cell(rr, 3).value = cnt
+            ws_check.cell(rr, 4).value = ok
+            rr += 1
 
     return wb_lm
 
-# -----------------------------
-# UI onder de bestaande downloadknop
-# -----------------------------
+
+# ------------------------------------------------------------
+# UI
+# ------------------------------------------------------------
 st.markdown("### Last-minute afwezigen")
 
-# Neem de reeds gemaakte planning als basis
-base_bytes_for_last_minute = output.getvalue()
-wb_temp_for_ui = load_workbook(BytesIO(base_bytes_for_last_minute))
-ws_temp_plan = wb_temp_for_ui["Planning"]
+base_bytes_for_last_minute_v2 = output.getvalue()
+wb_temp_lm2 = load_workbook(BytesIO(base_bytes_for_last_minute_v2))
+ws_temp_plan_lm2 = wb_temp_lm2["Planning"]
+uur_to_col_lm2, attr_rows_lm2, extra_rows_lm2, pv_rows_lm2, original_by_student_hour_lm2, names_on_row_hour_lm2 = lm2_output_sheet_maps(ws_temp_plan_lm2, open_uren)
 
-(
-    original_student_hour_row,
-    _original_hour_row_students,
-    _attr_rows_ui,
-    _extra_rows_ui,
-    _pv_rows_ui,
-    _uur_to_col_ui
-) = lm_get_original_schedule_from_sheet(ws_temp_plan, open_uren)
-
-werkende_studenten_vandaag = lm_get_working_students_of_day(original_student_hour_row, open_uren)
-pv_namen_set = {str(pv["naam"]).strip() for pv in selected}
+werkende_studenten_vandaag_lm2 = sorted({
+    naam for (naam, uur), _label in original_by_student_hour_lm2.items()
+    if uur in open_uren
+})
 
 with st.expander("Last-minute afwezigen", expanded=False):
-    gekozen_afwezigen = st.multiselect(
+    gekozen_afwezigen_lm2 = st.multiselect(
         "Kies 1 tot 5 afwezige studenten",
-        options=werkende_studenten_vandaag,
+        options=werkende_studenten_vandaag_lm2,
         default=[],
-        key="lm_absentees"
+        key="lm2_absentees"
     )
 
-    if len(gekozen_afwezigen) > 5:
-        st.warning("Je mag maximaal 5 studenten kiezen.")
-
-    start_uur_lm = st.selectbox(
+    start_uur_lm2 = st.selectbox(
         "Vanaf welk uur moet de nieuwe planning starten?",
         options=sorted(open_uren),
         format_func=lambda u: f"{u}:00",
-        key="lm_start_hour"
+        key="lm2_start_hour"
     )
 
-    if gekozen_afwezigen:
-        afwezige_pv = [n for n in gekozen_afwezigen if n in pv_namen_set]
-        afwezige_gewoon = [n for n in gekozen_afwezigen if n not in pv_namen_set]
-
-        if afwezige_gewoon:
-            st.caption("Gewone afwezigen: " + ", ".join(afwezige_gewoon))
-        if afwezige_pv:
-            st.caption("Afwezige pauzevlinders: " + ", ".join(afwezige_pv))
-
-    if st.button("Maak last-minute planning", key="lm_make_button"):
-        if not gekozen_afwezigen:
+    if st.button("Maak last-minute planning", key="lm2_make_button"):
+        if not gekozen_afwezigen_lm2:
             st.warning("Kies eerst minstens 1 afwezige student.")
-        elif len(gekozen_afwezigen) > 5:
+        elif len(gekozen_afwezigen_lm2) > 5:
             st.warning("Je mag maximaal 5 studenten kiezen.")
         else:
-            wb_last_minute = load_workbook(BytesIO(base_bytes_for_last_minute))
-            ws_input_last_minute = wb["Input"]
-
-            # Voor PV-vervanging hebben we lookup nodig
-            student_lookup_lm = lm_build_student_lookup(studenten)
-            working_from_start_lm = lm_get_all_round_students(original_student_hour_row, start_uur_lm)
-
-            # Deze globale wordt gebruikt in lm_pick_pv_replacement
-            original_student_hour_row = original_student_hour_row
-
-            pv_replacements = lm_pick_pv_replacement(
-                absent_pv_names=[n for n in gekozen_afwezigen if n in pv_namen_set],
-                selected_pv=selected,
-                student_lookup=student_lookup_lm,
-                working_from_start=working_from_start_lm,
-                absentees_set=set(gekozen_afwezigen),
-                start_uur=start_uur_lm
+            wb_last_minute_v2 = lm2_rebuild_last_minute_workbook(
+                base_bytes=base_bytes_for_last_minute_v2,
+                absentees=gekozen_afwezigen_lm2,
+                start_uur=start_uur_lm2
             )
 
-            wb_last_minute = lm_write_last_minute_planning(
-                wb_lm=wb_last_minute,
-                ws_input=ws_input_last_minute,
-                absentees=gekozen_afwezigen,
-                start_uur=start_uur_lm,
-                pv_replacements=pv_replacements
-            )
-
-            # Eventueel een klein infoblad
-            if "Last-minute info" in wb_last_minute.sheetnames:
-                wb_last_minute.remove(wb_last_minute["Last-minute info"])
-            ws_info = wb_last_minute.create_sheet("Last-minute info")
-            ws_info["A1"] = "Afwezige studenten"
-            for i, naam in enumerate(gekozen_afwezigen, start=2):
-                ws_info[f"A{i}"] = naam
-            ws_info["C1"] = "Herplanning vanaf"
-            ws_info["C2"] = f"{start_uur_lm}:00"
-            ws_info["E1"] = "PV-vervangers"
-            r = 2
-            for pvnaam, vervanger in pv_replacements.items():
-                ws_info.cell(r, 5).value = pvnaam
-                ws_info.cell(r, 6).value = vervanger
-                r += 1
-
-            lm_output = BytesIO()
-            wb_last_minute.save(lm_output)
-            lm_output.seek(0)
+            lm2_output = BytesIO()
+            wb_last_minute_v2.save(lm2_output)
+            lm2_output.seek(0)
 
             st.success("Last-minute planning gemaakt.")
             st.download_button(
                 "Download last-minute planning",
-                data=lm_output.getvalue(),
+                data=lm2_output.getvalue(),
                 file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                key="lm_download_button"
+                key="lm2_download_button"
             )
-
-
-
