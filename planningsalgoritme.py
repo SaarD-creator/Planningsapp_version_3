@@ -5214,7 +5214,7 @@ def extract_hourly_changes(student_per_uur, open_uren):
     return changes_per_hour
 
 
-def classify_hourly_switches(uur, newcomers, movers, leavers):
+def classify_hourly_switches(uur, newcomers, movers, leavers=None):
     """
     Types:
     - volledig automatisch:
@@ -5228,32 +5228,46 @@ def classify_hourly_switches(uur, newcomers, movers, leavers):
         losse wissels
 
     Belangrijk:
-    - Losse enkele wissels blijven 'normaal'
-    - Bij half-kettingen krijgt het echte startpunt 'half-start'
-    - De rest krijgt 'half-automatisch'
+    - losse enkele wissels blijven 'normaal'
+    - bij half-kettingen krijgt het echte startpunt 'half-start'
+    - de rest van die ketting krijgt 'half-automatisch'
 
-    Startpuntkeuze voor niet-volledig-automatische kettingen:
-    1. eerst een wissel die een plaats vrijmaakt voor iemand die naar huis gaat
-    2. anders een wissel die vertrekt van een attractie met 2 plekken
+    Startpuntkeuze:
+    1. eerst een wissel die plaats vrijmaakt voor iemand die naar huis gaat
+    2. anders een wissel op / vanuit een attractie met 2 plekken
     3. anders stabiele fallback
     """
     if not movers:
         return []
 
+    if leavers is None:
+        leavers = []
+
     # -----------------------------
-    # Helper-sets voor startlogica
+    # Helpers voor prioriteit
     # -----------------------------
     leaver_from_attrs = {x["van"] for x in leavers}
 
     def has_two_spots(attr):
-        """
-        Kijk of de attractie op dit uur 2 plekken heeft.
-        Vereist dat 'aantallen' beschikbaar is in de outer scope.
-        """
         try:
             return aantallen[uur].get(attr, 1) >= 2
         except Exception:
             return False
+
+    def edge_priority(edge):
+        """
+        Lager = beter startpunt.
+        """
+        frees_for_leaver = edge["van"] in leaver_from_attrs
+        two_spots = has_two_spots(edge["van"]) or has_two_spots(edge["naar"])
+
+        return (
+            0 if frees_for_leaver else 1,
+            0 if two_spots else 1,
+            edge["van"],
+            edge["naar"],
+            edge["naam"]
+        )
 
     # -----------------------------
     # Edges opbouwen
@@ -5318,47 +5332,225 @@ def classify_hourly_switches(uur, newcomers, movers, leavers):
     # -----------------------------
     remaining_edges = [e for e in edges if e["id"] not in auto_edge_ids]
 
-    def build_components(edge_list):
+    # ---------- componenten bouwen op ATTRACTIE-niveau ----------
+    def build_attr_components(edge_list):
         """
-        Componenten op basis van gekoppelde attracties.
-        Twee edges horen samen als de ene logisch kan volgen op de andere.
+        Bouw componenten op basis van alle attracties die door de edges geraakt worden.
+        Zo blijven lussen beter samen, ook als ze niet in een simpele lineaire ketting zitten.
         """
-        by_id = {e["id"]: e for e in edge_list}
-        adjacency = defaultdict(set)
+        if not edge_list:
+            return []
 
-        for e1 in edge_list:
-            for e2 in edge_list:
-                if e1["id"] == e2["id"]:
-                    continue
-
-                if e1["naar"] == e2["van"] or e2["naar"] == e1["van"]:
-                    adjacency[e1["id"]].add(e2["id"])
-                    adjacency[e2["id"]].add(e1["id"])
-
-        visited = set()
-        components = []
+        attr_neighbors = defaultdict(set)
+        attrs_involved = set()
 
         for e in edge_list:
-            if e["id"] in visited:
+            a = e["van"]
+            b = e["naar"]
+            attrs_involved.add(a)
+            attrs_involved.add(b)
+            attr_neighbors[a].add(b)
+            attr_neighbors[b].add(a)   # ongericht voor componentdetectie
+
+        visited_attrs = set()
+        attr_components = []
+
+        for attr in attrs_involved:
+            if attr in visited_attrs:
                 continue
 
-            stack = [e["id"]]
-            comp_ids = []
+            stack = [attr]
+            comp_attrs = set()
 
             while stack:
                 curr = stack.pop()
-                if curr in visited:
+                if curr in visited_attrs:
                     continue
-                visited.add(curr)
-                comp_ids.append(curr)
+                visited_attrs.add(curr)
+                comp_attrs.add(curr)
 
-                for nb in adjacency[curr]:
-                    if nb not in visited:
+                for nb in attr_neighbors[curr]:
+                    if nb not in visited_attrs:
                         stack.append(nb)
 
-            components.append([by_id[i] for i in comp_ids])
+            attr_components.append(comp_attrs)
 
-        return components
+        edge_components = []
+        for comp_attrs in attr_components:
+            comp_edges = [
+                e for e in edge_list
+                if e["van"] in comp_attrs or e["naar"] in comp_attrs
+            ]
+            edge_components.append(comp_edges)
+
+        return edge_components
+
+    def get_start_candidates(comp_edges, used_ids=None):
+        """
+        Natuurlijke starts = edges waarvan 'van' geen 'naar' is
+        van een andere nog ongebruikte edge in dezelfde component.
+        """
+        if used_ids is None:
+            used_ids = set()
+
+        active_edges = [e for e in comp_edges if e["id"] not in used_ids]
+        starts = []
+
+        for e in active_edges:
+            has_prev = any(
+                other["id"] != e["id"]
+                and other["id"] not in used_ids
+                and other["naar"] == e["van"]
+                for other in active_edges
+            )
+            if not has_prev:
+                starts.append(e)
+
+        starts.sort(key=edge_priority)
+        return starts
+
+    def pick_best_start(comp_edges, used_ids):
+        """
+        Kies slim een start:
+        - eerst natuurlijke starts
+        - als die er niet zijn: beste edge in lus/overblijfsel
+        """
+        starts = get_start_candidates(comp_edges, used_ids)
+        if starts:
+            return starts[0]
+
+        leftovers = [e for e in comp_edges if e["id"] not in used_ids]
+        leftovers.sort(key=edge_priority)
+        return leftovers[0] if leftovers else None
+
+    def pick_best_next(current, comp_edges, used_ids):
+        """
+        Kies een volgende edge die logisch aansluit.
+        Eerst directe vervolgstap: current['naar'] -> ...
+        Als die er niet is, probeer een edge die in dezelfde component nog
+        logisch verder kan in een resterende lus.
+        """
+        direct = [
+            e for e in comp_edges
+            if e["id"] not in used_ids and e["van"] == current["naar"]
+        ]
+        if direct:
+            direct.sort(key=edge_priority)
+            return direct[0]
+
+        return None
+
+    def roll_chain(start_edge, comp_edges, used_ids):
+        chain = []
+        current = start_edge
+
+        while current and current["id"] not in used_ids:
+            chain.append(current)
+            used_ids.add(current["id"])
+            current = pick_best_next(current, comp_edges, used_ids)
+
+        return chain
+
+    if remaining_edges:
+        components = build_attr_components(remaining_edges)
+
+        for comp_edges in components:
+            if not comp_edges:
+                continue
+
+            used_ids = set()
+            chains = []
+
+            # Blijf kettingen uitrollen tot alle edges uit deze component opgebruikt zijn
+            while len(used_ids) < len(comp_edges):
+                start_edge = pick_best_start(comp_edges, used_ids)
+                if not start_edge:
+                    break
+
+                chain = roll_chain(start_edge, comp_edges, used_ids)
+                if chain:
+                    chains.append(chain)
+                else:
+                    # veiligheid: forceer 1 edge zodat we nooit vastlopen
+                    used_ids.add(start_edge["id"])
+                    chains.append([start_edge])
+
+            # Types zetten per ketting
+            for chain in chains:
+                if len(chain) == 1:
+                    chain[0]["type"] = "normaal"
+                else:
+                    chain[0]["type"] = "half-start"
+                    for e in chain[1:]:
+                        e["type"] = "half-automatisch"
+
+    # -----------------------------
+    # 3. Definitieve volgorde
+    # -----------------------------
+    auto_edges = [e for e in edges if e["type"] == "volledig automatisch"]
+    half_edges = [e for e in edges if e["type"] in ("half-start", "half-automatisch")]
+    normal_edges = [e for e in edges if e["type"] == "normaal"]
+
+    # Auto logisch ordenen
+    ordered_auto = []
+    used_auto = set()
+
+    for start_attr in sorted(newcomers_by_attr.keys()):
+        start_candidates = [
+            e for e in auto_edges
+            if e["id"] not in used_auto and e["van"] == start_attr
+        ]
+        start_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+
+        for start in start_candidates:
+            current = start
+            while current and current["id"] not in used_auto:
+                ordered_auto.append(current)
+                used_auto.add(current["id"])
+
+                next_candidates = [
+                    e for e in auto_edges
+                    if e["id"] not in used_auto and e["van"] == current["naar"]
+                ]
+                next_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+                current = next_candidates[0] if next_candidates else None
+
+    leftovers_auto = [e for e in auto_edges if e["id"] not in used_auto]
+    leftovers_auto.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+    ordered_auto.extend(leftovers_auto)
+
+    # Half-kettingen ordenen
+    ordered_half = []
+    used_half = set()
+
+    half_starts = [e for e in half_edges if e["type"] == "half-start"]
+    half_starts.sort(key=edge_priority)
+
+    for start in half_starts:
+        if start["id"] in used_half:
+            continue
+
+        current = start
+        while current and current["id"] not in used_half:
+            ordered_half.append(current)
+            used_half.add(current["id"])
+
+            next_candidates = [
+                e for e in half_edges
+                if e["id"] not in used_half and e["van"] == current["naar"]
+            ]
+            next_candidates.sort(key=edge_priority)
+            current = next_candidates[0] if next_candidates else None
+
+    leftovers_half = [e for e in half_edges if e["id"] not in used_half]
+    leftovers_half.sort(key=edge_priority)
+    ordered_half.extend(leftovers_half)
+
+    normal_edges.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+
+    return ordered_auto + ordered_half + normal_edges
+
+    
 
     def edge_priority(edge):
         """
