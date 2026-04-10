@@ -5238,6 +5238,7 @@ def extract_hourly_changes(student_per_uur, open_uren):
 
 
 
+
 def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_sources=None):
     """
     Types:
@@ -5260,6 +5261,7 @@ def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_
     - bij echte ronde lussen kiezen we het startpunt liefst op een attractie
       met 2 plekken op dit uur
     - niet-ronde kettingen komen vóór ronde lussen in de output
+    - groene wissels starten altijd bij de attractie waar de nieuwkomer toekomt
     - enkel kettingen met lengte > 1 komen in de half-automatische output
       zodat er geen dubbels ontstaan
     """
@@ -5383,6 +5385,8 @@ def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_
     auto_edge_ids = set()
     queue = deque()
 
+    # Groen start ALTIJD bij de attractie waar de nieuwkomer toekomt
+    # De nieuwkomer zet daar de ketting in gang.
     for attr in newcomers_by_attr.keys():
         for e in outgoing.get(attr, []):
             if e["id"] not in auto_edge_ids:
@@ -5409,8 +5413,38 @@ def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_
 
     if not remaining_edges:
         auto_edges = [e for e in edges if e["type"] == "volledig automatisch"]
-        auto_edges.sort(key=stable_edge_key)
-        return auto_edges
+
+        ordered_auto = []
+        used_auto = set()
+
+        # Volg exact de volgorde van newcomers, niet alfabetisch op attractie
+        for newcomer in newcomers:
+            start_attr = newcomer["naar"]
+
+            start_candidates = [
+                e for e in auto_edges
+                if e["id"] not in used_auto and e["van"] == start_attr
+            ]
+            start_candidates.sort(key=next_edge_key)
+
+            for start in start_candidates:
+                current = start
+                while current and current["id"] not in used_auto:
+                    ordered_auto.append(current)
+                    used_auto.add(current["id"])
+
+                    next_candidates = [
+                        e for e in auto_edges
+                        if e["id"] not in used_auto and e["van"] == current["naar"]
+                    ]
+                    next_candidates.sort(key=next_edge_key)
+                    current = next_candidates[0] if next_candidates else None
+
+        leftovers_auto = [e for e in auto_edges if e["id"] not in used_auto]
+        leftovers_auto.sort(key=stable_edge_key)
+        ordered_auto.extend(leftovers_auto)
+
+        return ordered_auto
 
     source_attrs = [x["attr"] for x in disappearing_sources]
 
@@ -5541,14 +5575,18 @@ def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_
     ordered_auto = []
     used_auto = set()
 
-    for start_attr in sorted(newcomers_by_attr.keys()):
-        starts = [
+    # Groen start ALTIJD vanuit de attractie van de nieuwkomer
+    # en volgt dan pas de ketting verder.
+    for newcomer in newcomers:
+        start_attr = newcomer["naar"]
+
+        start_candidates = [
             e for e in auto_edges
             if e["id"] not in used_auto and e["van"] == start_attr
         ]
-        starts.sort(key=next_edge_key)
+        start_candidates.sort(key=next_edge_key)
 
-        for start in starts:
+        for start in start_candidates:
             current = start
             while current and current["id"] not in used_auto:
                 ordered_auto.append(current)
@@ -5591,7 +5629,6 @@ def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_
         final_order.append(e)
 
     return final_order
-
 
 
 
