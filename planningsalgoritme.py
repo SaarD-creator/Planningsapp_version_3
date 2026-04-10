@@ -5154,11 +5154,14 @@ def build_student_per_hour_map(assigned_map):
     return student_per_uur
 
 
+
 def extract_hourly_changes(student_per_uur, open_uren):
     """
     Bouw per uur alle veranderingen op:
     - newcomers: studenten die op dit uur starten
     - movers: studenten die op dit uur van attractie wisselen
+    - leavers: studenten die op vorig uur nog werkten,
+               maar op dit uur niet meer werken
     """
     changes_per_hour = {}
 
@@ -5176,6 +5179,7 @@ def extract_hourly_changes(student_per_uur, open_uren):
 
         newcomers = []
         movers = []
+        leavers = []
 
         for naam, curr_attr in curr_students.items():
             if naam not in prev_students:
@@ -5194,15 +5198,23 @@ def extract_hourly_changes(student_per_uur, open_uren):
                         "type": "normaal"
                     })
 
+        for naam, prev_attr in prev_students.items():
+            if naam not in curr_students:
+                leavers.append({
+                    "naam": naam,
+                    "van": prev_attr
+                })
+
         changes_per_hour[uur] = {
             "newcomers": newcomers,
-            "movers": movers
+            "movers": movers,
+            "leavers": leavers
         }
 
     return changes_per_hour
 
 
-def classify_hourly_switches(uur, newcomers, movers):
+def classify_hourly_switches(uur, newcomers, movers, leavers):
     """
     Types:
     - volledig automatisch:
@@ -5216,12 +5228,32 @@ def classify_hourly_switches(uur, newcomers, movers):
         losse wissels
 
     Belangrijk:
-    - Een losse enkele wissel blijft 'normaal'
-    - Bij half-automatische kettingen krijgt het echte startpunt 'half-start'
-    - De rest van die ketting krijgt 'half-automatisch'
+    - Losse enkele wissels blijven 'normaal'
+    - Bij half-kettingen krijgt het echte startpunt 'half-start'
+    - De rest krijgt 'half-automatisch'
+
+    Startpuntkeuze voor niet-volledig-automatische kettingen:
+    1. eerst een wissel die een plaats vrijmaakt voor iemand die naar huis gaat
+    2. anders een wissel die vertrekt van een attractie met 2 plekken
+    3. anders stabiele fallback
     """
     if not movers:
         return []
+
+    # -----------------------------
+    # Helper-sets voor startlogica
+    # -----------------------------
+    leaver_from_attrs = {x["van"] for x in leavers}
+
+    def has_two_spots(attr):
+        """
+        Kijk of de attractie op dit uur 2 plekken heeft.
+        Vereist dat 'aantallen' beschikbaar is in de outer scope.
+        """
+        try:
+            return aantallen[uur].get(attr, 1) >= 2
+        except Exception:
+            return False
 
     # -----------------------------
     # Edges opbouwen
@@ -5240,8 +5272,8 @@ def classify_hourly_switches(uur, newcomers, movers):
     # -----------------------------
     # Maps
     # -----------------------------
-    outgoing = defaultdict(list)   # attr -> edges die vertrekken van attr
-    incoming = defaultdict(list)   # attr -> edges die toekomen op attr
+    outgoing = defaultdict(list)
+    incoming = defaultdict(list)
 
     for e in edges:
         outgoing[e["van"]].append(e)
@@ -5262,16 +5294,12 @@ def classify_hourly_switches(uur, newcomers, movers):
     auto_edge_ids = set()
     queue = deque()
 
-    # Een nieuwkomer op attractie X maakt het mogelijk
-    # dat iemand van X naar elders schuift
     for attr in newcomers_by_attr.keys():
         for e in outgoing.get(attr, []):
             if e["id"] not in auto_edge_ids:
                 auto_edge_ids.add(e["id"])
                 queue.append(e)
 
-    # Propagatie: als iemand naar Y schuift,
-    # kan van Y weer iemand verder schuiven
     while queue:
         current = queue.popleft()
         next_attr = current["naar"]
@@ -5286,23 +5314,23 @@ def classify_hourly_switches(uur, newcomers, movers):
             e["type"] = "volledig automatisch"
 
     # -----------------------------
-    # 2. Resterende wissels groeperen in logische kettingen
+    # 2. Resterende wissels
     # -----------------------------
     remaining_edges = [e for e in edges if e["id"] not in auto_edge_ids]
 
-    if remaining_edges:
-        remaining_by_id = {e["id"]: e for e in remaining_edges}
-
-        # Ong gerichte componenten opbouwen:
-        # edges horen samen als de ene logisch op de andere aansluit
+    def build_components(edge_list):
+        """
+        Componenten op basis van gekoppelde attracties.
+        Twee edges horen samen als de ene logisch kan volgen op de andere.
+        """
+        by_id = {e["id"]: e for e in edge_list}
         adjacency = defaultdict(set)
 
-        for e1 in remaining_edges:
-            for e2 in remaining_edges:
+        for e1 in edge_list:
+            for e2 in edge_list:
                 if e1["id"] == e2["id"]:
                     continue
 
-                # Zelfde component als er een logische aansluiting is
                 if e1["naar"] == e2["van"] or e2["naar"] == e1["van"]:
                     adjacency[e1["id"]].add(e2["id"])
                     adjacency[e2["id"]].add(e1["id"])
@@ -5310,7 +5338,7 @@ def classify_hourly_switches(uur, newcomers, movers):
         visited = set()
         components = []
 
-        for e in remaining_edges:
+        for e in edge_list:
             if e["id"] in visited:
                 continue
 
@@ -5318,98 +5346,114 @@ def classify_hourly_switches(uur, newcomers, movers):
             comp_ids = []
 
             while stack:
-                curr_id = stack.pop()
-                if curr_id in visited:
+                curr = stack.pop()
+                if curr in visited:
                     continue
+                visited.add(curr)
+                comp_ids.append(curr)
 
-                visited.add(curr_id)
-                comp_ids.append(curr_id)
-
-                for nb in adjacency[curr_id]:
+                for nb in adjacency[curr]:
                     if nb not in visited:
                         stack.append(nb)
 
-            components.append([remaining_by_id[i] for i in comp_ids])
+            components.append([by_id[i] for i in comp_ids])
 
-        # -----------------------------
-        # 3. Binnen elke component:
-        #    meerdere echte startpunten toelaten
-        # -----------------------------
+        return components
+
+    def edge_priority(edge):
+        """
+        Lager = beter startpunt.
+        Volgorde:
+        1. maakt plaats vrij op attractie waar iemand naar huis moet
+        2. vertrekt van attractie met 2 plekken
+        3. stabiele fallback
+        """
+        frees_for_leaver = edge["van"] in leaver_from_attrs
+        two_spots = has_two_spots(edge["van"])
+
+        return (
+            0 if frees_for_leaver else 1,
+            0 if two_spots else 1,
+            edge["van"],
+            edge["naar"],
+            edge["naam"]
+        )
+
+    def get_start_candidates(comp_edges):
+        """
+        Natuurlijke starts = edges zonder voorganger binnen component.
+        """
+        starts = []
+        for e in comp_edges:
+            has_prev = any(
+                other["id"] != e["id"] and other["naar"] == e["van"]
+                for other in comp_edges
+            )
+            if not has_prev:
+                starts.append(e)
+        return starts
+
+    def pick_best_cycle_start(comp_edges):
+        """
+        Voor echte lussen is er geen natuurlijke start.
+        Kies dan volgens jouw logica:
+        1. plaats vrijmaken voor leaver
+        2. attractie met 2 plekken
+        3. stabiele fallback
+        """
+        candidates = sorted(comp_edges, key=edge_priority)
+        return candidates[0]
+
+    def roll_chain(start_edge, comp_edges, used_ids):
+        chain = []
+        current = start_edge
+
+        while current and current["id"] not in used_ids:
+            chain.append(current)
+            used_ids.add(current["id"])
+
+            next_candidates = [
+                e for e in comp_edges
+                if e["id"] not in used_ids and e["van"] == current["naar"]
+            ]
+            next_candidates.sort(key=edge_priority)
+            current = next_candidates[0] if next_candidates else None
+
+        return chain
+
+    if remaining_edges:
+        components = build_components(remaining_edges)
+
         for comp_edges in components:
             if not comp_edges:
                 continue
 
-            comp_ids = {e["id"] for e in comp_edges}
-
-            def has_prev_in_component(edge):
-                return any(
-                    other["id"] != edge["id"] and other["naar"] == edge["van"]
-                    for other in comp_edges
-                )
-
-            def next_candidates_in_component(edge, used_ids):
-                kandidaten = [
-                    other for other in comp_edges
-                    if other["id"] not in used_ids and other["van"] == edge["naar"]
-                ]
-                kandidaten.sort(key=lambda x: (x["naar"], x["naam"]))
-                return kandidaten
-
-            # Echte starts = edges zonder voorganger binnen dezelfde component
-            start_candidates = [e for e in comp_edges if not has_prev_in_component(e)]
-            start_candidates.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+            start_candidates = get_start_candidates(comp_edges)
+            start_candidates = sorted(start_candidates, key=edge_priority)
 
             used_ids = set()
             chains = []
 
-            # Rol elke echte start apart uit
+            # 1. Eerst alle natuurlijke starts uitrollen
             for start_edge in start_candidates:
                 if start_edge["id"] in used_ids:
                     continue
-
-                chain = []
-                current = start_edge
-
-                while current and current["id"] not in used_ids:
-                    chain.append(current)
-                    used_ids.add(current["id"])
-
-                    kandidaten = next_candidates_in_component(current, used_ids)
-                    current = kandidaten[0] if kandidaten else None
-
+                chain = roll_chain(start_edge, comp_edges, used_ids)
                 if chain:
                     chains.append(chain)
 
-            # Eventuele restjes:
-            # - cirkels
-            # - ambigu verbonden delen
+            # 2. Restjes / lussen behandelen
             leftovers = [e for e in comp_edges if e["id"] not in used_ids]
-            leftovers.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
 
-            # Ook leftovers proberen we nog in kettingen te rollen
             while leftovers:
-                start_edge = leftovers.pop(0)
-
-                if start_edge["id"] in used_ids:
-                    continue
-
-                chain = []
-                current = start_edge
-
-                while current and current["id"] not in used_ids:
-                    chain.append(current)
-                    used_ids.add(current["id"])
-
-                    kandidaten = next_candidates_in_component(current, used_ids)
-                    current = kandidaten[0] if kandidaten else None
-
+                cycle_start = pick_best_cycle_start(leftovers)
+                chain = roll_chain(cycle_start, comp_edges, used_ids)
                 if chain:
                     chains.append(chain)
 
                 leftovers = [e for e in comp_edges if e["id"] not in used_ids]
-                leftovers.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
 
-            # Types zetten per ketting
+            # 3. Types zetten per ketting
             for chain in chains:
                 if len(chain) == 1:
                     chain[0]["type"] = "normaal"
@@ -5419,10 +5463,7 @@ def classify_hourly_switches(uur, newcomers, movers):
                         e["type"] = "half-automatisch"
 
     # -----------------------------
-    # 4. Definitieve volgorde maken
-    # Eerst volledig automatisch
-    # Dan half-start / half-automatisch
-    # Dan normale losse wissels
+    # 3. Definitieve volgorde
     # -----------------------------
     auto_edges = [e for e in edges if e["type"] == "volledig automatisch"]
     half_edges = [e for e in edges if e["type"] in ("half-start", "half-automatisch")]
@@ -5456,12 +5497,13 @@ def classify_hourly_switches(uur, newcomers, movers):
     leftovers_auto.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
     ordered_auto.extend(leftovers_auto)
 
-    # Half-kettingen logisch ordenen
+    # Half-kettingen ordenen:
+    # eerst starts volgens jouw logica, dan hun gevolg
     ordered_half = []
     used_half = set()
 
     half_starts = [e for e in half_edges if e["type"] == "half-start"]
-    half_starts.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+    half_starts.sort(key=edge_priority)
 
     for start in half_starts:
         if start["id"] in used_half:
@@ -5476,17 +5518,17 @@ def classify_hourly_switches(uur, newcomers, movers):
                 e for e in half_edges
                 if e["id"] not in used_half and e["van"] == current["naar"]
             ]
-            next_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+            next_candidates.sort(key=edge_priority)
             current = next_candidates[0] if next_candidates else None
 
     leftovers_half = [e for e in half_edges if e["id"] not in used_half]
-    leftovers_half.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+    leftovers_half.sort(key=edge_priority)
     ordered_half.extend(leftovers_half)
 
     normal_edges.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
 
     return ordered_auto + ordered_half + normal_edges
-
+    
 
 # -----------------------------
 # Stap 1: student → uur → attractie
@@ -5506,7 +5548,8 @@ wissels_per_uur = {}
 for uur in sorted(open_uren):
     newcomers = changes_per_hour[uur]["newcomers"]
     movers = changes_per_hour[uur]["movers"]
-    ordered_switches = classify_hourly_switches(uur, newcomers, movers)
+    leavers = changes_per_hour[uur]["leavers"]
+    ordered_switches = classify_hourly_switches(uur, newcomers, movers, leavers)
     if ordered_switches:
         wissels_per_uur[uur] = ordered_switches
 
