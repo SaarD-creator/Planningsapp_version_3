@@ -1,3 +1,5 @@
+# versie met extra functie voor afwezige studenten: enkel samenvoegen attracties loopt stroef
+
 #1+3 logica voor 9u30 ipv 3+1 & 2+2 logica voor 4 uur opt einde & 6 uur op een dag is toegelaten, maar wordt vermeden door post-processing
 
 #uitschakelen attracties op bepaalde uren lijkt te werken!
@@ -5135,31 +5137,507 @@ for row in ws_feedback2.iter_rows():
 # PART 6 6666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
 # PART 6 666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
 
+# -----------------------------
+# DEEL 6: Wissels detecteren, classificeren en exporteren
+# -----------------------------
 
-# ============================================================
-# LAST-MINUTE AFWEZIGEN V6
-# VOLLEDIGE VERVANGING van de oude V5-patch
-# Vervang alles vanaf "# LAST-MINUTE AFWEZIGEN V5"
-# ============================================================
-
-import random
 from collections import defaultdict, deque
-from io import BytesIO
-from openpyxl import load_workbook
-from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
+from openpyxl.styles import Font, Alignment, Border, Side, PatternFill
+from openpyxl.utils import get_column_letter
 
-# ------------------------------------------------------------
-# Algemene helpers
-# ------------------------------------------------------------
-LM6_GRAY_FILL = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-LM6_WHITE_FILL = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-LM6_CENTER = Alignment(horizontal="center", vertical="center")
-LM6_THIN = Border(
-    left=Side(style="thin"), right=Side(style="thin"),
-    top=Side(style="thin"), bottom=Side(style="thin")
+# -----------------------------
+# Helpers
+# -----------------------------
+def build_student_per_hour_map(assigned_map):
+    student_per_uur = defaultdict(dict)
+    for (uur, attr), namen in assigned_map.items():
+        for naam in namen:
+            student_per_uur[naam][uur] = attr
+    return student_per_uur
+
+
+def extract_hourly_changes(student_per_uur, open_uren):
+    """
+    Bouw per uur alle veranderingen op:
+    - newcomers: studenten die op dit uur starten
+    - movers: studenten die op dit uur van attractie wisselen
+    """
+    changes_per_hour = {}
+
+    for uur in sorted(open_uren):
+        prev_uur = uur - 1
+
+        prev_students = {}
+        curr_students = {}
+
+        for naam, uren_dict in student_per_uur.items():
+            if prev_uur in uren_dict:
+                prev_students[naam] = uren_dict[prev_uur]
+            if uur in uren_dict:
+                curr_students[naam] = uren_dict[uur]
+
+        newcomers = []
+        movers = []
+
+        for naam, curr_attr in curr_students.items():
+            if naam not in prev_students:
+                newcomers.append({
+                    "naam": naam,
+                    "naar": curr_attr
+                })
+            else:
+                prev_attr = prev_students[naam]
+                if prev_attr != curr_attr:
+                    movers.append({
+                        "naam": naam,
+                        "van": prev_attr,
+                        "naar": curr_attr,
+                        "uur": uur,
+                        "type": "normaal"
+                    })
+
+        changes_per_hour[uur] = {
+            "newcomers": newcomers,
+            "movers": movers
+        }
+
+    return changes_per_hour
+
+
+def classify_hourly_switches(uur, newcomers, movers):
+    """
+    Types:
+    - volledig automatisch:
+        een nieuwkomer komt toe op attractie A,
+        daardoor kan een student van A weg,
+        waardoor ketting verder loopt
+    - half-automatisch:
+        een logisch aaneengesloten wisselketting binnen hetzelfde uur
+        waarbij de eerste stap manueel wordt ingezet en de rest volgt
+    - normaal:
+        losse wissels
+
+    Belangrijk:
+    Voor half-automatisch duiden we NIET elke stap geel aan.
+    De eerste stap van elke ketting blijft wit.
+    Daarom krijgt die het type 'half-start'.
+    De rest krijgt 'half-automatisch'.
+    """
+    if not movers:
+        return []
+
+    # -----------------------------
+    # Edges opbouwen
+    # -----------------------------
+    edges = []
+    for idx, m in enumerate(movers):
+        edges.append({
+            "id": idx,
+            "naam": m["naam"],
+            "van": m["van"],
+            "naar": m["naar"],
+            "uur": uur,
+            "type": "normaal"
+        })
+
+    # Maps
+    outgoing = defaultdict(list)   # attr -> edges die vertrekken van attr
+    incoming = defaultdict(list)   # attr -> edges die toekomen op attr
+
+    for e in edges:
+        outgoing[e["van"]].append(e)
+        incoming[e["naar"]].append(e)
+
+    for attr in outgoing:
+        outgoing[attr].sort(key=lambda x: (x["naar"], x["naam"]))
+    for attr in incoming:
+        incoming[attr].sort(key=lambda x: (x["van"], x["naam"]))
+
+    # -----------------------------
+    # 1. Volledig automatische kettingen
+    # -----------------------------
+    newcomers_by_attr = defaultdict(list)
+    for n in newcomers:
+        newcomers_by_attr[n["naar"]].append(n["naam"])
+
+    auto_edge_ids = set()
+    queue = deque()
+
+    # Een nieuwkomer op attractie X maakt het mogelijk
+    # dat iemand van X naar elders schuift
+    for attr in newcomers_by_attr.keys():
+        for e in outgoing.get(attr, []):
+            if e["id"] not in auto_edge_ids:
+                auto_edge_ids.add(e["id"])
+                queue.append(e)
+
+    # Propagatie: als iemand naar Y schuift, komt daar een plek vrij/ontstaat een vervolgstap
+    while queue:
+        current = queue.popleft()
+        next_attr = current["naar"]
+
+        for next_edge in outgoing.get(next_attr, []):
+            if next_edge["id"] not in auto_edge_ids:
+                auto_edge_ids.add(next_edge["id"])
+                queue.append(next_edge)
+
+    for e in edges:
+        if e["id"] in auto_edge_ids:
+            e["type"] = "volledig automatisch"
+
+    # -----------------------------
+    # 2. Resterende wissels groeperen in logische kettingen
+    # -----------------------------
+    remaining_edges = [e for e in edges if e["id"] not in auto_edge_ids]
+
+    if remaining_edges:
+        remaining_by_id = {e["id"]: e for e in remaining_edges}
+
+        # Bouw een ongerichte componentstructuur:
+        # als A->B en B->C, dan horen die samen
+        neighbors = defaultdict(set)
+        edge_ids_per_attr = defaultdict(set)
+
+        for e in remaining_edges:
+            edge_ids_per_attr[e["van"]].add(e["id"])
+            edge_ids_per_attr[e["naar"]].add(e["id"])
+
+        # twee edges zijn buren als de 'naar' van de ene de 'van' van de andere is
+        # of omgekeerd, zodat kettingen mooi bijeen blijven
+        for e1 in remaining_edges:
+            for e2 in remaining_edges:
+                if e1["id"] == e2["id"]:
+                    continue
+                if e1["naar"] == e2["van"] or e2["naar"] == e1["van"]:
+                    neighbors[e1["id"]].add(e2["id"])
+
+        visited = set()
+        components = []
+
+        for e in remaining_edges:
+            if e["id"] in visited:
+                continue
+
+            comp = []
+            stack = [e["id"]]
+            visited.add(e["id"])
+
+            while stack:
+                curr_id = stack.pop()
+                comp.append(curr_id)
+                for nb in neighbors[curr_id]:
+                    if nb not in visited:
+                        visited.add(nb)
+                        stack.append(nb)
+
+            components.append(comp)
+
+        # -----------------------------
+        # 3. Per component: ordenen tot logische ketting
+        # -----------------------------
+        for comp_ids in components:
+            comp_edges = [remaining_by_id[eid] for eid in comp_ids]
+
+            # startkandidaten = edges waarvan "van" niet het "naar" is van een andere edge
+            incoming_count = defaultdict(int)
+            outgoing_count = defaultdict(int)
+
+            for e in comp_edges:
+                outgoing_count[e["van"]] += 1
+                incoming_count[e["naar"]] += 1
+
+            start_candidates = []
+            for e in comp_edges:
+                has_prev = any(other["naar"] == e["van"] for other in comp_edges if other["id"] != e["id"])
+                if not has_prev:
+                    start_candidates.append(e)
+
+            # Als het een echte cirkel is, bestaat er geen natuurlijke start.
+            # Dan kiezen we een stabiele start op alfabetische volgorde.
+            if start_candidates:
+                start_candidates.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+                start_edge = start_candidates[0]
+            else:
+                comp_edges.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+                start_edge = comp_edges[0]
+
+            # Keten uitrollen
+            ordered_chain = []
+            used_ids = set()
+            current = start_edge
+
+            while current and current["id"] not in used_ids:
+                ordered_chain.append(current)
+                used_ids.add(current["id"])
+
+                next_candidates = [
+                    e for e in comp_edges
+                    if e["id"] not in used_ids and e["van"] == current["naar"]
+                ]
+                next_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+
+                if next_candidates:
+                    current = next_candidates[0]
+                else:
+                    current = None
+
+            # Eventuele losse restjes nog toevoegen
+            leftovers = [e for e in comp_edges if e["id"] not in used_ids]
+            leftovers.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+            ordered_chain.extend(leftovers)
+
+            # Types zetten:
+            # - 1 edge alleen = normaal
+            # - meerdere edges = eerste is half-start, rest half-automatisch
+            if len(ordered_chain) == 1:
+                ordered_chain[0]["type"] = "normaal"
+            else:
+                ordered_chain[0]["type"] = "half-start"
+                for e in ordered_chain[1:]:
+                    e["type"] = "half-automatisch"
+
+    # -----------------------------
+    # 4. Definitieve volgorde maken
+    # Eerst volledig automatisch
+    # Dan half-start / half-automatisch
+    # Dan normale losse wissels
+    # -----------------------------
+    auto_edges = [e for e in edges if e["type"] == "volledig automatisch"]
+    half_edges = [e for e in edges if e["type"] in ("half-start", "half-automatisch")]
+    normal_edges = [e for e in edges if e["type"] == "normaal"]
+
+    # Auto logisch ordenen
+    ordered_auto = []
+    used_auto = set()
+
+    for start_attr in sorted(newcomers_by_attr.keys()):
+        start_candidates = [
+            e for e in auto_edges
+            if e["id"] not in used_auto and e["van"] == start_attr
+        ]
+        start_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+
+        for start in start_candidates:
+            current = start
+            while current and current["id"] not in used_auto:
+                ordered_auto.append(current)
+                used_auto.add(current["id"])
+
+                next_candidates = [
+                    e for e in auto_edges
+                    if e["id"] not in used_auto and e["van"] == current["naar"]
+                ]
+                next_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+                current = next_candidates[0] if next_candidates else None
+
+    # Eventuele overblijvende auto-edges
+    leftovers_auto = [e for e in auto_edges if e["id"] not in used_auto]
+    leftovers_auto.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+    ordered_auto.extend(leftovers_auto)
+
+    # Half-kettingen logisch groeperen: eerst starts, dan hun gevolg
+    ordered_half = []
+    used_half = set()
+
+    half_starts = [e for e in half_edges if e["type"] == "half-start"]
+    half_starts.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+
+    for start in half_starts:
+        if start["id"] in used_half:
+            continue
+
+        current = start
+        while current and current["id"] not in used_half:
+            ordered_half.append(current)
+            used_half.add(current["id"])
+
+            next_candidates = [
+                e for e in half_edges
+                if e["id"] not in used_half and e["van"] == current["naar"]
+            ]
+            next_candidates.sort(key=lambda x: (x["naar"], x["naam"]))
+            current = next_candidates[0] if next_candidates else None
+
+    leftovers_half = [e for e in half_edges if e["id"] not in used_half]
+    leftovers_half.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+    ordered_half.extend(leftovers_half)
+
+    normal_edges.sort(key=lambda x: (x["van"], x["naar"], x["naam"]))
+
+    return ordered_auto + ordered_half + normal_edges
+
+
+# -----------------------------
+# Stap 1: student → uur → attractie
+# -----------------------------
+student_per_uur = build_student_per_hour_map(assigned_map)
+
+# -----------------------------
+# Stap 2: veranderingen per uur opbouwen
+# -----------------------------
+changes_per_hour = extract_hourly_changes(student_per_uur, open_uren)
+
+# -----------------------------
+# Stap 3: per uur classificeren en ordenen
+# -----------------------------
+wissels_per_uur = {}
+
+for uur in sorted(open_uren):
+    newcomers = changes_per_hour[uur]["newcomers"]
+    movers = changes_per_hour[uur]["movers"]
+    ordered_switches = classify_hourly_switches(uur, newcomers, movers)
+    if ordered_switches:
+        wissels_per_uur[uur] = ordered_switches
+
+
+# KPI berekenen
+totaal_wissels = 0
+aantal_auto = 0
+
+for uur in wissels_per_uur:
+    for w in wissels_per_uur[uur]:
+        totaal_wissels += 1
+        if w["type"] == "volledig automatisch":
+            aantal_auto += 1
+
+niet_groen = totaal_wissels - aantal_auto
+
+# -----------------------------
+# Stap 4: werkblad "Wissels" maken
+# -----------------------------
+ws_wissels = wb_out.create_sheet(title="Wissels")
+
+# -----------------------------
+# KPI rechts van de tabel (kolom G)
+# -----------------------------
+ws_wissels.cell(1, 7, "KPI Wissels").font = Font(bold=True)
+
+ws_wissels.cell(2, 7, "Totaal wissels:")
+ws_wissels.cell(2, 8, totaal_wissels)
+
+ws_wissels.cell(3, 7, "Volledig automatisch:")
+ws_wissels.cell(3, 8, aantal_auto)
+
+ws_wissels.cell(4, 7, "Niet-groen (KPI):")
+ws_wissels.cell(4, 8, niet_groen)
+ws_wissels.cell(4, 8).font = Font(bold=True)
+
+center_align = Alignment(horizontal="center", vertical="center")
+thin_border = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin")
 )
 
-def lm6_split_display_label(label):
+green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+orange_fill = PatternFill(start_color="F4B084", end_color="F4B084", fill_type="solid")
+
+current_row = 1
+
+
+for uur in sorted(wissels_per_uur.keys()):
+    # Titelrij per uur
+    title_cell = ws_wissels.cell(current_row, 1, f"Wissels om {uur}:00")
+    title_cell.font = Font(bold=True)
+    title_cell.alignment = center_align
+    current_row += 1
+
+    # Headers
+    headers = ["Student", "Van", "Naar"]
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws_wissels.cell(current_row, col_idx, header)
+        cell.font = Font(bold=True)
+        cell.alignment = center_align
+        cell.border = thin_border
+    current_row += 1
+
+    # Wissels
+    for w in wissels_per_uur[uur]:
+        ws_wissels.cell(current_row, 1, w["naam"])
+        ws_wissels.cell(current_row, 2, w["van"])
+        ws_wissels.cell(current_row, 3, w["naar"])
+
+        # Basis layout
+        for col_idx in range(1, 4):
+            cell = ws_wissels.cell(current_row, col_idx)
+            cell.alignment = center_align
+            cell.border = thin_border
+
+        # Kleuren enkel op kolom B en C
+        if w["type"] == "volledig automatisch":
+            ws_wissels.cell(current_row, 2).fill = green_fill
+            ws_wissels.cell(current_row, 3).fill = green_fill
+
+        elif w["type"] == "half-automatisch":
+            ws_wissels.cell(current_row, 2).fill = yellow_fill
+            ws_wissels.cell(current_row, 3).fill = yellow_fill
+
+        elif w["type"] == "half-start":
+            ws_wissels.cell(current_row, 2).fill = orange_fill
+            ws_wissels.cell(current_row, 3).fill = orange_fill
+
+        current_row += 1
+
+    # Lege rij tussen uren
+    current_row += 1
+
+# -----------------------------
+# Stap 5: kolombreedtes
+# -----------------------------
+breedtes = {
+    1: 22,
+    2: 25,
+    3: 25,
+    7: 24,
+    8: 18
+}
+
+for col_idx, breedte in breedtes.items():
+    ws_wissels.column_dimensions[get_column_letter(col_idx)].width = breedte
+
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+#NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
+
+
+
+#ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
+
+
+# -----------------------------
+# Opslaan in hetzelfde unieke bestand als DEEL 3
+# -----------------------------
+output = BytesIO()
+wb_out.save(output)
+output.seek(0)
+# st.success("Planning gegenereerd!")
+st.download_button(
+    "Download planning",
+    data=output.getvalue(),
+    file_name=f"Planning_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+)
+
+
+
+#DEELLL 8 OFZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+# ============================================================
+# LAST-MINUTE AFWEZIGEN V5
+# VOLLEDIGE VERVANGING van alle vorige last-minute patches
+# Plakken ONDER de bestaande st.download_button("Download planning", ...)
+# ============================================================
+
+import copy
+import random
+from collections import defaultdict, Counter
+from io import BytesIO
+from openpyxl import load_workbook
+from openpyxl.styles import PatternFill
+
+# ------------------------------------------------------------
+# Basishelpers
+# ------------------------------------------------------------
+def lm5_split_display_label(label):
     if not label:
         return "", 1
     s = str(label).strip()
@@ -5168,13 +5646,13 @@ def lm6_split_display_label(label):
         return parts[0].strip(), int(parts[1])
     return s, 1
 
-def lm6_is_pv_row(label):
+def lm5_is_pv_row(label):
     return str(label).strip().lower().startswith("pauzevlinder")
 
-def lm6_is_extra_row(label):
+def lm5_is_extra_row(label):
     return str(label).strip().lower().startswith("extra")
 
-def lm6_parse_output_hour(header):
+def lm5_parse_output_hour(header):
     if not header:
         return None
     s = str(header).strip().lower()
@@ -5184,13 +5662,13 @@ def lm6_parse_output_hour(header):
         return max(open_uren) if open_uren else 18
     return parse_header_uur(header)
 
-def lm6_student_lookup():
+def lm5_student_lookup():
     return {str(s["naam"]).strip(): s for s in studenten}
 
-def lm6_get_student(naam):
-    return lm6_student_lookup().get(str(naam).strip())
+def lm5_get_student(naam):
+    return lm5_student_lookup().get(str(naam).strip())
 
-def lm6_copy_student_state(student):
+def lm5_copy_student_state(student):
     return {
         "naam": str(student["naam"]).strip(),
         "uren_beschikbaar": list(student["uren_beschikbaar"]),
@@ -5202,133 +5680,152 @@ def lm6_copy_student_state(student):
         "assigned_hours": []
     }
 
-def lm6_student_can_attr(student, attr):
+def lm5_student_can_attr(student, attr):
     if not student:
         return False
     return student_kan_attr(student, attr)
 
-def lm6_attr_parts(attr):
-    s = str(attr).strip()
-    if " + " in s:
-        return [x.strip() for x in s.split("+") if str(x).strip()]
-    return [s]
+def lm5_get_hours_on_attr(ctx, student_name, attr):
+    uren = []
+    for (uur, a), namen in ctx["assigned_map"].items():
+        if a == attr and student_name in namen:
+            uren.append(uur)
+    return sorted(set(uren))
 
-def lm6_all_single_attrs():
-    return [a for a in attracties_te_plannen if " + " not in str(a)]
-
-def lm6_full_capable_students():
-    singles = lm6_all_single_attrs()
-    out = []
-    for s in studenten:
-        if all(lm6_student_can_attr(s, attr) for attr in singles):
-            out.append(str(s["naam"]).strip())
-    return out
-
-def lm6_open_workbook_copy_from_bytes(xlsx_bytes):
-    return load_workbook(BytesIO(xlsx_bytes), data_only=False)
-
-def lm6_workbook_to_bytes(wb_obj):
-    buff = BytesIO()
-    wb_obj.save(buff)
-    buff.seek(0)
-    return buff.getvalue()
+def lm5_count_switches(ctx, student_name):
+    uur_attr = []
+    for uur in sorted(set(ctx["student_states"][student_name]["assigned_hours"])):
+        attr = lm5_student_current_attr_on_hour(ctx, student_name, uur)
+        if attr:
+            uur_attr.append((uur, attr))
+    if not uur_attr:
+        return 0
+    switches = 0
+    prev = uur_attr[0][1]
+    for _, attr in uur_attr[1:]:
+        if attr != prev:
+            switches += 1
+        prev = attr
+    return switches
 
 # ------------------------------------------------------------
-# Basis uit reeds gemaakte planning halen
+# Input + originele planning lezen
 # ------------------------------------------------------------
-def lm6_extract_base_maps_from_wbout_bytes(base_bytes):
-    wb_base = lm6_open_workbook_copy_from_bytes(base_bytes)
-    ws_plan = wb_base["Planning"]
+def lm5_extract_base_maps(base_bytes):
+    wb_tmp = load_workbook(BytesIO(base_bytes))
+    ws_plan = wb_tmp["Planning"]
 
-    hour_cols = {}
+    uur_to_col = {}
     for col in range(2, ws_plan.max_column + 1):
-        uur = lm6_parse_output_hour(ws_plan.cell(1, col).value)
-        if uur is not None:
-            hour_cols[uur] = col
+        uur = lm5_parse_output_hour(ws_plan.cell(1, col).value)
+        if uur in open_uren and uur not in uur_to_col:
+            uur_to_col[uur] = col
+
+    if not uur_to_col:
+        raise ValueError("Geen geldige uurkolommen gevonden in blad 'Planning'.")
 
     attr_rows = []
     pv_rows = []
     extra_rows = []
-
-    student_hour_row = {}
     student_hour_attr = {}
-    row_label_by_row = {}
+    student_hour_row = defaultdict(str)
+    row_labels = []
 
     for row in range(2, ws_plan.max_row + 1):
-        row_label = ws_plan.cell(row, 1).value
-        if not row_label:
+        label = ws_plan.cell(row, 1).value
+        if not label:
             continue
+        label = str(label).strip()
+        row_labels.append((row, label))
 
-        row_label = str(row_label).strip()
-        row_label_by_row[row] = row_label
-
-        if lm6_is_pv_row(row_label):
-            pv_rows.append((row, row_label))
-        elif lm6_is_extra_row(row_label):
-            extra_rows.append((row, row_label))
+        if lm5_is_pv_row(label):
+            pv_rows.append((row, label))
+        elif lm5_is_extra_row(label):
+            extra_rows.append((row, label))
         else:
-            attr_rows.append((row, row_label))
+            attr_rows.append((row, label))
 
-        for uur, col in hour_cols.items():
+        for uur, col in uur_to_col.items():
             naam = ws_plan.cell(row, col).value
-            if not naam:
-                continue
-            naam = str(naam).strip()
-
-            student_hour_row[(naam, uur)] = row_label
-
-            if not lm6_is_pv_row(row_label) and not lm6_is_extra_row(row_label):
-                base_attr, _pos = lm6_split_display_label(row_label)
-                student_hour_attr[(naam, uur)] = base_attr
+            if naam and str(naam).strip():
+                naam = str(naam).strip()
+                attr, _pos = lm5_split_display_label(label)
+                student_hour_attr[(naam, uur)] = attr
+                student_hour_row[(naam, uur)] = label
 
     return {
-        "wb": wb_base,
+        "wb": wb_tmp,
         "ws_plan": ws_plan,
-        "hour_cols": hour_cols,
+        "uur_to_col": uur_to_col,
         "attr_rows": attr_rows,
         "pv_rows": pv_rows,
         "extra_rows": extra_rows,
-        "student_hour_row": student_hour_row,
         "student_hour_attr": student_hour_attr,
-        "row_label_by_row": row_label_by_row,
+        "student_hour_row": student_hour_row,
+        "row_labels": row_labels,
     }
 
-# ------------------------------------------------------------
-# Prioriteiten uit input
-# ------------------------------------------------------------
-def lm6_extract_merge_priority():
+def lm5_working_students_today(base_maps):
+    out = set()
+    for (naam, uur), _attr in base_maps["student_hour_attr"].items():
+        if uur in open_uren:
+            out.add(naam)
+    return sorted(out)
+
+def lm5_present_students_on_hour(base_maps, uur, absentees_set):
+    out = []
+    seen = set()
+    for (naam, uur2), _attr in base_maps["student_hour_attr"].items():
+        if uur2 == uur and naam not in absentees_set and naam not in seen:
+            out.append(naam)
+            seen.add(naam)
+    return out
+
+def lm5_pv_names():
+    return [str(pv["naam"]).strip() for pv in selected]
+
+
+def lm5_extract_merge_priority():
     groepen = []
-    for rij in range(14, 22):   # AS14:AU21
-        g = []
-        for col in range(45, 48):
+    for rij in range(14, 22):  # 14 t.e.m. 21
+        groep = []
+        for col in range(45, 48):  # AS:AU
             val = ws.cell(rij, col).value
             if val:
-                g.append(str(val).strip())
-        if len(g) >= 2:
-            groepen.append(g)
+                groep.append(str(val).strip())
+        if len(groep) >= 2:
+            groepen.append(groep)
     return groepen
 
-def lm6_extract_disable_priority():
+def lm5_extract_disable_priority():
     out = []
-    for rij in range(24, 30):   # AS24:AS29
+    for rij in range(24, 30):  # AS24:AS29
         val = ws.cell(rij, 45).value
         if val:
             out.append(str(val).strip())
     return out
 
-def lm6_pv_names():
-    return [str(x).strip() for x in pauzevlinder_namen if x]
+def lm5_all_single_attrs():
+    return [a for a in attracties_te_plannen if " + " not in str(a)]
+
+def lm5_full_capable_students():
+    singles = lm5_all_single_attrs()
+    out = []
+    for s in studenten:
+        if all(lm5_student_can_attr(s, attr) for attr in singles):
+            out.append(str(s["naam"]).strip())
+    return out
 
 # ------------------------------------------------------------
 # Pauzevlinder-vervangers
 # ------------------------------------------------------------
-def lm6_pick_pv_replacements(absent_pv_names, base_maps, abs_set):
-    full_capable = set(lm6_full_capable_students())
-    pv_name_set = set(lm6_pv_names())
+def lm5_pick_pv_replacements(absent_pv_names, start_uur, base_maps, absentees_set):
+    full_capable = set(lm5_full_capable_students())
+    pv_name_set = set(lm5_pv_names())
 
     future_workers = set()
     for (naam, uur), _attr in base_maps["student_hour_attr"].items():
-        if naam not in abs_set:
+        if uur >= start_uur and naam not in absentees_set:
             future_workers.add(naam)
 
     chosen = {}
@@ -5346,13 +5843,13 @@ def lm6_pick_pv_replacements(absent_pv_names, base_maps, abs_set):
 
             orig_extra_count = 0
             orig_total_count = 0
-            for (n, _uur), rowlabel in base_maps["student_hour_row"].items():
-                if n == naam:
+            for (n, uur), rowlabel in base_maps["student_hour_row"].items():
+                if n == naam and uur >= start_uur:
                     orig_total_count += 1
                     if "extra" in str(rowlabel).lower():
                         orig_extra_count += 1
 
-            student = lm6_get_student(naam)
+            student = lm5_get_student(naam)
             breedte = student["aantal_attracties"] if student else 999
 
             kandidaten.append((
@@ -5370,11 +5867,11 @@ def lm6_pick_pv_replacements(absent_pv_names, base_maps, abs_set):
 
     return chosen
 
-def lm6_active_pv_assignment_for_hour(ctx, uur):
+def lm5_active_pv_assignment_for_hour(ctx, uur):
     if uur not in required_pauze_hours:
         return {}
     result = {}
-    for pvnaam in lm6_pv_names():
+    for pvnaam in lm5_pv_names():
         if pvnaam in ctx["abs_set"]:
             vervanger = ctx["pv_replacements"].get(pvnaam)
             if vervanger:
@@ -5383,237 +5880,97 @@ def lm6_active_pv_assignment_for_hour(ctx, uur):
             result[pvnaam] = pvnaam
     return result
 
-# ------------------------------------------------------------
-# Context
-# ------------------------------------------------------------
-def lm6_present_students_on_hour(base_maps, uur, abs_set):
-    present = []
-    for (naam, h), _rowlabel in base_maps["student_hour_row"].items():
-        if h != uur:
-            continue
-        if naam in abs_set:
-            continue
-        if naam not in present:
-            present.append(naam)
-    return present
-
-def lm6_present_attraction_students_on_hour(ctx, uur):
-    bruto = lm6_present_students_on_hour(ctx["base_maps"], uur, ctx["abs_set"])
-    pv_assignment = lm6_active_pv_assignment_for_hour(ctx, uur)
+def lm5_present_attraction_students_on_hour(ctx, uur):
+    bruto = lm5_present_students_on_hour(ctx["base_maps"], uur, ctx["abs_set"])
+    pv_assignment = lm5_active_pv_assignment_for_hour(ctx, uur)
     bezette_pv_mensen = set(pv_assignment.values())
     return [naam for naam in bruto if naam not in bezette_pv_mensen]
 
-def lm6_student_current_attr_on_hour(ctx, student_name, uur):
-    for (h, attr), namen in ctx["assigned_map"].items():
-        if h == uur and student_name in namen:
-            return attr
-    return None
-
-def lm6_get_hours_on_attr(ctx, student_name, attr):
-    uren = []
-    for (uur, a), namen in ctx["assigned_map"].items():
-        if a == attr and student_name in namen:
-            uren.append(uur)
-    return sorted(set(uren))
-
-def lm6_count_switches(ctx, student_name):
-    uur_attr = []
-    for uur in sorted(set(ctx["student_states"][student_name]["assigned_hours"])):
-        attr = lm6_student_current_attr_on_hour(ctx, student_name, uur)
-        if attr:
-            uur_attr.append((uur, attr))
-
-    if not uur_attr:
-        return 0
-
-    switches = 0
-    prev = uur_attr[0][1]
-    for _, attr in uur_attr[1:]:
-        if normalize_attr(attr) != normalize_attr(prev):
-            switches += 1
-        prev = attr
-    return switches
-
-def lm6_init_context(base_maps, absentees):
-    abs_set = {str(x).strip() for x in absentees}
-
-    absent_pv_names = [naam for naam in lm6_pv_names() if naam in abs_set]
-    pv_replacements = lm6_pick_pv_replacements(absent_pv_names, base_maps, abs_set)
-
-    student_states = {}
-    for s in studenten:
-        naam = str(s["naam"]).strip()
-        if naam in abs_set:
-            continue
-        student_states[naam] = lm6_copy_student_state(s)
-
-    return {
-        "base_maps": base_maps,
-        "abs_set": abs_set,
-        "pv_replacements": pv_replacements,
-        "student_states": student_states,
-        "assigned_map": defaultdict(list),
-        "per_hour_assigned_counts": {uur: defaultdict(int) for uur in open_uren},
-        "extra_assignments": defaultdict(list),
-        "prev_attr": {},
-        "changes_count": Counter(),
-        "hour_states": {},
-    }
-
 # ------------------------------------------------------------
-# UURSTAAT HERBOUWEN
-# Dit is de kernfix voor samenvoegen
+# Uurstaat herberekenen
 # ------------------------------------------------------------
-def lm6_rebuild_hour_state(uur, available_attraction_students, merge_priority, disable_priority):
+def lm5_rebuild_hour_state(uur, available_attraction_students, merge_priority, disable_priority):
     counts = {}
     active = set()
 
-    # 1. start met losse open attracties
-    for attr in lm6_all_single_attrs():
-        attr = str(attr).strip()
+    # start met losse attracties die open zijn
+    for attr in attracties_te_plannen:
+        if " + " in str(attr):
+            continue
+
         if uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
             counts[attr] = 0
-            continue
-
-        raw = aantallen_raw.get(attr, 0)
-        if raw >= 1:
-            counts[attr] = 1
-            active.add(attr)
         else:
-            counts[attr] = 0
+            if aantallen_raw.get(attr, 0) >= 1:
+                counts[attr] = 1
+                active.add(attr)
+            else:
+                counts[attr] = 0
 
-    # ook merged namen vooraf op 0 zetten zodat alles later bestaat
-    for groep in merge_priority:
-        sameng = " + ".join([str(x).strip() for x in groep])
-        counts[sameng] = 0
-
-    # 2. originele samenvoegingen van dat uur toepassen
-    groups_active = []
+    # originele samenvoegingen van dit uur toepassen
+    groepen = []
     for groep in uur_samenvoegingen.get(uur, []):
-        g = [str(x).strip() for x in groep if x]
-        if len(g) < 2:
-            continue
-
-        # enkel toepassen als alle onderdelen nog open/actief waren
-        if not all(counts.get(x, 0) >= 1 for x in g):
-            continue
-
+        g = [str(x).strip() for x in groep]
+        groepen.append(g)
         sameng = " + ".join(g)
-
-        for onderdeel in g:
-            counts[onderdeel] = 0
-            if onderdeel in active:
-                active.remove(onderdeel)
 
         counts[sameng] = 1
         active.add(sameng)
-        groups_active.append(g)
+
+        for onderdeel in g:
+            counts[onderdeel] = 0
+            active.discard(onderdeel)
 
     def min_spots():
         return sum(1 for a in active if counts.get(a, 0) >= 1)
 
-    def group_norm(g):
-        return tuple(sorted(normalize_attr(x) for x in g))
+    # tel ook originele merges mee
+    used_merges = len(groepen)
 
-    used_group_norms = {group_norm(g) for g in groups_active}
-    merges_used = 0
-    disables_used = 0
+    # extra samenvoegen zolang nodig en zolang totaal < 3
+    changed = True
+    while min_spots() > available_attraction_students and used_merges < 3 and changed:
+        changed = False
 
-    # 3. bij tekort: eerst samenvoegen, na 2 merges pas uitschakelen,
-    # na 2 disables opnieuw samenvoegen, enz.
-    while min_spots() > available_attraction_students:
-        actie = False
-
-        # zolang minder dan 2 extra merges gebruikt zijn: merge proberen
-        if merges_used < 2:
-            for groep in merge_priority:
-                g = [str(x).strip() for x in groep if x]
-                if len(g) < 2:
-                    continue
-                if group_norm(g) in used_group_norms:
-                    continue
-
-                # alle onderdelen moeten nu los actief zijn
-                if all(counts.get(x, 0) >= 1 and x in active for x in g):
-                    sameng = " + ".join(g)
-
-                    for onderdeel in g:
-                        counts[onderdeel] = 0
-                        if onderdeel in active:
-                            active.remove(onderdeel)
-
-                    counts[sameng] = 1
-                    active.add(sameng)
-                    groups_active.append(g)
-                    used_group_norms.add(group_norm(g))
-                    merges_used += 1
-                    actie = True
-                    break
-
-            if actie:
-                continue
-
-        # daarna tot 2 disables
-        if disables_used < 2:
-            for attr in disable_priority:
-                attr = str(attr).strip()
-                if counts.get(attr, 0) >= 1 and attr in active:
-                    counts[attr] = 0
-                    active.remove(attr)
-                    disables_used += 1
-                    actie = True
-                    break
-
-            if actie:
-                continue
-
-        # daarna opnieuw merge proberen, onbeperkt zolang er kandidaten zijn
         for groep in merge_priority:
-            g = [str(x).strip() for x in groep if x]
-            if len(g) < 2:
+            g = [str(x).strip() for x in groep]
+            sameng = " + ".join(g)
+
+            # al actief als merge? overslaan
+            if sameng in active:
                 continue
-            if group_norm(g) in used_group_norms:
+
+            # alleen samenvoegen als alle onderdelen nu nog los actief zijn
+            if not all(counts.get(x, 0) >= 1 and x in active for x in g):
                 continue
 
-            if all(counts.get(x, 0) >= 1 and x in active for x in g):
-                sameng = " + ".join(g)
+            for onderdeel in g:
+                counts[onderdeel] = 0
+                active.discard(onderdeel)
 
-                for onderdeel in g:
-                    counts[onderdeel] = 0
-                    if onderdeel in active:
-                        active.remove(onderdeel)
+            counts[sameng] = 1
+            active.add(sameng)
+            groepen.append(g)
 
-                counts[sameng] = 1
-                active.add(sameng)
-                groups_active.append(g)
-                used_group_norms.add(group_norm(g))
-                merges_used += 1
-                actie = True
-                break
-
-        if actie:
-            continue
-
-        # als merge niet meer kan, dan alsnog verder uitschakelen
-        for attr in disable_priority:
-            attr = str(attr).strip()
-            if counts.get(attr, 0) >= 1 and attr in active:
-                counts[attr] = 0
-                active.remove(attr)
-                disables_used += 1
-                actie = True
-                break
-
-        if not actie:
+            used_merges += 1
+            changed = True
             break
 
-    # 4. second spots opnieuw berekenen
+    # daarna pas uitschakelen als er nog steeds tekort is
+    for attr in disable_priority:
+        if min_spots() <= available_attraction_students:
+            break
+        attr = str(attr).strip()
+        if counts.get(attr, 0) >= 1:
+            counts[attr] = 0
+            active.discard(attr)
+
+    # second spots opnieuw berekenen
     second_spot_blocked_lm = set()
-    base_spots = min_spots()
+    base_spots = sum(1 for a in active if counts.get(a, 0) >= 1)
     extra_spots = available_attraction_students - base_spots
 
     for attr in second_priority_order:
-        attr = str(attr).strip()
         if attr in active and aantallen_raw.get(attr, 0) == 2:
             if extra_spots > 0:
                 counts[attr] = 2
@@ -5622,608 +5979,767 @@ def lm6_rebuild_hour_state(uur, available_attraction_students, merge_priority, d
                 counts[attr] = 1
                 second_spot_blocked_lm.add(attr)
 
-    # 5. red spots opnieuw opbouwen
     red_spots_lm = set()
-    samengestelde_actief = set(" + ".join(g) for g in groups_active)
-    losse_in_samenvoeging = set(a for g in groups_active for a in g)
+    samengestelde_actief = set(" + ".join(g) for g in groepen)
+    losse_in_samenvoeging = set(a for g in groepen for a in g)
 
     for attr in losse_in_samenvoeging:
         red_spots_lm.add(attr)
 
-    for samengestelde_attr in samengevoegde_attracties:
-        if samengestelde_attr not in samengestelde_actief:
-            red_spots_lm.add(samengestelde_attr)
+    for sameng in samengevoegde_attracties:
+        if sameng not in samengestelde_actief:
+            red_spots_lm.add(sameng)
 
-    # 6. inactieve losse attracties op 0 houden
-    for attr in lm6_all_single_attrs():
-        if attr not in active and counts.get(attr, 0) != 2:
-            counts[attr] = counts.get(attr, 0)
+    for attr in list(counts.keys()):
+        if " + " not in str(attr) and uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
+            red_spots_lm.add(attr)
 
     return {
+        "active": active,
         "counts": counts,
-        "active": set(active),
-        "groups": groups_active,
-        "red_spots": set(red_spots_lm),
-        "second_spot_blocked": set(second_spot_blocked_lm),
+        "red_spots": red_spots_lm,
+        "second_spot_blocked": second_spot_blocked_lm,
+        "groepen": groepen
     }
 
-# ------------------------------------------------------------
-# Doelslots per uur opbouwen vanuit outputrijen
-# ------------------------------------------------------------
-def lm6_build_target_slots_for_hour(attr_rows, hour_state):
-    target_slots = []
-    inactive_rows = []
 
-    for _row_idx, rowlabel in attr_rows:
-        attr, pos = lm6_split_display_label(rowlabel)
 
-        if attr not in hour_state["active"]:
-            inactive_rows.append(rowlabel)
+def lm5_build_target_slots_for_hour(attr_rows, hour_state):
+    slots = []
+    inactive_rows = set()
+
+    for _row, rijlabel in attr_rows:
+        attr, pos = lm5_split_display_label(rijlabel)
+        allowed = hour_state["counts"].get(attr, 0)
+
+        if attr in hour_state["red_spots"]:
+            allowed = 0
+        if attr in hour_state["second_spot_blocked"] and pos == 2:
+            allowed = 0
+
+        if allowed >= pos:
+            slots.append((attr, pos, rijlabel))
+        else:
+            inactive_rows.add(rijlabel)
+
+    return slots, inactive_rows
+
+# ------------------------------------------------------------
+# Context
+# ------------------------------------------------------------
+def lm5_init_context(base_maps, absentees, start_uur):
+    abs_set = {str(x).strip() for x in absentees}
+    absent_pv = [n for n in abs_set if n in set(lm5_pv_names())]
+
+    pv_replacements = lm5_pick_pv_replacements(
+        absent_pv_names=absent_pv,
+        start_uur=start_uur,
+        base_maps=base_maps,
+        absentees_set=abs_set
+    )
+
+    student_states = {}
+    for s in studenten:
+        student_states[str(s["naam"]).strip()] = lm5_copy_student_state(s)
+
+    return {
+        "base_maps": base_maps,
+        "abs_set": abs_set,
+        "absent_pv": absent_pv,
+        "pv_replacements": pv_replacements,
+        "student_states": student_states,
+        "assigned_map": defaultdict(list),       # (uur, attr) -> [namen]
+        "extra_assignments": defaultdict(list),  # uur -> [namen]
+        "per_hour_assigned_counts": {uur: defaultdict(int) for uur in open_uren},
+        "hour_states": {},
+        "changes_count": defaultdict(int),
+        "prev_attr": {},
+    }
+
+def lm5_seed_hours_before_start(ctx, start_uur):
+    for (naam, uur), attr in ctx["base_maps"]["student_hour_attr"].items():
+        if uur >= start_uur:
+            continue
+        if naam in ctx["abs_set"]:
             continue
 
-        max_spots = hour_state["counts"].get(attr, 0)
-        if attr in hour_state["second_spot_blocked"]:
+        ctx["assigned_map"][(uur, attr)].append(naam)
+        ctx["per_hour_assigned_counts"][uur][attr] += 1
+        ctx["student_states"][naam]["assigned_hours"].append(uur)
+        ctx["student_states"][naam]["assigned_attracties"].add(attr)
+        ctx["prev_attr"][naam] = attr
+
+# ------------------------------------------------------------
+# Toewijzingshelpers
+# ------------------------------------------------------------
+def lm5_student_current_attr_on_hour(ctx, naam, uur):
+    for (h, attr), namen in ctx["assigned_map"].items():
+        if h == uur and naam in namen:
+            return attr
+    return None
+
+def lm5_can_place_student_on_attr(ctx, student, attr, uren):
+    if not lm5_student_can_attr(student, attr):
+        return False
+
+    for uur in uren:
+        hstate = ctx["hour_states"].get(uur)
+        if not hstate:
+            return False
+
+        if attr not in hstate["active"]:
+            return False
+        if attr in hstate["red_spots"]:
+            return False
+
+        max_spots = hstate["counts"].get(attr, 0)
+        if attr in hstate["second_spot_blocked"]:
             max_spots = min(max_spots, 1)
 
-        if max_spots <= 0:
-            inactive_rows.append(rowlabel)
+        if ctx["per_hour_assigned_counts"][uur][attr] >= max_spots:
+            return False
+
+        if uur in student["assigned_hours"]:
+            return False
+
+        pv_assignment_now = lm5_active_pv_assignment_for_hour(ctx, uur)
+        if student["naam"] in set(pv_assignment_now.values()):
+            return False
+
+    bestaande = sorted([
+        h for h in set(student["assigned_hours"])
+        if student["naam"] in ctx["assigned_map"].get((h, attr), [])
+    ])
+    totaal = sorted(set(bestaande) | set(uren))
+
+    if len(totaal) > 6:
+        return False
+    if max_consecutive_hours(totaal) > 4:
+        return False
+
+    return True
+
+def lm5_place_student_on_attr(ctx, student, attr, uren):
+    for uur in uren:
+        ctx["assigned_map"][(uur, attr)].append(student["naam"])
+        ctx["per_hour_assigned_counts"][uur][attr] += 1
+        if uur not in student["assigned_hours"]:
+            student["assigned_hours"].append(uur)
+    student["assigned_attracties"].add(attr)
+    ctx["prev_attr"][student["naam"]] = attr
+
+def lm5_remove_student_from_attr_hours(ctx, student, attr, uren):
+    for uur in uren:
+        namen = ctx["assigned_map"].get((uur, attr), [])
+        if student["naam"] in namen:
+            namen.remove(student["naam"])
+            if ctx["per_hour_assigned_counts"][uur][attr] > 0:
+                ctx["per_hour_assigned_counts"][uur][attr] -= 1
+
+def lm5_rebuild_student_attracties(ctx, student):
+    attrs = set()
+    for (uur, attr), namen in ctx["assigned_map"].items():
+        if student["naam"] in namen:
+            attrs.add(attr)
+    for a in list(student["assigned_attracties"]):
+        if a in ["Extra", "Pauzevlinder-vervanging"]:
+            attrs.add(a)
+    student["assigned_attracties"] = attrs
+
+def lm5_original_attr_score(ctx, naam, attr, uren):
+    same = 0
+    mismatches = 0
+    for uur in uren:
+        orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
+        if normalize_attr(orig_attr) == normalize_attr(attr):
+            same += 1
+        else:
+            mismatches += 1
+    return (-same, mismatches)
+
+def lm5_candidate_attr_score(ctx, student, attr, uren):
+    naam = student["naam"]
+    orig_score = lm5_original_attr_score(ctx, naam, attr, uren)
+
+    prev_penalty = 0
+    prev_attr = ctx["prev_attr"].get(naam, "")
+    if prev_attr and normalize_attr(prev_attr) != normalize_attr(attr):
+        prev_penalty = 1
+
+    bestaande = sorted([
+        h for h in set(student["assigned_hours"])
+        if naam in ctx["assigned_map"].get((h, attr), [])
+    ])
+    totaal = sorted(set(bestaande) | set(uren))
+
+    run_penalty = 0 if len(uren) >= 3 else (1 if len(uren) == 2 else 2)
+    over4_penalty = 1 if len(totaal) > 4 else 0
+
+    return (
+        run_penalty,
+        prev_penalty,
+        over4_penalty,
+        orig_score[0],
+        orig_score[1],
+        ctx["changes_count"][naam],
+        attr
+    )
+
+def lm5_try_place_best_block(ctx, student, future_hours, start_idx):
+    if start_idx >= len(future_hours):
+        return False, start_idx + 1
+
+    for block_size in [3, 2, 1]:
+        uren = future_hours[start_idx:start_idx + block_size]
+        if len(uren) < block_size:
+            continue
+        if any(uur in student["assigned_hours"] for uur in uren):
             continue
 
-        if pos <= max_spots:
-            target_slots.append({
-                "rowlabel": rowlabel,
-                "attr": attr,
-                "pos": pos
-            })
-        else:
-            inactive_rows.append(rowlabel)
+        candidate_attrs = []
+        for attr in attracties_te_plannen:
+            if lm5_can_place_student_on_attr(ctx, student, attr, uren):
+                candidate_attrs.append(attr)
 
-    return target_slots, inactive_rows
+        if candidate_attrs:
+            candidate_attrs.sort(key=lambda a: lm5_candidate_attr_score(ctx, student, a, uren))
+            best_attr = candidate_attrs[0]
+            lm5_place_student_on_attr(ctx, student, best_attr, uren)
+            return True, start_idx + block_size
+
+    return False, start_idx + 1
 
 # ------------------------------------------------------------
-# Eerst zoveel mogelijk dezelfde plek behouden
+# Uur-per-uur seed
 # ------------------------------------------------------------
-def lm6_seed_same_place_first(ctx, uur, target_slots, present_attraction_students):
+def lm5_seed_same_place_first(ctx, uur, target_slots, present_attraction_students):
     used_students = set()
     assigned_rows = set()
 
-    for slot in target_slots:
-        rowlabel = slot["rowlabel"]
-        attr = slot["attr"]
+    for attr, pos, rijlabel in target_slots:
+        orig_names = []
+        for (naam, uur2), rowlabel in ctx["base_maps"]["student_hour_row"].items():
+            if uur2 == uur and rowlabel == rijlabel and naam in present_attraction_students:
+                orig_names.append(naam)
 
-        kandidaten = []
-        for naam in present_attraction_students:
+        for naam in orig_names:
             if naam in used_students:
                 continue
-
-            base_row = ctx["base_maps"]["student_hour_row"].get((naam, uur), "")
-            base_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
-            student = ctx["student_states"].get(naam)
-            if not student:
-                continue
-            if not lm6_student_can_attr(student, attr):
-                continue
-
-            score = (
-                0 if str(base_row).strip() == str(rowlabel).strip() else 1,
-                0 if normalize_attr(base_attr) == normalize_attr(attr) else 1,
-                ctx["changes_count"][naam],
-                naam
-            )
-            kandidaten.append((score, naam))
-
-        if kandidaten:
-            kandidaten.sort()
-            gekozen = kandidaten[0][1]
-
-            ctx["assigned_map"][(uur, attr)].append(gekozen)
-            ctx["per_hour_assigned_counts"][uur][attr] += 1
-            ctx["student_states"][gekozen]["assigned_hours"].append(uur)
-            ctx["student_states"][gekozen]["assigned_attracties"].add(attr)
-            ctx["prev_attr"][gekozen] = attr
-
-            if str(ctx["base_maps"]["student_hour_row"].get((gekozen, uur), "")).strip() != str(rowlabel).strip():
-                ctx["changes_count"][gekozen] += 1
-
-            used_students.add(gekozen)
-            assigned_rows.add(rowlabel)
+            student = ctx["student_states"][naam]
+            if lm5_can_place_student_on_attr(ctx, student, attr, [uur]):
+                lm5_place_student_on_attr(ctx, student, attr, [uur])
+                used_students.add(naam)
+                assigned_rows.add(rijlabel)
+                break
 
     return used_students, assigned_rows
 
-# ------------------------------------------------------------
-# Overige slots vullen
-# ------------------------------------------------------------
-def lm6_fill_remaining_hour(ctx, uur, target_slots, present_attraction_students, used_students, assigned_rows):
-    extras_now = [naam for naam in present_attraction_students if naam not in used_students]
+def lm5_fill_remaining_hour(ctx, uur, target_slots, present_attraction_students, used_students, assigned_rows):
+    remaining_slots = [(attr, pos, rijlabel) for attr, pos, rijlabel in target_slots if rijlabel not in assigned_rows]
+    remaining_students = [n for n in present_attraction_students if n not in used_students]
 
-    for slot in target_slots:
-        rowlabel = slot["rowlabel"]
-        attr = slot["attr"]
-
-        if rowlabel in assigned_rows:
-            continue
-
-        current = list(ctx["assigned_map"].get((uur, attr), []))
-        needed_pos = slot["pos"]
-
-        if len(current) >= needed_pos:
-            assigned_rows.add(rowlabel)
-            continue
-
+    for attr, pos, rijlabel in remaining_slots:
         kandidaten = []
-        for naam in extras_now:
-            student = ctx["student_states"].get(naam)
-            if not student:
-                continue
-            if not lm6_student_can_attr(student, attr):
-                continue
-
-            bestaande = sorted([
-                h for h in set(student["assigned_hours"])
-                if student["naam"] in ctx["assigned_map"].get((h, attr), [])
-            ])
-            totaal = sorted(set(bestaande) | {uur})
-
-            if len(totaal) > 6:
-                continue
-            if max_consecutive_hours(totaal) > 4:
+        for naam in remaining_students:
+            student = ctx["student_states"][naam]
+            if not lm5_can_place_student_on_attr(ctx, student, attr, [uur]):
                 continue
 
             orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
+            same_orig = 0 if normalize_attr(orig_attr) == normalize_attr(attr) else 1
+            same_prev = 0 if normalize_attr(ctx["prev_attr"].get(naam, "")) == normalize_attr(attr) else 1
+
             kandidaten.append((
-                0 if normalize_attr(orig_attr) == normalize_attr(attr) else 1,
-                0 if normalize_attr(ctx["prev_attr"].get(naam, "")) == normalize_attr(attr) else 1,
+                same_orig,
+                same_prev,
                 ctx["changes_count"][naam],
+                student["aantal_attracties"],
                 naam
             ))
 
         if kandidaten:
             kandidaten.sort()
-            gekozen = kandidaten[0][3]
-            extras_now.remove(gekozen)
+            gekozen = kandidaten[0][4]
+            student = ctx["student_states"][gekozen]
+            lm5_place_student_on_attr(ctx, student, attr, [uur])
 
-            ctx["assigned_map"][(uur, attr)].append(gekozen)
-            ctx["per_hour_assigned_counts"][uur][attr] += 1
-            ctx["student_states"][gekozen]["assigned_hours"].append(uur)
-            ctx["student_states"][gekozen]["assigned_attracties"].add(attr)
-            ctx["prev_attr"][gekozen] = attr
-
-            if normalize_attr(ctx["base_maps"]["student_hour_attr"].get((gekozen, uur), "")) != normalize_attr(attr):
+            orig_attr = ctx["base_maps"]["student_hour_attr"].get((gekozen, uur), "")
+            if normalize_attr(orig_attr) != normalize_attr(attr):
                 ctx["changes_count"][gekozen] += 1
 
-            assigned_rows.add(rowlabel)
-
-    # wat overblijft gaat naar extra
-    for naam in extras_now:
-        if uur not in ctx["student_states"][naam]["assigned_hours"]:
-            ctx["extra_assignments"][uur].append(naam)
-            ctx["student_states"][naam]["assigned_hours"].append(uur)
-            ctx["student_states"][naam]["assigned_attracties"].add("Extra")
-            ctx["prev_attr"][naam] = "Extra"
+            used_students.add(gekozen)
+            remaining_students.remove(gekozen)
 
 # ------------------------------------------------------------
-# Vrijgekomen studenten en gaten verzamelen
+# Vrijgekomen studenten + lege plaatsen
 # ------------------------------------------------------------
-def lm6_collect_released_students_and_missing_slots(ctx, base_maps):
+def lm5_collect_released_students_and_missing_slots(ctx, base_maps, start_uur):
     released_students = defaultdict(list)
     missing_slots_by_hour = defaultdict(list)
 
     for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+
+        present_attraction_students = lm5_present_attraction_students_on_hour(ctx, uur)
         hstate = ctx["hour_states"][uur]
-        target_slots, _inactive_rows = lm6_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
+        target_slots, _inactive = lm5_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
 
-        target_rowlabels = {x["rowlabel"] for x in target_slots}
-        present_students = lm6_present_students_on_hour(base_maps, uur, ctx["abs_set"])
-        pv_now = lm6_active_pv_assignment_for_hour(ctx, uur)
-        pv_reserved = set(pv_now.values())
+        for attr, pos, rijlabel in target_slots:
+            namen = ctx["assigned_map"].get((uur, attr), [])
+            if len(namen) < pos:
+                missing_slots_by_hour[uur].append((attr, pos, rijlabel))
 
-        # vrijgekomen originele attractiestudenten
-        for naam in present_students:
-            if naam in pv_reserved:
-                continue
-
-            base_row = base_maps["student_hour_row"].get((naam, uur), "")
-            if not base_row or lm6_is_extra_row(base_row) or lm6_is_pv_row(base_row):
-                continue
-
-            if base_row not in target_rowlabels:
-                if naam not in released_students[uur]:
-                    released_students[uur].append(naam)
-
-        # gaten
-        current_counts = defaultdict(int)
-        for slot in target_slots:
-            current_counts[slot["rowlabel"]] = 0
-
-        for (h, attr), namen in ctx["assigned_map"].items():
-            if h != uur:
-                continue
-            for idx, naam in enumerate(namen, start=1):
-                rowlabel = f"{attr} {idx}" if any(r[1] == f"{attr} 2" for r in base_maps["attr_rows"]) else attr
-                current_counts[rowlabel] += 1
-
-        for slot in target_slots:
-            rowlabel = slot["rowlabel"]
-            attr = slot["attr"]
-            pos = slot["pos"]
-
-            current_list = list(ctx["assigned_map"].get((uur, attr), []))
-            if len(current_list) < pos:
-                missing_slots_by_hour[uur].append({
-                    "rowlabel": rowlabel,
-                    "attr": attr,
-                    "pos": pos
-                })
+        for naam in present_attraction_students:
+            if uur not in ctx["student_states"][naam]["assigned_hours"]:
+                released_students[uur].append(naam)
 
     return released_students, missing_slots_by_hour
 
 # ------------------------------------------------------------
-# Extra -> lege plek
+# Eerst directe invulling
 # ------------------------------------------------------------
-def lm6_try_fill_empty_slots_from_extras(ctx, released_students, missing_slots_by_hour):
+def lm5_try_direct_fill_from_released_students(ctx, released_students, missing_slots_by_hour):
     any_change = False
 
-    for uur in sorted(open_uren):
-        missing = missing_slots_by_hour.get(uur, [])
-        if not missing:
-            continue
+    for uur in sorted(missing_slots_by_hour.keys()):
+        slots = list(missing_slots_by_hour[uur])
+        remaining_released = list(released_students.get(uur, []))
+        new_slots = []
 
-        pool = []
-        for naam in ctx["extra_assignments"][uur]:
-            if naam not in pool:
-                pool.append(naam)
-        for naam in released_students[uur]:
-            if naam not in pool:
-                pool.append(naam)
-
-        nieuwe_missing = []
-
-        for item in missing:
-            attr = item["attr"]
+        for (attr, pos, rijlabel) in slots:
+            gevuld = False
             kandidaten = []
 
-            for naam in pool:
-                student = ctx["student_states"].get(naam)
-                if not student:
-                    continue
-                if not lm6_student_can_attr(student, attr):
-                    continue
-
-                bestaande = sorted([
-                    h for h in set(student["assigned_hours"])
-                    if naam in ctx["assigned_map"].get((h, attr), [])
-                ])
-                totaal = sorted(set(bestaande) | {uur})
-                if len(totaal) > 6:
-                    continue
-                if max_consecutive_hours(totaal) > 4:
-                    continue
-
-                orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
-                kandidaten.append((
-                    0 if normalize_attr(orig_attr) == normalize_attr(attr) else 1,
-                    0 if normalize_attr(ctx["prev_attr"].get(naam, "")) == normalize_attr(attr) else 1,
-                    ctx["changes_count"][naam],
-                    naam
-                ))
+            for naam in remaining_released:
+                student = ctx["student_states"][naam]
+                if lm5_can_place_student_on_attr(ctx, student, attr, [uur]):
+                    orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
+                    kandidaten.append((
+                        0 if normalize_attr(orig_attr) == normalize_attr(attr) else 1,
+                        0 if normalize_attr(ctx["prev_attr"].get(naam, "")) == normalize_attr(attr) else 1,
+                        ctx["changes_count"][naam],
+                        naam
+                    ))
 
             if kandidaten:
                 kandidaten.sort()
                 gekozen = kandidaten[0][3]
+                student = ctx["student_states"][gekozen]
+                lm5_place_student_on_attr(ctx, student, attr, [uur])
 
-                if gekozen in ctx["extra_assignments"][uur]:
-                    ctx["extra_assignments"][uur].remove(gekozen)
-                if gekozen in released_students[uur]:
-                    released_students[uur].remove(gekozen)
-                if gekozen in pool:
-                    pool.remove(gekozen)
+                if gekozen in remaining_released:
+                    remaining_released.remove(gekozen)
+
+                orig_attr = ctx["base_maps"]["student_hour_attr"].get((gekozen, uur), "")
+                if normalize_attr(orig_attr) != normalize_attr(attr):
+                    ctx["changes_count"][gekozen] += 1
+
+                gevuld = True
+                any_change = True
+
+            if not gevuld:
+                new_slots.append((attr, pos, rijlabel))
+
+        released_students[uur] = remaining_released
+        missing_slots_by_hour[uur] = new_slots
+
+    return any_change
+
+# ------------------------------------------------------------
+# Kettingwissels op exact hetzelfde blok
+# ------------------------------------------------------------
+def lm5_student_has_exact_block_on_attr(ctx, naam, attr, block_hours):
+    for uur in block_hours:
+        huidige_attr = lm5_student_current_attr_on_hour(ctx, naam, uur)
+        if huidige_attr != attr:
+            return False
+    return True
+
+def lm5_find_same_block_students(ctx, block_hours, exclude_names=None):
+    if exclude_names is None:
+        exclude_names = set()
+
+    kandidaten = []
+    alle_namen = sorted(ctx["student_states"].keys())
+
+    for naam in alle_namen:
+        if naam in exclude_names:
+            continue
+
+        attrs = set()
+        ok = True
+        for uur in block_hours:
+            attr = lm5_student_current_attr_on_hour(ctx, naam, uur)
+            if not attr:
+                ok = False
+                break
+            attrs.add(attr)
+
+        if ok and len(attrs) == 1:
+            kandidaten.append((naam, list(attrs)[0]))
+
+    return kandidaten
+
+def lm5_can_student_take_attr_block(ctx, student, attr, block_hours):
+    if not lm5_student_can_attr(student, attr):
+        return False
+
+    for uur in block_hours:
+        hstate = ctx["hour_states"].get(uur)
+        if not hstate:
+            return False
+        if attr not in hstate["active"]:
+            return False
+        if attr in hstate["red_spots"]:
+            return False
+
+        pv_assignment_now = lm5_active_pv_assignment_for_hour(ctx, uur)
+        if student["naam"] in set(pv_assignment_now.values()):
+            return False
+
+        huidige_attr = lm5_student_current_attr_on_hour(ctx, student["naam"], uur)
+        if huidige_attr and huidige_attr != attr:
+            return False
+
+        max_spots = hstate["counts"].get(attr, 0)
+        if attr in hstate["second_spot_blocked"]:
+            max_spots = min(max_spots, 1)
+
+        current_count = ctx["per_hour_assigned_counts"][uur][attr]
+        already_here = student["naam"] in ctx["assigned_map"].get((uur, attr), [])
+        effective_count = current_count if already_here else current_count + 1
+
+        if effective_count > max_spots:
+            return False
+
+    bestaande = sorted([
+        h for h in set(student["assigned_hours"])
+        if student["naam"] in ctx["assigned_map"].get((h, attr), [])
+    ])
+    totaal = sorted(set(bestaande) | set(block_hours))
+    if len(totaal) > 6:
+        return False
+    if max_consecutive_hours(totaal) > 4:
+        return False
+
+    return True
+
+def lm5_try_chain_swap_for_block(ctx, released_student_name, target_attr, block_hours):
+    released_student = ctx["student_states"][released_student_name]
+
+    kandidaten = lm5_find_same_block_students(
+        ctx=ctx,
+        block_hours=block_hours,
+        exclude_names={released_student_name}
+    )
+
+    for andere_naam, attr_b in kandidaten:
+        if attr_b == target_attr:
+            continue
+
+        andere_student = ctx["student_states"][andere_naam]
+
+        if not lm5_student_can_attr(released_student, attr_b):
+            continue
+        if not lm5_student_can_attr(andere_student, target_attr):
+            continue
+
+        orig_switches_r = lm5_count_switches(ctx, released_student_name)
+        orig_switches_o = lm5_count_switches(ctx, andere_naam)
+
+        saved_assigned_map = copy.deepcopy(ctx["assigned_map"])
+        saved_counts = copy.deepcopy(ctx["per_hour_assigned_counts"])
+        saved_hours_r = list(released_student["assigned_hours"])
+        saved_hours_o = list(andere_student["assigned_hours"])
+        saved_attrs_r = set(released_student["assigned_attracties"])
+        saved_attrs_o = set(andere_student["assigned_attracties"])
+        saved_prev = dict(ctx["prev_attr"])
+
+        lm5_remove_student_from_attr_hours(ctx, andere_student, attr_b, block_hours)
+
+        if not lm5_can_student_take_attr_block(ctx, released_student, attr_b, block_hours):
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        lm5_place_student_on_attr(ctx, released_student, attr_b, block_hours)
+
+        if not lm5_can_student_take_attr_block(ctx, andere_student, target_attr, block_hours):
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        lm5_place_student_on_attr(ctx, andere_student, target_attr, block_hours)
+
+        lm5_rebuild_student_attracties(ctx, released_student)
+        lm5_rebuild_student_attracties(ctx, andere_student)
+
+        # harde 6u/4u check op betrokken attracties
+        if len(lm5_get_hours_on_attr(ctx, released_student_name, attr_b)) > 6 or max_consecutive_hours(lm5_get_hours_on_attr(ctx, released_student_name, attr_b)) > 4:
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        if len(lm5_get_hours_on_attr(ctx, andere_naam, target_attr)) > 6 or max_consecutive_hours(lm5_get_hours_on_attr(ctx, andere_naam, target_attr)) > 4:
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        new_switches_r = lm5_count_switches(ctx, released_student_name)
+        new_switches_o = lm5_count_switches(ctx, andere_naam)
+        extra_switches = (new_switches_r - orig_switches_r) + (new_switches_o - orig_switches_o)
+
+        if extra_switches > 1:
+            ctx["assigned_map"] = saved_assigned_map
+            ctx["per_hour_assigned_counts"] = saved_counts
+            released_student["assigned_hours"] = saved_hours_r
+            andere_student["assigned_hours"] = saved_hours_o
+            released_student["assigned_attracties"] = saved_attrs_r
+            andere_student["assigned_attracties"] = saved_attrs_o
+            ctx["prev_attr"] = saved_prev
+            continue
+
+        ctx["changes_count"][released_student_name] += 1
+        ctx["changes_count"][andere_naam] += 1
+        return True
+
+    return False
+
+def lm5_try_fill_missing_with_chain_swaps(ctx, released_students, missing_slots_by_hour, start_uur):
+    any_change = False
+    future_hours = [u for u in sorted(open_uren) if u >= start_uur]
+
+    for block_size in [3, 2, 1]:
+        for i in range(len(future_hours) - block_size + 1):
+            block_hours = future_hours[i:i + block_size]
+
+            target_attrs = None
+            for uur in block_hours:
+                attrs_this_hour = set(attr for attr, _pos, _rijlabel in missing_slots_by_hour.get(uur, []))
+                if target_attrs is None:
+                    target_attrs = attrs_this_hour
+                else:
+                    target_attrs &= attrs_this_hour
+
+            if not target_attrs:
+                continue
+
+            for target_attr in sorted(target_attrs):
+                kandidaten_released = []
+                for naam in sorted(set(n for uur in block_hours for n in released_students.get(uur, []))):
+                    if all(naam in released_students.get(uur, []) for uur in block_hours):
+                        kandidaten_released.append(naam)
+
+                for released_name in kandidaten_released:
+                    released_student = ctx["student_states"][released_name]
+
+                    # eerst directe blokinvulling
+                    if lm5_can_student_take_attr_block(ctx, released_student, target_attr, block_hours):
+                        lm5_place_student_on_attr(ctx, released_student, target_attr, block_hours)
+                        for uur in block_hours:
+                            if released_name in released_students[uur]:
+                                released_students[uur].remove(released_name)
+                            removed = False
+                            nieuwe = []
+                            for item in missing_slots_by_hour[uur]:
+                                if item[0] == target_attr and not removed:
+                                    removed = True
+                                    continue
+                                nieuwe.append(item)
+                            missing_slots_by_hour[uur] = nieuwe
+                        any_change = True
+                        break
+
+                    # anders kettingwissel
+                    if lm5_try_chain_swap_for_block(ctx, released_name, target_attr, block_hours):
+                        for uur in block_hours:
+                            if released_name in released_students[uur]:
+                                released_students[uur].remove(released_name)
+                            removed = False
+                            nieuwe = []
+                            for item in missing_slots_by_hour[uur]:
+                                if item[0] == target_attr and not removed:
+                                    removed = True
+                                    continue
+                                nieuwe.append(item)
+                            missing_slots_by_hour[uur] = nieuwe
+                        any_change = True
+                        break
+
+    return any_change
+
+# ------------------------------------------------------------
+# Nadien blokken 3/2/1 maken voor overige gaten
+# ------------------------------------------------------------
+def lm5_assign_future_blocks(ctx, start_uur):
+    future_students = sorted({
+        naam for (naam, uur), _attr in ctx["base_maps"]["student_hour_attr"].items()
+        if uur >= start_uur and naam not in ctx["abs_set"]
+    })
+
+    for naam in future_students:
+        student = ctx["student_states"][naam]
+        future_hours = sorted({
+            uur for (n, uur), _attr in ctx["base_maps"]["student_hour_attr"].items()
+            if n == naam and uur >= start_uur
+        })
+
+        if not future_hours:
+            continue
+
+        i = 0
+        while i < len(future_hours):
+            uur = future_hours[i]
+
+            if uur in student["assigned_hours"]:
+                i += 1
+                continue
+
+            pv_assignment_now = lm5_active_pv_assignment_for_hour(ctx, uur)
+            if naam in set(pv_assignment_now.values()):
+                student["assigned_hours"].append(uur)
+                student["assigned_attracties"].add("Pauzevlinder-vervanging")
+                ctx["prev_attr"][naam] = "Pauzevlinder-vervanging"
+                i += 1
+                continue
+
+            placed, next_i = lm5_try_place_best_block(ctx, student, future_hours, i)
+            if placed:
+                i = next_i
+            else:
+                i += 1
+
+# ------------------------------------------------------------
+# Exact 1 keer per gewerkt uur
+# ------------------------------------------------------------
+def lm5_force_exactly_one_assignment_per_hour(ctx, start_uur):
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+
+        present_students = lm5_present_students_on_hour(ctx["base_maps"], uur, ctx["abs_set"])
+        pv_assignment_now = lm5_active_pv_assignment_for_hour(ctx, uur)
+        pv_reserved_now = set(pv_assignment_now.values())
+
+        for naam in present_students:
+            student = ctx["student_states"][naam]
+
+            if uur in student["assigned_hours"]:
+                continue
+
+            if naam in pv_reserved_now:
+                student["assigned_hours"].append(uur)
+                student["assigned_attracties"].add("Pauzevlinder-vervanging")
+                ctx["prev_attr"][naam] = "Pauzevlinder-vervanging"
+                continue
+
+            ctx["extra_assignments"][uur].append(naam)
+            student["assigned_hours"].append(uur)
+            student["assigned_attracties"].add("Extra")
+            ctx["prev_attr"][naam] = "Extra"
+
+# ------------------------------------------------------------
+# Extra -> attractie verplaatsing
+# ------------------------------------------------------------
+def lm5_try_fill_empty_slots_from_extras(ctx, start_uur):
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+
+        hstate = ctx["hour_states"][uur]
+        extras_now = list(ctx["extra_assignments"][uur])
+
+        for attr in hstate["active"]:
+            max_spots = hstate["counts"].get(attr, 0)
+            if attr in hstate["second_spot_blocked"]:
+                max_spots = min(max_spots, 1)
+
+            current = list(ctx["assigned_map"].get((uur, attr), []))
+
+            while len(current) < max_spots:
+                kandidaten = []
+
+                for naam in extras_now:
+                    student = ctx["student_states"][naam]
+
+                    if not lm5_student_can_attr(student, attr):
+                        continue
+
+                    bestaande = sorted([
+                        h for h in set(student["assigned_hours"])
+                        if student["naam"] in ctx["assigned_map"].get((h, attr), [])
+                    ])
+                    totaal = sorted(set(bestaande) | {uur})
+
+                    if len(totaal) > 6:
+                        continue
+                    if max_consecutive_hours(totaal) > 4:
+                        continue
+
+                    orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
+                    kandidaten.append((
+                        0 if normalize_attr(orig_attr) == normalize_attr(attr) else 1,
+                        0 if normalize_attr(ctx["prev_attr"].get(naam, "")) == normalize_attr(attr) else 1,
+                        ctx["changes_count"][naam],
+                        naam
+                    ))
+
+                if not kandidaten:
+                    break
+
+                kandidaten.sort()
+                gekozen = kandidaten[0][3]
+
+                ctx["extra_assignments"][uur].remove(gekozen)
+                extras_now.remove(gekozen)
 
                 ctx["assigned_map"][(uur, attr)].append(gekozen)
                 ctx["per_hour_assigned_counts"][uur][attr] += 1
                 ctx["student_states"][gekozen]["assigned_attracties"].add(attr)
                 ctx["prev_attr"][gekozen] = attr
-                any_change = True
-            else:
-                nieuwe_missing.append(item)
 
-        missing_slots_by_hour[uur] = nieuwe_missing
-
-    return any_change
-
-# ------------------------------------------------------------
-# Eenvoudige swap
-# ------------------------------------------------------------
-def lm6_try_simple_swap(ctx, released_students, missing_slots_by_hour):
-    any_change = False
-
-    for uur in sorted(open_uren):
-        nieuwe = []
-        for item in missing_slots_by_hour[uur]:
-            target_attr = item["attr"]
-            opgelost = False
-
-            pool = []
-            for naam in ctx["extra_assignments"][uur]:
-                if naam not in pool:
-                    pool.append(naam)
-            for naam in released_students[uur]:
-                if naam not in pool:
-                    pool.append(naam)
-
-            for extra_naam in pool:
-                extra_student = ctx["student_states"].get(extra_naam)
-                if not extra_student:
-                    continue
-                if lm6_student_can_attr(extra_student, target_attr):
-                    continue
-
-                for (h, other_attr), namen in list(ctx["assigned_map"].items()):
-                    if h != uur:
-                        continue
-                    if normalize_attr(other_attr) == normalize_attr(target_attr):
-                        continue
-
-                    for bezetter in list(namen):
-                        bezetter_student = ctx["student_states"].get(bezetter)
-                        if not bezetter_student:
-                            continue
-                        if not lm6_student_can_attr(bezetter_student, target_attr):
-                            continue
-                        if not lm6_student_can_attr(extra_student, other_attr):
-                            continue
-
-                        # swap uitvoeren
-                        ctx["assigned_map"][(uur, other_attr)].remove(bezetter)
-                        ctx["assigned_map"][(uur, other_attr)].append(extra_naam)
-                        ctx["assigned_map"][(uur, target_attr)].append(bezetter)
-
-                        if extra_naam in ctx["extra_assignments"][uur]:
-                            ctx["extra_assignments"][uur].remove(extra_naam)
-                        if extra_naam in released_students[uur]:
-                            released_students[uur].remove(extra_naam)
-
-                        ctx["student_states"][extra_naam]["assigned_attracties"].add(other_attr)
-                        ctx["student_states"][bezetter]["assigned_attracties"].add(target_attr)
-                        ctx["prev_attr"][extra_naam] = other_attr
-                        ctx["prev_attr"][bezetter] = target_attr
-
-                        opgelost = True
-                        any_change = True
-                        break
-                    if opgelost:
-                        break
-                if opgelost:
-                    break
-
-            if not opgelost:
-                nieuwe.append(item)
-
-        missing_slots_by_hour[uur] = nieuwe
-
-    return any_change
-
-# ------------------------------------------------------------
-# Kleine kettingswap tot diepte 3
-# ------------------------------------------------------------
-def lm6_try_chain_swap(ctx, released_students, missing_slots_by_hour, max_depth=3):
-    any_change = False
-
-    for uur in sorted(open_uren):
-        nieuwe_missing = []
-
-        for item in missing_slots_by_hour[uur]:
-            target_attr = item["attr"]
-            opgelost = False
-
-            pool = []
-            for naam in ctx["extra_assignments"][uur]:
-                if naam not in pool:
-                    pool.append(naam)
-            for naam in released_students[uur]:
-                if naam not in pool:
-                    pool.append(naam)
-
-            for extra_naam in pool:
-                extra_student = ctx["student_states"].get(extra_naam)
-                if not extra_student:
-                    continue
-                if lm6_student_can_attr(extra_student, target_attr):
-                    continue
-
-                queue = deque()
-                queue.append((target_attr, [], extra_naam))
-                visited = set([normalize_attr(target_attr)])
-
-                while queue and not opgelost:
-                    needed_attr, path, source_name = queue.popleft()
-
-                    if len(path) >= max_depth:
-                        continue
-
-                    source_student = ctx["student_states"].get(source_name)
-                    if not source_student:
-                        continue
-
-                    for (h, other_attr), namen in list(ctx["assigned_map"].items()):
-                        if h != uur:
-                            continue
-                        if normalize_attr(other_attr) == normalize_attr(needed_attr):
-                            continue
-                        if not lm6_student_can_attr(source_student, other_attr):
-                            continue
-
-                        for bezetter in list(namen):
-                            bez_student = ctx["student_states"].get(bezetter)
-                            if not bez_student:
-                                continue
-                            if not lm6_student_can_attr(bez_student, needed_attr):
-                                continue
-
-                            new_path = path + [(source_name, other_attr, bezetter, needed_attr)]
-
-                            if lm6_student_can_attr(bez_student, target_attr):
-                                # commit achterwaarts
-                                for src, naar_attr, bez, vrij_attr in reversed(new_path):
-                                    if src in ctx["extra_assignments"][uur]:
-                                        ctx["extra_assignments"][uur].remove(src)
-                                    if src in released_students[uur]:
-                                        released_students[uur].remove(src)
-
-                                    if bez in ctx["assigned_map"][(uur, naar_attr)]:
-                                        ctx["assigned_map"][(uur, naar_attr)].remove(bez)
-                                    ctx["assigned_map"][(uur, naar_attr)].append(src)
-                                    ctx["prev_attr"][src] = naar_attr
-
-                                laatste_bezetter = new_path[0][2]
-                                ctx["assigned_map"][(uur, target_attr)].append(laatste_bezetter)
-                                ctx["prev_attr"][laatste_bezetter] = target_attr
-
-                                opgelost = True
-                                any_change = True
-                                break
-
-                            norm_other = normalize_attr(other_attr)
-                            if norm_other not in visited:
-                                visited.add(norm_other)
-                                queue.append((needed_attr, new_path, bezetter))
-
-                        if opgelost:
-                            break
-
-                if opgelost:
-                    break
-
-            if not opgelost:
-                nieuwe_missing.append(item)
-
-        missing_slots_by_hour[uur] = nieuwe_missing
-
-    return any_change
-
-# ------------------------------------------------------------
-# Workbook renderen
-# ------------------------------------------------------------
-def lm6_render_lastminute_workbook(base_maps, ctx):
-    wb_new = base_maps["wb"]
-    ws_plan = wb_new["Planning"]
-
-    # studentkleuren hergebruiken uit bestaande planning
-    kleur_per_naam = {}
-    for row in range(2, ws_plan.max_row + 1):
-        for col in range(2, ws_plan.max_column + 1):
-            naam = ws_plan.cell(row, col).value
-            if not naam:
-                continue
-            naam = str(naam).strip()
-            fill = ws_plan.cell(row, col).fill
-            rgb = getattr(getattr(fill, "start_color", None), "rgb", None)
-            if rgb and naam not in kleur_per_naam and rgb not in [None, "00000000"]:
-                kleur_per_naam[naam] = rgb[-6:]
-
-    # volledige planning leegmaken
-    for row in range(2, ws_plan.max_row + 1):
-        rowlabel = ws_plan.cell(row, 1).value
-        for col in range(2, ws_plan.max_column + 1):
-            ws_plan.cell(row, col).value = ""
-            ws_plan.cell(row, col).fill = LM6_WHITE_FILL
-            ws_plan.cell(row, col).alignment = LM6_CENTER
-            ws_plan.cell(row, col).border = LM6_THIN
-
-        if rowlabel:
-            ws_plan.cell(row, 1).fill = LM6_WHITE_FILL
-            ws_plan.cell(row, 1).font = Font(bold=True)
-            ws_plan.cell(row, 1).border = LM6_THIN
-
-    # per uur invullen
-    row_lookup = {label: row for row, label in base_maps["attr_rows"] + base_maps["pv_rows"] + base_maps["extra_rows"]}
-
-    for uur in sorted(open_uren):
-        col = base_maps["hour_cols"].get(uur)
-        if not col:
-            continue
-
-        hstate = ctx["hour_states"][uur]
-        target_slots, inactive_rows = lm6_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
-
-        # grijs voor inactieve attractierijen
-        for rowlabel in inactive_rows:
-            row = row_lookup.get(rowlabel)
-            if row:
-                ws_plan.cell(row, col).fill = LM6_GRAY_FILL
-
-        # attracties invullen
-        for slot in target_slots:
-            rowlabel = slot["rowlabel"]
-            attr = slot["attr"]
-            pos = slot["pos"]
-            row = row_lookup.get(rowlabel)
-            if not row:
-                continue
-
-            namen = list(ctx["assigned_map"].get((uur, attr), []))
-            naam = namen[pos - 1] if pos - 1 < len(namen) else ""
-
-            ws_plan.cell(row, col).value = naam
-            if naam and naam in kleur_per_naam:
-                ws_plan.cell(row, col).fill = PatternFill(
-                    start_color=kleur_per_naam[naam],
-                    end_color=kleur_per_naam[naam],
-                    fill_type="solid"
-                )
-            elif not naam:
-                ws_plan.cell(row, col).fill = LM6_WHITE_FILL
-
-        # pauzevlinders
-        pv_assignment = lm6_active_pv_assignment_for_hour(ctx, uur)
-        for idx, pvnaam in enumerate(lm6_pv_names(), start=1):
-            rowlabel = f"Pauzevlinder {idx}"
-            row = row_lookup.get(rowlabel)
-            if not row:
-                continue
-
-            val = ""
-            if uur in required_pauze_hours:
-                val = pv_assignment.get(pvnaam, "")
-
-            ws_plan.cell(row, col).value = val
-            if val and val in kleur_per_naam:
-                ws_plan.cell(row, col).fill = PatternFill(
-                    start_color=kleur_per_naam[val],
-                    end_color=kleur_per_naam[val],
-                    fill_type="solid"
-                )
-
-        # extras
-        extra_rows_sorted = sorted([x for x in base_maps["extra_rows"]], key=lambda t: t[0])
-        extras_now = list(ctx["extra_assignments"][uur])
-
-        for idx, (row, _rowlabel) in enumerate(extra_rows_sorted):
-            val = extras_now[idx] if idx < len(extras_now) else ""
-            ws_plan.cell(row, col).value = val
-            if val and val in kleur_per_naam:
-                ws_plan.cell(row, col).fill = PatternFill(
-                    start_color=kleur_per_naam[val],
-                    end_color=kleur_per_naam[val],
-                    fill_type="solid"
-                )
-
-    return wb_new
+                current = list(ctx["assigned_map"].get((uur, attr), []))
 
 # ------------------------------------------------------------
 # Complete build
 # ------------------------------------------------------------
-def lm6_build_lastminute_workbook(base_bytes, absentees):
-    base_maps = lm6_extract_base_maps_from_wbout_bytes(base_bytes)
-    ctx = lm6_init_context(base_maps, absentees)
+def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
+    base_maps = lm5_extract_base_maps(base_bytes)
+    ctx = lm5_init_context(base_maps, absentees, start_uur)
+    lm5_seed_hours_before_start(ctx, start_uur)
 
-    merge_priority = lm6_extract_merge_priority()
-    disable_priority = lm6_extract_disable_priority()
+    merge_priority = lm5_extract_merge_priority()
+    disable_priority = lm5_extract_disable_priority()
 
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
-        present_attraction_students = lm6_present_attraction_students_on_hour(ctx, uur)
+        if uur < start_uur:
+            continue
 
-        hour_state = lm6_rebuild_hour_state(
+        present_attraction_students = lm5_present_attraction_students_on_hour(ctx, uur)
+
+        hour_state = lm5_rebuild_hour_state(
             uur=uur,
             available_attraction_students=len(present_attraction_students),
             merge_priority=merge_priority,
@@ -6233,18 +6749,21 @@ def lm6_build_lastminute_workbook(base_bytes, absentees):
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
     for uur in sorted(open_uren):
-        hstate = ctx["hour_states"][uur]
-        target_slots, _inactive_rows = lm6_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
-        present_attraction_students = lm6_present_attraction_students_on_hour(ctx, uur)
+        if uur < start_uur:
+            continue
 
-        used_students, assigned_rows = lm6_seed_same_place_first(
+        hstate = ctx["hour_states"][uur]
+        target_slots, _inactive_rows = lm5_build_target_slots_for_hour(base_maps["attr_rows"], hstate)
+        present_attraction_students = lm5_present_attraction_students_on_hour(ctx, uur)
+
+        used_students, assigned_rows = lm5_seed_same_place_first(
             ctx=ctx,
             uur=uur,
             target_slots=target_slots,
             present_attraction_students=present_attraction_students
         )
 
-        lm6_fill_remaining_hour(
+        lm5_fill_remaining_hour(
             ctx=ctx,
             uur=uur,
             target_slots=target_slots,
@@ -6254,73 +6773,227 @@ def lm6_build_lastminute_workbook(base_bytes, absentees):
         )
 
     # STAP 3: vrijgekomen studenten en lege plekken verzamelen
-    released_students, missing_slots_by_hour = lm6_collect_released_students_and_missing_slots(
+    released_students, missing_slots_by_hour = lm5_collect_released_students_and_missing_slots(
         ctx=ctx,
-        base_maps=base_maps
+        base_maps=base_maps,
+        start_uur=start_uur
     )
 
-    # STAP 4: gaten invullen
-    lm6_try_fill_empty_slots_from_extras(ctx, released_students, missing_slots_by_hour)
-    lm6_try_simple_swap(ctx, released_students, missing_slots_by_hour)
-    lm6_try_chain_swap(ctx, released_students, missing_slots_by_hour, max_depth=3)
-    lm6_try_fill_empty_slots_from_extras(ctx, released_students, missing_slots_by_hour)
+    # STAP 4: directe invulling
+    lm5_try_direct_fill_from_released_students(
+        ctx=ctx,
+        released_students=released_students,
+        missing_slots_by_hour=missing_slots_by_hour
+    )
 
-    # STAP 5: render output workbook
-    wb_new = lm6_render_lastminute_workbook(base_maps, ctx)
-    return wb_new, ctx
+    # STAP 5: kettingwissels op blokken van 3/2/1
+    for _ in range(5):
+        changed = lm5_try_fill_missing_with_chain_swaps(
+            ctx=ctx,
+            released_students=released_students,
+            missing_slots_by_hour=missing_slots_by_hour,
+            start_uur=start_uur
+        )
+        if not changed:
+            break
+
+    # STAP 6: resterende gaten met blokvoorkeur 3/2/1
+    lm5_assign_future_blocks(ctx, start_uur)
+
+    # STAP 7: exact 1 keer per gewerkt uur
+    lm5_force_exactly_one_assignment_per_hour(ctx, start_uur)
+
+    # STAP 8: lege attractieplekken opvullen door Extra -> attractie
+    lm5_try_fill_empty_slots_from_extras(ctx, start_uur)
+
+    return ctx, base_maps
+
+# ------------------------------------------------------------
+# Output schrijven
+# ------------------------------------------------------------
+def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absentees):
+    wb_lm = load_workbook(BytesIO(base_bytes))
+    ws_plan = wb_lm["Planning"]
+
+    gray_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+    white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+    uur_to_col = base_maps["uur_to_col"]
+    attr_rows = base_maps["attr_rows"]
+    pv_rows = base_maps["pv_rows"]
+    extra_rows = base_maps["extra_rows"]
+
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+        if uur not in uur_to_col:
+            continue
+
+        col = uur_to_col[uur]
+        hstate = ctx["hour_states"][uur]
+
+        # attractierijen
+        for row, rijlabel in attr_rows:
+            cell = ws_plan.cell(row, col)
+            attr, pos = lm5_split_display_label(rijlabel)
+
+            allowed = hstate["counts"].get(attr, 0)
+            inactive = False
+            if attr in hstate["red_spots"]:
+                inactive = True
+            if attr in hstate["second_spot_blocked"] and pos == 2:
+                inactive = True
+            if allowed < pos:
+                inactive = True
+
+            namen = list(ctx["assigned_map"].get((uur, attr), []))
+            naam = namen[pos - 1] if pos - 1 < len(namen) else ""
+
+            cell.value = naam
+            cell.alignment = center_align
+            cell.border = thin_border
+
+            if inactive:
+                cell.fill = gray_fill
+            elif naam and naam in student_kleuren:
+                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
+            else:
+                cell.fill = white_fill
+
+        # PV-rijen
+        pv_assignment_now = lm5_active_pv_assignment_for_hour(ctx, uur)
+        for idx, (row, _label) in enumerate(pv_rows, start=1):
+            cell = ws_plan.cell(row, col)
+            pvnaam = str(selected[idx - 1]["naam"]).strip() if idx <= len(selected) else ""
+            naam = pv_assignment_now.get(pvnaam, "")
+
+            cell.value = naam
+            cell.alignment = center_align
+            cell.border = thin_border
+
+            if naam and naam in student_kleuren:
+                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
+            else:
+                cell.fill = white_fill
+
+        # Extra-rijen
+        extras_now = list(ctx["extra_assignments"][uur])
+        for idx, (row, _label) in enumerate(extra_rows):
+            cell = ws_plan.cell(row, col)
+            naam = extras_now[idx] if idx < len(extras_now) else ""
+
+            cell.value = naam
+            cell.alignment = center_align
+            cell.border = thin_border
+
+            if naam and naam in student_kleuren:
+                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
+            else:
+                cell.fill = white_fill
+
+    # Info/check-blad
+    if "Last-minute info" in wb_lm.sheetnames:
+        wb_lm.remove(wb_lm["Last-minute info"])
+    ws_info = wb_lm.create_sheet("Last-minute info")
+
+    ws_info["A1"] = "Afwezigen"
+    for i, naam in enumerate(absentees, start=2):
+        ws_info.cell(i, 1).value = naam
+
+    ws_info["C1"] = "Herplanning vanaf"
+    ws_info["C2"] = f"{start_uur}:00"
+
+    ws_info["E1"] = "PV-vervangers"
+    r = 2
+    for pvnaam, vervanger in ctx["pv_replacements"].items():
+        ws_info.cell(r, 5).value = pvnaam
+        ws_info.cell(r, 6).value = vervanger
+        r += 1
+
+    ws_info["H1"] = "Controle"
+    ws_info["H2"] = "Student"
+    ws_info["I2"] = "Uur"
+    ws_info["J2"] = "Aantal keer"
+
+    rr = 3
+    for uur in sorted(open_uren):
+        if uur < start_uur or uur not in uur_to_col:
+            continue
+
+        col = uur_to_col[uur]
+        count_per_student = Counter()
+
+        for row, _label in attr_rows + pv_rows + extra_rows:
+            naam = ws_plan.cell(row, col).value
+            if naam and str(naam).strip():
+                count_per_student[str(naam).strip()] += 1
+
+        present_students = lm5_present_students_on_hour(base_maps, uur, ctx["abs_set"])
+        for naam in present_students:
+            ws_info.cell(rr, 8).value = naam
+            ws_info.cell(rr, 9).value = uur
+            ws_info.cell(rr, 10).value = count_per_student.get(naam, 0)
+            rr += 1
+
+    return wb_lm
 
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-st.markdown("### Last-minute afwezigheden")
+st.markdown("### Last-minute afwezigen")
 
-lm6_base_bytes = output.getvalue()
-lm6_base_maps_for_ui = lm6_extract_base_maps_from_wbout_bytes(lm6_base_bytes)
+base_bytes_lm5 = output.getvalue()
+base_maps_lm5 = lm5_extract_base_maps(base_bytes_lm5)
+werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
 
-lm6_kiesbare_namen = sorted({
-    naam
-    for (naam, _uur) in lm6_base_maps_for_ui["student_hour_row"].keys()
-})
+with st.expander("Last-minute afwezigen", expanded=False):
+    gekozen_afwezigen_lm5 = st.multiselect(
+        "Kies 1 tot 5 afwezige studenten",
+        options=werkende_studenten_vandaag_lm5,
+        default=[],
+        key="lm5_absentees"
+    )
 
-lm6_absentees = st.multiselect(
-    "Duid 1 tot 5 afwezigen aan",
-    options=lm6_kiesbare_namen,
-    max_selections=5,
-    key="lm6_absentees"
-)
+    start_uur_lm5 = st.selectbox(
+        "Vanaf welk uur moet de nieuwe planning starten?",
+        options=sorted(open_uren),
+        format_func=lambda u: f"{u}:00",
+        key="lm5_start_hour"
+    )
 
-if st.button("Herwerk planning", key="lm6_rework_button"):
-    if not lm6_absentees:
-        st.warning("Duid minstens 1 afwezige student aan.")
-    else:
-        wb_lastminute, ctx_lastminute = lm6_build_lastminute_workbook(
-            base_bytes=lm6_base_bytes,
-            absentees=lm6_absentees
-        )
+    if st.button("Maak last-minute planning", key="lm5_make_button"):
+        if not gekozen_afwezigen_lm5:
+            st.warning("Kies eerst minstens 1 afwezige student.")
+        elif len(gekozen_afwezigen_lm5) > 5:
+            st.warning("Je mag maximaal 5 studenten kiezen.")
+        else:
+            try:
+                ctx_lm5, base_maps_lm5_build = lm5_build_lastminute_context(
+                    base_bytes=base_bytes_lm5,
+                    absentees=gekozen_afwezigen_lm5,
+                    start_uur=start_uur_lm5
+                )
 
-        lm6_out = BytesIO()
-        wb_lastminute.save(lm6_out)
-        lm6_out.seek(0)
+                wb_lastminute_lm5 = lm5_write_lastminute_workbook(
+                    base_bytes=base_bytes_lm5,
+                    ctx=ctx_lm5,
+                    base_maps=base_maps_lm5_build,
+                    start_uur=start_uur_lm5,
+                    absentees=gekozen_afwezigen_lm5
+                )
 
-        nog_leeg = 0
-        for uur in sorted(open_uren):
-            hstate = ctx_lastminute["hour_states"][uur]
-            for attr in hstate["active"]:
-                max_spots = hstate["counts"].get(attr, 0)
-                if attr in hstate["second_spot_blocked"]:
-                    max_spots = min(max_spots, 1)
-                huidig = len(ctx_lastminute["assigned_map"].get((uur, attr), []))
-                if huidig < max_spots:
-                    nog_leeg += (max_spots - huidig)
+                lm5_output = BytesIO()
+                wb_lastminute_lm5.save(lm5_output)
+                lm5_output.seek(0)
 
-        st.success(f"Herwerkte planning klaar. Nog {nog_leeg} lege plek(ken).")
+                st.success("Last-minute planning gemaakt.")
+                st.download_button(
+                    "Download last-minute planning",
+                    data=lm5_output.getvalue(),
+                    file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    key="lm5_download_button"
+                )
 
-        st.download_button(
-            "Download herwerkte planning",
-            data=lm6_out.getvalue(),
-            file_name=f"Planning_lastminute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="lm6_download_btn"
-        )
-
+            except Exception as e:
+                st.error(f"Fout in last-minute planner: {e}")
 
