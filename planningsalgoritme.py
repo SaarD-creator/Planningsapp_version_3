@@ -5544,20 +5544,16 @@ wissels_per_uur = {}
 for uur in sorted(open_uren):
     newcomers = changes_per_hour[uur]["newcomers"]
     movers = changes_per_hour[uur]["movers"]
-    leavers = changes_per_hour[uur]["leavers"]
-    disappearing_sources = changes_per_hour[uur]["disappearing_sources"]
 
     ordered_switches = classify_hourly_switches(
         uur,
         newcomers,
-        movers,
-        leavers,
-        disappearing_sources
+        movers
     )
 
     if ordered_switches:
         wissels_per_uur[uur] = ordered_switches
-
+        
 
 # KPI berekenen
 totaal_wissels = 0
