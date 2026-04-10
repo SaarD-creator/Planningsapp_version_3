@@ -5703,7 +5703,7 @@ def lm_build_state():
         "student_blacklist": copy.deepcopy(student_blacklist),
         "vaste_plaatsingen": copy.deepcopy(vaste_plaatsingen),
         "input_volgorde": copy.deepcopy(input_volgorde),
-        "wb_out": lm_copy_workbook(wb_out),
+        "wb_out_template": lm_copy_workbook(wb_out),
     }
 
     # tweede-plek-prioriteit opnieuw meenemen
