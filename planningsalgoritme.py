@@ -208,7 +208,15 @@ open_uren=sorted(set(open_uren))
 
 # Pauzevlinders
 # -----------------------------
-pauzevlinder_namen=[ws[f'BN{rij}'].value for rij in range(4,11) if ws[f'BN{rij}'].value]
+pauzevlinder_namen = [
+    ws[f'BN{rij}'].value
+    for rij in range(4, 11)
+    if ws[f'BN{rij}'].value
+]
+
+# Zet de pauzevlinders in willekeurige volgorde
+random.shuffle(pauzevlinder_namen)
+
 
 def compute_pauze_hours(open_uren):
     if 10 in open_uren and 18 in open_uren:
