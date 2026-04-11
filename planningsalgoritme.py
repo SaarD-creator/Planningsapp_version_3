@@ -916,7 +916,7 @@ def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
         return True
     return False
 
-max_iterations = 5
+max_iterations = 25
 for _ in range(max_iterations):
     changes_made = False
     for uur in open_uren:
