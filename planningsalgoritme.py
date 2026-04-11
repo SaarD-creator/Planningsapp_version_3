@@ -1269,7 +1269,7 @@ def find_best_chain_for_empty_spot(uur, target_attr, target_pos_idx, max_depth=5
                     kandidaat = {
                         "moves": nieuwe_chain,
                         "score": (
-                            -score["extra_removed"],
+                            - 1000 * score["extra_removed"],
                             score["delta_switches"],
                             score["chain_length"],
                         )
