@@ -1469,7 +1469,7 @@ nog_lege_plekken = any(get_empty_positions_on_hour(uur) for uur in open_uren)
 nog_extras = any(extra_assignments.get(uur) for uur in open_uren)
 
 if nog_lege_plekken and nog_extras:
-    blok_gebaseerde_extra_reductie(max_passes=50, max_depth=8)
+    blok_gebaseerde_extra_reductie(max_passes=500, max_depth=18)
 
 
 
