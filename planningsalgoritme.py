@@ -948,14 +948,21 @@ for _ in range(max_iterations):
 
 
 
+
 # -----------------------------
-# Tweede post-processing: agressief lege plekken opvullen
-# met kettingswitches binnen hetzelfde uur
-# Doelvolgorde:
-# 1) zo weinig mogelijk studenten bij extra
-# 2) daarna zo weinig mogelijk bijkomende wissels
-# 3) daarna zo kort mogelijke ketting
+# Tweede post-processing: generieke blok-gebaseerde extra-reductie
+# Deze fase kijkt niet per uur, maar per aaneengesloten extra-run
+# van een student, en probeert via kettingswitches een volledig
+# subblok van die extra-run op de planning te krijgen.
+#
+# Prioriteiten:
+# 1) zo veel mogelijk extra-uren wegwerken
+# 2) daarna zo weinig mogelijk vaste plaatsingen openbreken
+# 3) daarna zo weinig mogelijk bijkomende wissels
+# 4) daarna zo kort mogelijke ketting
 # -----------------------------
+
+vaste_studenten_namen_pp2 = {vp["naam"] for vp in vaste_plaatsingen}
 
 def get_student_by_name(naam):
     return next((s for s in studenten_workend if s["naam"] == naam), None)
@@ -980,9 +987,11 @@ def get_empty_positions_on_hour(uur):
     lege = []
     for attr in actieve_attracties_per_uur.get(uur, set()):
         max_pos = get_max_pos_for_attr_on_hour(attr, uur)
-        namen = assigned_map.get((uur, attr), [])
+        namen = list(assigned_map.get((uur, attr), []))
+        while len(namen) < max_pos:
+            namen.append("")
         for pos_idx in range(1, max_pos + 1):
-            naam = namen[pos_idx - 1] if pos_idx - 1 < len(namen) else ""
+            naam = namen[pos_idx - 1]
             if not naam:
                 lege.append((attr, pos_idx))
     return lege
@@ -995,58 +1004,14 @@ def student_has_assignment_on_hour(student_naam, uur):
             return True
     return False
 
-def can_student_take_attr_on_hour(student, attr, uur):
-    if not student:
-        return False
-
-    # In deze agressieve post-processing mogen ook studenten
-    # die hun hele dag op 1 attractie staan, verplaatst worden.
-    # We blokkeren hier dus NIET meer op vaste_plaatsingen.
-
-    if not student_kan_attr(student, attr):
-        return False
-
-    if attr not in actieve_attracties_per_uur.get(uur, set()):
-        return False
-
-    if attr in red_spots.get(uur, set()):
-        return False
-
-    # student moet op dat uur effectief al ingepland zijn
-    if not student_has_assignment_on_hour(student["naam"], uur):
-        return False
-
-    # capaciteit van doelattractie moet beschikbaar zijn
-    namen = assigned_map.get((uur, attr), [])
-    max_pos = get_max_pos_for_attr_on_hour(attr, uur)
-    bezet = sum(1 for x in namen[:max_pos] if x)
-    if bezet >= max_pos:
-        return False
-
-    # max 6 uur / attractie en max 4 aaneensluitend respecteren
-    uren_bij_attr = set()
-    for h in sorted(set(student["assigned_hours"])):
-        if student["naam"] in assigned_map.get((h, attr), []):
-            uren_bij_attr.add(h)
-
-    nieuwe_uren = set(uren_bij_attr)
-    nieuwe_uren.add(uur)
-
-    if len(nieuwe_uren) > 6:
-        return False
-    if max_consecutive_hours(sorted(nieuwe_uren)) > 4:
-        return False
-
-    return True
-    
-
 def count_switches_for_student(naam):
     student = get_student_by_name(naam)
     if not student:
         return 0
 
+    uren = sorted(set(student["assigned_hours"]))
     uur_attr = []
-    for uur in sorted(set(student["assigned_hours"])):
+    for uur in uren:
         attr = get_current_attr_of_student_on_hour(naam, uur)
         if attr:
             uur_attr.append((uur, attr))
@@ -1096,7 +1061,6 @@ def add_student_to_hour(student_naam, uur, attr, pos_idx=None):
         namen.append("")
 
     target_idx = None
-
     if pos_idx is not None:
         if 1 <= pos_idx <= max_pos and not namen[pos_idx - 1]:
             target_idx = pos_idx - 1
@@ -1127,59 +1091,107 @@ def rebuild_student_assigned_attracties(student):
             attrs.add(attr)
     student["assigned_attracties"] = attrs
 
-def simulate_chain_and_score(chain_moves):
-    """
-    chain_moves = lijst van tuples:
-    (student_naam, uur, bron_attr, doel_attr, doel_pos_idx_of_None)
-    """
-    betrokken_namen = sorted(set(m[0] for m in chain_moves))
-    orig_switches = {naam: count_switches_for_student(naam) for naam in betrokken_namen}
+def get_hours_on_attr_for_student(student, attr):
+    uren = []
+    for uur in sorted(set(student["assigned_hours"])):
+        if student["naam"] in assigned_map.get((uur, attr), []):
+            uren.append(uur)
+    return uren
 
-    backup_assigned_map = {
-        k: list(v) for k, v in assigned_map.items()
-    }
-    backup_extra = {
-        k: list(v) for k, v in extra_assignments.items()
-    }
-    backup_hours = {
-        s["naam"]: list(s["assigned_hours"]) for s in studenten_workend
-    }
-    backup_attrs = {
-        s["naam"]: set(s["assigned_attracties"]) for s in studenten_workend
-    }
+def can_student_take_attr_on_hour(student, attr, uur, allow_break_vaste=True):
+    if not student:
+        return False
+
+    # In deze noodfase mogen ook vaste plaatsingen opengebroken worden,
+    # tenzij je allow_break_vaste ooit bewust op False zet.
+    if (not allow_break_vaste) and student["naam"] in vaste_studenten_namen_pp2:
+        return False
+
+    if not student_kan_attr(student, attr):
+        return False
+
+    if attr not in actieve_attracties_per_uur.get(uur, set()):
+        return False
+
+    if attr in red_spots.get(uur, set()):
+        return False
+
+    if not student_has_assignment_on_hour(student["naam"], uur):
+        return False
+
+    namen = list(assigned_map.get((uur, attr), []))
+    max_pos = get_max_pos_for_attr_on_hour(attr, uur)
+    while len(namen) < max_pos:
+        namen.append("")
+    bezet = sum(1 for x in namen[:max_pos] if x)
+    if bezet >= max_pos:
+        return False
+
+    uren_bij_attr = set(get_hours_on_attr_for_student(student, attr))
+    nieuwe_uren = set(uren_bij_attr)
+    nieuwe_uren.add(uur)
+
+    if len(nieuwe_uren) > 6:
+        return False
+    if max_consecutive_hours(sorted(nieuwe_uren)) > 4:
+        return False
+
+    return True
+
+def simulate_moves_and_score(moves):
+    """
+    moves: lijst van tuples
+      (student_naam, uur, bron_attr, doel_attr, doel_pos_idx)
+
+    We simuleren alles tijdelijk, scoren, en rollen altijd terug.
+    """
+    betrokken_namen = sorted(set(m[0] for m in moves))
+
+    orig_switches = {naam: count_switches_for_student(naam) for naam in betrokken_namen}
+    orig_extra_count = sum(len(extra_assignments[u]) for u in open_uren)
+
+    backup_assigned_map = {k: list(v) for k, v in assigned_map.items()}
+    backup_extra = {k: list(v) for k, v in extra_assignments.items()}
+    backup_hours = {s["naam"]: list(s["assigned_hours"]) for s in studenten_workend}
+    backup_attrs = {s["naam"]: set(s["assigned_attracties"]) for s in studenten_workend}
 
     success = True
 
     try:
-        for student_naam, uur, bron_attr, doel_attr, doel_pos_idx in chain_moves:
+        for student_naam, uur, bron_attr, doel_attr, doel_pos_idx in moves:
             remove_student_from_hour(student_naam, uur, bron_attr)
             ok = add_student_to_hour(student_naam, uur, doel_attr, doel_pos_idx)
             if not ok:
                 success = False
                 break
 
-        if success:
-            for naam in betrokken_namen:
-                student = get_student_by_name(naam)
-                if student:
-                    rebuild_student_assigned_attracties(student)
-
-            new_switches = {naam: count_switches_for_student(naam) for naam in betrokken_namen}
-            delta_switches = sum(new_switches[n] - orig_switches[n] for n in betrokken_namen)
-
-            extra_removed = sum(
-                1 for _, _, bron_attr, doel_attr, _ in chain_moves
-                if bron_attr == "Extra" and doel_attr != "Extra"
-            )
-
-            return {
-                "success": True,
-                "delta_switches": delta_switches,
-                "extra_removed": extra_removed,
-                "chain_length": len(chain_moves),
-            }
-        else:
+        if not success:
             return {"success": False}
+
+        for naam in betrokken_namen:
+            student = get_student_by_name(naam)
+            if student:
+                rebuild_student_assigned_attracties(student)
+
+        new_switches = {naam: count_switches_for_student(naam) for naam in betrokken_namen}
+        delta_switches = sum(new_switches[n] - orig_switches[n] for n in betrokken_namen)
+
+        new_extra_count = sum(len(extra_assignments[u]) for u in open_uren)
+        extra_hours_removed = orig_extra_count - new_extra_count
+
+        broken_vaste = len({
+            student_naam
+            for student_naam, _, bron_attr, doel_attr, _ in moves
+            if student_naam in vaste_studenten_namen_pp2 and bron_attr != doel_attr
+        })
+
+        return {
+            "success": True,
+            "extra_hours_removed": extra_hours_removed,
+            "broken_vaste": broken_vaste,
+            "delta_switches": delta_switches,
+            "chain_length": len(moves),
+        }
 
     finally:
         assigned_map.clear()
@@ -1194,10 +1206,10 @@ def simulate_chain_and_score(chain_moves):
             s["assigned_hours"] = list(backup_hours[s["naam"]])
             s["assigned_attracties"] = set(backup_attrs[s["naam"]])
 
-def apply_chain_moves(chain_moves):
-    betrokken_namen = sorted(set(m[0] for m in chain_moves))
+def apply_moves(moves):
+    betrokken_namen = sorted(set(m[0] for m in moves))
 
-    for student_naam, uur, bron_attr, doel_attr, doel_pos_idx in chain_moves:
+    for student_naam, uur, bron_attr, doel_attr, doel_pos_idx in moves:
         remove_student_from_hour(student_naam, uur, bron_attr)
         ok = add_student_to_hour(student_naam, uur, doel_attr, doel_pos_idx)
         if not ok:
@@ -1210,133 +1222,255 @@ def apply_chain_moves(chain_moves):
 
     return True
 
-def find_best_chain_for_empty_spot(uur, target_attr, target_pos_idx, max_depth=5):
+def get_extra_runs():
     """
-    Zoek beste ketting om een lege plek op te vullen.
-    We zoeken binnen hetzelfde uur.
-    Start moet altijd een student uit Extra zijn.
+    Geeft lijst van dicts:
+    {
+      "naam": ...,
+      "run": [uren...]
+    }
+    voor alle aaneengesloten runs waarin een student in extra staat.
     """
+    student_to_extra_hours = defaultdict(list)
 
-    extras = list(extra_assignments.get(uur, []))
-    if not extras:
-        return None
+    for uur in sorted(open_uren):
+        for naam in extra_assignments.get(uur, []):
+            student_to_extra_hours[naam].append(uur)
 
+    runs = []
+    for naam, uren in student_to_extra_hours.items():
+        for run in contiguous_runs(sorted(set(uren))):
+            if run:
+                runs.append({"naam": naam, "run": run})
+
+    # eerst langste runs proberen
+    runs.sort(key=lambda x: (-len(x["run"]), x["naam"], x["run"][0]))
+    return runs
+
+def get_subblocks_largest_first(run):
+    """
+    Voor run [14,15,16] geeft:
+    [14,15,16], [14,15], [15,16], [14], [15], [16]
+    """
+    result = []
+    n = len(run)
+    for L in range(n, 0, -1):
+        for i in range(0, n - L + 1):
+            result.append(run[i:i+L])
+    return result
+
+def get_candidate_source_names_on_hour(uur):
+    """
+    Alle studenten die op dit uur ergens staan of in extra staan.
+    """
+    namen = set(extra_assignments.get(uur, []))
+    for attr in actieve_attracties_per_uur.get(uur, set()):
+        for naam in assigned_map.get((uur, attr), []):
+            if naam:
+                namen.add(naam)
+    return sorted(namen)
+
+def find_empty_targets_for_block(block_hours):
+    """
+    Zoek attracties/posities die op ALLE uren van het blok leeg zijn.
+    Return lijst van tuples:
+      (attr, {uur: pos_idx})
+    """
+    per_hour_empty = {}
+    for uur in block_hours:
+        per_hour_empty[uur] = get_empty_positions_on_hour(uur)
+
+    kandidaat_attrs = set(attr for attr, _ in per_hour_empty[block_hours[0]])
+    for uur in block_hours[1:]:
+        kandidaat_attrs &= set(attr for attr, _ in per_hour_empty[uur])
+
+    result = []
+    for attr in kandidaat_attrs:
+        pos_map = {}
+        ok = True
+        for uur in block_hours:
+            posities = [pos for a, pos in per_hour_empty[uur] if a == attr]
+            if not posities:
+                ok = False
+                break
+            pos_map[uur] = posities[0]
+        if ok:
+            result.append((attr, pos_map))
+    return result
+
+def student_is_consistently_on_attr_for_block(student_naam, attr, block_hours):
+    for uur in block_hours:
+        if get_current_attr_of_student_on_hour(student_naam, uur) != attr:
+            return False
+    return True
+
+def can_student_take_attr_for_block(student, attr, block_hours, allow_break_vaste=True):
+    if not student:
+        return False
+
+    for uur in block_hours:
+        if not can_student_take_attr_on_hour(student, attr, uur, allow_break_vaste=allow_break_vaste):
+            return False
+
+    # strengere check: na het hele blok nog steeds max 6 uur en max 4 aaneensluitend
+    bestaande = set(get_hours_on_attr_for_student(student, attr))
+    nieuwe = bestaande | set(block_hours)
+
+    if len(nieuwe) > 6:
+        return False
+    if max_consecutive_hours(sorted(nieuwe)) > 4:
+        return False
+
+    return True
+
+def find_best_chain_for_block(block_hours, target_attr, target_pos_map, max_depth=6):
+    """
+    Zoek een ketting die target_attr op ALLE uren van block_hours invult.
+    Bron kan een extra-run student zijn of iemand die op alle uren
+    consistent op dezelfde attractie staat.
+    """
     best_solution = None
 
-    def dfs(current_attr, current_pos_idx, visited_students, current_chain, depth):
+    def dfs(current_attr, visited_students, current_moves, depth):
         nonlocal best_solution
 
         if depth > max_depth:
             return
 
-        # Kandidaten:
-        # 1) rechtstreeks vanuit extra
-        # 2) iemand van een andere attractie die kan verschuiven
-        kandidaten = []
+        kandidaat_namen = get_candidate_source_names_on_hour(block_hours[0])
 
-        for extra_naam in extras:
-            if extra_naam in visited_students:
+        for student_naam in kandidaat_namen:
+            if student_naam in visited_students:
                 continue
-            student = get_student_by_name(extra_naam)
-            if can_student_take_attr_on_hour(student, current_attr, uur):
-                kandidaten.append((extra_naam, "Extra"))
 
-        for bron_attr in actieve_attracties_per_uur.get(uur, set()):
+            student = get_student_by_name(student_naam)
+            if not student:
+                continue
+
+            bron_attr = get_current_attr_of_student_on_hour(student_naam, block_hours[0])
+            if bron_attr is None:
+                continue
+
+            # student moet op alle uren van het blok consequent op dezelfde bron_attr zitten
+            if bron_attr == "Extra":
+                if not all(student_naam in extra_assignments.get(uur, []) for uur in block_hours):
+                    continue
+            else:
+                if not student_is_consistently_on_attr_for_block(student_naam, bron_attr, block_hours):
+                    continue
+
             if bron_attr == current_attr:
                 continue
 
-            namen = list(assigned_map.get((uur, bron_attr), []))
-            max_pos_bron = get_max_pos_for_attr_on_hour(bron_attr, uur)
+            if not can_student_take_attr_for_block(student, current_attr, block_hours, allow_break_vaste=True):
+                continue
 
-            while len(namen) < max_pos_bron:
-                namen.append("")
+            nieuwe_moves = list(current_moves)
 
-            for naam in namen[:max_pos_bron]:
-                if not naam:
-                    continue
-                if naam in visited_students:
-                    continue
-                student = get_student_by_name(naam)
-                if can_student_take_attr_on_hour(student, current_attr, uur):
-                    kandidaten.append((naam, bron_attr))
-
-        for student_naam, bron_attr in kandidaten:
-            nieuwe_chain = current_chain + [
-                (student_naam, uur, bron_attr, current_attr, current_pos_idx)
-            ]
+            for uur in block_hours:
+                doel_pos_idx = target_pos_map[uur] if current_attr == target_attr else None
+                nieuwe_moves.append((student_naam, uur, bron_attr, current_attr, doel_pos_idx))
 
             if bron_attr == "Extra":
-                score = simulate_chain_and_score(nieuwe_chain)
-                if score.get("success"):
+                score = simulate_moves_and_score(nieuwe_moves)
+                if score.get("success") and score["extra_hours_removed"] > 0:
                     kandidaat = {
-                        "moves": nieuwe_chain,
+                        "moves": nieuwe_moves,
                         "score": (
-                            - 1000 * score["extra_removed"],
+                            -score["extra_hours_removed"],
+                            score["broken_vaste"],
                             score["delta_switches"],
                             score["chain_length"],
                         )
                     }
-                    if (best_solution is None) or (kandidaat["score"] < best_solution["score"]):
+                    if best_solution is None or kandidaat["score"] < best_solution["score"]:
                         best_solution = kandidaat
             else:
-                # er ontstaat een nieuwe lege plek op bron_attr
                 dfs(
                     bron_attr,
-                    None,
                     visited_students | {student_naam},
-                    nieuwe_chain,
+                    nieuwe_moves,
                     depth + 1
                 )
 
-    dfs(target_attr, target_pos_idx, set(), [], 1)
-
+    dfs(target_attr, set(), [], 1)
     return best_solution
 
-def agressieve_kettingswitch_postprocessing(max_passes=20, max_depth=5):
+def blok_gebaseerde_extra_reductie(max_passes=40, max_depth=7):
+    """
+    Iteratief:
+    - neem extra-runs
+    - probeer grootste subblokken eerst
+    - zoek een kettingoplossing voor een lege target over dat hele blok
+    - voer beste oplossing uit
+    """
     for _ in range(max_passes):
-        wijziging = False
+        beste_overall = None
 
-        for uur in sorted(open_uren):
-            if not extra_assignments.get(uur):
-                continue
-
-            lege_plekken = get_empty_positions_on_hour(uur)
-            if not lege_plekken:
-                continue
-
-            beste_overall = None
-
-            for attr, pos_idx in lege_plekken:
-                oplossing = find_best_chain_for_empty_spot(uur, attr, pos_idx, max_depth=max_depth)
-                if not oplossing:
-                    continue
-
-                kandidaat = {
-                    "moves": oplossing["moves"],
-                    "score": oplossing["score"],
-                    "uur": uur,
-                    "attr": attr,
-                    "pos_idx": pos_idx,
-                }
-
-                if (beste_overall is None) or (kandidaat["score"] < beste_overall["score"]):
-                    beste_overall = kandidaat
-
-            if beste_overall:
-                if apply_chain_moves(beste_overall["moves"]):
-                    wijziging = True
-                    break
-
-        if not wijziging:
+        extra_runs = get_extra_runs()
+        if not extra_runs:
             break
 
-# Alleen uitvoeren als er na de eerste lege-plekken-post-processing
-# nog tegelijk lege plekken EN extras bestaan
+        for item in extra_runs:
+            naam = item["naam"]
+            run = item["run"]
+
+            # alleen studenten die NU nog echt in extra staan op deze uren
+            if not run:
+                continue
+
+            subblocks = get_subblocks_largest_first(run)
+
+            for block_hours in subblocks:
+                # blok moet nog steeds effectief extra zijn voor deze student
+                if not all(naam in extra_assignments.get(uur, []) for uur in block_hours):
+                    continue
+
+                targets = find_empty_targets_for_block(block_hours)
+                if not targets:
+                    continue
+
+                for target_attr, target_pos_map in targets:
+                    oplossing = find_best_chain_for_block(
+                        block_hours,
+                        target_attr,
+                        target_pos_map,
+                        max_depth=max_depth
+                    )
+
+                    if not oplossing:
+                        continue
+
+                    kandidaat = {
+                        "moves": oplossing["moves"],
+                        "score": oplossing["score"],
+                        "block_len": len(block_hours),
+                        "start_uur": block_hours[0],
+                    }
+
+                    if (
+                        beste_overall is None
+                        or kandidaat["score"] < beste_overall["score"]
+                        or (
+                            kandidaat["score"] == beste_overall["score"]
+                            and kandidaat["block_len"] > beste_overall["block_len"]
+                        )
+                    ):
+                        beste_overall = kandidaat
+
+        if beste_overall:
+            ok = apply_moves(beste_overall["moves"])
+            if not ok:
+                break
+        else:
+            break
+
 nog_lege_plekken = any(get_empty_positions_on_hour(uur) for uur in open_uren)
 nog_extras = any(extra_assignments.get(uur) for uur in open_uren)
 
 if nog_lege_plekken and nog_extras:
-    agressieve_kettingswitch_postprocessing(max_passes=25, max_depth=6)
+    blok_gebaseerde_extra_reductie(max_passes=50, max_depth=8)
+
 
 
 
