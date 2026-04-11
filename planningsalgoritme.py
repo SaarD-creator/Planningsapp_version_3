@@ -999,8 +999,9 @@ def can_student_take_attr_on_hour(student, attr, uur):
     if not student:
         return False
 
-    if student["naam"] in {vp["naam"] for vp in vaste_plaatsingen}:
-        return False
+    # In deze agressieve post-processing mogen ook studenten
+    # die hun hele dag op 1 attractie staan, verplaatst worden.
+    # We blokkeren hier dus NIET meer op vaste_plaatsingen.
 
     if not student_kan_attr(student, attr):
         return False
@@ -1011,7 +1012,7 @@ def can_student_take_attr_on_hour(student, attr, uur):
     if attr in red_spots.get(uur, set()):
         return False
 
-    # student moet op dat uur effectief al ingepland zijn (op attractie of in extra)
+    # student moet op dat uur effectief al ingepland zijn
     if not student_has_assignment_on_hour(student["naam"], uur):
         return False
 
@@ -1037,6 +1038,7 @@ def can_student_take_attr_on_hour(student, attr, uur):
         return False
 
     return True
+    
 
 def count_switches_for_student(naam):
     student = get_student_by_name(naam)
