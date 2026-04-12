@@ -4311,6 +4311,10 @@ if pv_rows_pp2:
         pp2_write_name(ws_pp2, pv_name_row, gekozen_col, naam)
         pp2_write_name(ws_pp2, pv_name_row, tweede_col, naam)
 
+        # Dubbele korte pauze van minderjarige visueel lichtgeel maken
+        ws_pp2.cell(pv_name_row, gekozen_col).fill = light_fill
+        ws_pp2.cell(pv_name_row, tweede_col).fill = light_fill
+
         pp2_geplaatste_pauzes.append({
             "naam": naam,
             "pauzevlinder": pv_label,
