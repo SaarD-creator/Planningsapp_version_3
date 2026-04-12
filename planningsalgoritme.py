@@ -4282,12 +4282,63 @@ for col1, col2 in pp2_blokken:
 
 lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
 naam_leeg_fill_pp2 = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
+lichtgroen_fill_pp2 = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
+
+def pp2_is_minderjarig(naam):
+    return "-18" in str(naam)
+
+def pp2_is_minderjarig_korte_shift(naam):
+    return pp2_is_minderjarig(naam) and student_totalen.get(naam, 0) <= 6
+
+def pp2_is_minderjarig_lange_shift(naam):
+    return pp2_is_minderjarig(naam) and student_totalen.get(naam, 0) > 6
+
+def pp2_heeft_al_dubbele_korte_pauze(naam, ws_sheet, pv_rows, pauze_cols):
+    """
+    In PP2 telt voor minderjarige lange werkers een dubbele GROENE kwartierpauze
+    als hun korte pauze.
+    """
+    for _pv, pv_row in pv_rows:
+        for idx in range(len(pauze_cols) - 1):
+            col1 = pauze_cols[idx]
+            col2 = pauze_cols[idx + 1]
+
+            val1 = ws_sheet.cell(pv_row, col1).value
+            val2 = ws_sheet.cell(pv_row, col2).value
+
+            if val1 != naam or val2 != naam:
+                continue
+
+            fill1 = ws_sheet.cell(pv_row, col1).fill
+            fill2 = ws_sheet.cell(pv_row, col2).fill
+
+            rgb1 = getattr(getattr(fill1, "start_color", None), "rgb", None)
+            rgb2 = getattr(getattr(fill2, "start_color", None), "rgb", None)
+
+            groen_rgb = lichtgroen_fill_pp2.start_color.rgb
+
+            if rgb1 == groen_rgb and rgb2 == groen_rgb:
+                return True
+
+    return False
+
+
 
 def pp2_heeft_al_korte_pauze(naam, ws_sheet, pv_rows, pauze_cols):
     """
     Check of student al een korte pauze heeft in PP optie 2.
-    Een korte pauze = naam staat in 1 kwartiercel, zonder dezelfde naam links/rechts.
+
+    Regels:
+    - gewone student / meerderjarige: 1 paars kwartier zonder dezelfde naam links/rechts
+    - minderjarige <= 6u: telt in PP2 NOOIT als korte pauze
+    - minderjarige > 6u: telt pas als korte pauze wanneer er 2 opeenvolgende GROENE kwartieren staan
     """
+    if pp2_is_minderjarig_korte_shift(naam):
+        return False
+
+    if pp2_is_minderjarig_lange_shift(naam):
+        return pp2_heeft_al_dubbele_korte_pauze(naam, ws_sheet, pv_rows, pauze_cols)
+
     for _pv, pv_row in pv_rows:
         for idx, col in enumerate(pauze_cols):
             if ws_sheet.cell(pv_row, col).value != naam:
@@ -4302,17 +4353,30 @@ def pp2_heeft_al_korte_pauze(naam, ws_sheet, pv_rows, pauze_cols):
     return False
 
 
+
 def pp2_korte_pauze_nodig_namen():
     """
-    Iedereen die minstens 4 uur werkt, heeft recht op een korte pauze.
-    Zelfde basisidee als elders in je script. :contentReference[oaicite:1]{index=1}
+    Bepaal wie in PP2 nog recht heeft op een korte pauze.
+
+    Regels enkel voor PP2:
+    - meerderjarigen: ongewijzigd, vanaf 4u werk recht op korte pauze
+    - minderjarige <= 6u: GEEN korte pauze in PP2
+    - minderjarige > 6u: WEL korte pauze in PP2, maar die telt als dubbel kwartier
     """
     namen = []
     for s in studenten:
         naam = s["naam"]
-        if student_totalen.get(naam, 0) >= 4:
-            namen.append(naam)
+
+        if student_totalen.get(naam, 0) < 4:
+            continue
+
+        if pp2_is_minderjarig_korte_shift(naam):
+            continue
+
+        namen.append(naam)
+
     return namen
+
 
 
 def pp2_count_remaining_empty_quarters(ws_sheet, pv_rows, pauze_cols):
@@ -4413,8 +4477,15 @@ pp2_korte_pauze_gerechtigden = pp2_korte_pauze_nodig_namen()
 
 pp2_remaining_short_breaks_needed = 0
 for naam in pp2_korte_pauze_gerechtigden:
-    if not pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
-        pp2_remaining_short_breaks_needed += 1
+    if pp2_is_minderjarig_lange_shift(naam):
+        # minderjarige > 6u vraagt in PP2 2 kwartieren
+        if not pp2_heeft_al_dubbele_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+            pp2_remaining_short_breaks_needed += 2
+    else:
+        # gewone student / meerderjarige vraagt 1 kwartier
+        if not pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+            pp2_remaining_short_breaks_needed += 1
+
 
 # 3) Open spots berekenen
 pp2_open_spots_count = pp2_remaining_empty_quarters - pp2_remaining_short_breaks_needed
@@ -4553,25 +4624,80 @@ def pp2_get_students_stopping_before_end():
 
 def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
     """
-    Korte pauze voor gewone student:
-    - bovenliggende cel = attractie
-    - naamcel = paars
+    Korte pauze schrijven in PP2.
+
+    Regels:
+    - gewone student / meerderjarige: 1 paars kwartier
+    - minderjarige > 6u: 2 opeenvolgende GROENE kwartieren
+    - minderjarige <= 6u: hoort hier niet terecht te komen
     """
     header = ws_sheet.cell(1, col).value
     uur = parse_header_uur(header)
 
     attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
 
-    top_cel = ws_sheet.cell(pv_row - 1, col)
-    top_cel.value = attr if attr else ""
-    top_cel.alignment = center_align
-    top_cel.border = thin_border
+    # gewone student / meerderjarige
+    if not pp2_is_minderjarig_lange_shift(naam):
+        top_cel = ws_sheet.cell(pv_row - 1, col)
+        top_cel.value = attr if attr else ""
+        top_cel.alignment = center_align
+        top_cel.border = thin_border
 
-    cel = ws_sheet.cell(pv_row, col)
-    cel.value = naam
-    cel.alignment = center_align
-    cel.border = thin_border
-    cel.fill = lichtpaars_fill
+        cel = ws_sheet.cell(pv_row, col)
+        cel.value = naam
+        cel.alignment = center_align
+        cel.border = thin_border
+        cel.fill = lichtpaars_fill
+        return True
+
+    # minderjarige > 6u => dubbel groen kwartier
+    idx = pauze_cols_pp2.index(col)
+    if idx + 1 >= len(pauze_cols_pp2):
+        return False
+
+    next_col = pauze_cols_pp2[idx + 1]
+    next_header = ws_sheet.cell(1, next_col).value
+    next_uur = parse_header_uur(next_header)
+
+    # tweede kwartier moet ook geldig zijn
+    werk_uren = pp2_get_student_work_hours(naam)
+    if not werk_uren:
+        return False
+
+    if next_uur is None or next_uur not in werk_uren:
+        return False
+
+    if next_uur == werk_uren[0] or next_uur == werk_uren[-1]:
+        return False
+
+    if ws_sheet.cell(pv_row, next_col).value not in [None, ""]:
+        return False
+
+    next_attr = vind_attractie_op_uur(naam, next_uur) if next_uur is not None else None
+
+    top_cel_1 = ws_sheet.cell(pv_row - 1, col)
+    top_cel_1.value = attr if attr else ""
+    top_cel_1.alignment = center_align
+    top_cel_1.border = thin_border
+
+    cel_1 = ws_sheet.cell(pv_row, col)
+    cel_1.value = naam
+    cel_1.alignment = center_align
+    cel_1.border = thin_border
+    cel_1.fill = lichtgroen_fill_pp2
+
+    top_cel_2 = ws_sheet.cell(pv_row - 1, next_col)
+    top_cel_2.value = next_attr if next_attr else ""
+    top_cel_2.alignment = center_align
+    top_cel_2.border = thin_border
+
+    cel_2 = ws_sheet.cell(pv_row, next_col)
+    cel_2.value = naam
+    cel_2.alignment = center_align
+    cel_2.border = thin_border
+    cel_2.fill = lichtgroen_fill_pp2
+
+    return True
 
 
 def pp2_get_long_break_owners_on_row(ws_sheet, pv_row, pauze_cols):
@@ -4787,18 +4913,28 @@ def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
 # -----------------------------------
 # 1) Bepaal welke studenten nog een korte pauze nodig hebben
 # -----------------------------------
+
 pp2_all_short_break_pending = []
 
 for s in studenten:
     naam = s["naam"]
 
-    # enkel studenten met recht op korte pauze
+    # enkel studenten met recht op korte pauze in PP2
     if student_totalen.get(naam, 0) < 4:
         continue
 
-    # sla over als al korte pauze
-    if pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+    # minderjarige <= 6u hebben GEEN korte pauze in PP2
+    if pp2_is_minderjarig_korte_shift(naam):
         continue
+
+    # minderjarige > 6u: check op dubbele korte pauze
+    if pp2_is_minderjarig_lange_shift(naam):
+        if pp2_heeft_al_dubbele_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+            continue
+    else:
+        # gewone student / meerderjarige: check op gewone korte pauze
+        if pp2_heeft_al_korte_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+            continue
 
     pp2_all_short_break_pending.append(naam)
 
@@ -4817,7 +4953,7 @@ for naam in pp2_all_short_break_pending:
     else:
         pp2_other_pending_short_breaks.append(naam)
 
-# voor de fallback houden we een vaste random volgorde binnen beide groepen
+# vaste random volgorde binnen beide groepen
 random.shuffle(pp2_other_pending_short_breaks)
 random.shuffle(pp2_endworkers_without_long_break)
 
@@ -4878,21 +5014,27 @@ for col in pauze_cols_pp2:
 
         # schrijven indien kandidaat gevonden
         if toegewezen_naam:
-            pp2_write_short_break_regular(
+            geschreven = pp2_write_short_break_regular(
                 ws_sheet=ws_pp2,
                 pv_row=pv_row,
                 col=col,
                 naam=toegewezen_naam
             )
 
-            pp2_step5_short_breaks_placed.append({
-                "naam": toegewezen_naam,
-                "pauzevlinder": pv["naam"],
-                "tijd": ws_pp2.cell(1, col).value,
-                "via_lange_pauze_prioriteit": toegewezen_naam in rij_lange_pauze_namen
-            })
+            if geschreven:
+                pp2_step5_short_breaks_placed.append({
+                    "naam": toegewezen_naam,
+                    "pauzevlinder": pv["naam"],
+                    "tijd": ws_pp2.cell(1, col).value,
+                    "via_lange_pauze_prioriteit": toegewezen_naam in rij_lange_pauze_namen,
+                    "dubbel_kwartier_minderjarige": pp2_is_minderjarig_lange_shift(toegewezen_naam)
+                })
 
-            pp2_other_pending_short_breaks.remove(toegewezen_naam)
+                if toegewezen_naam in pp2_other_pending_short_breaks:
+                    pp2_other_pending_short_breaks.remove(toegewezen_naam)
+
+                if toegewezen_naam in pp2_endworkers_without_long_break:
+                    pp2_endworkers_without_long_break.remove(toegewezen_naam)
 
 # -----------------------------------
 # 3) Pas daarna:
@@ -4941,21 +5083,27 @@ for col in pauze_cols_pp2:
                 break
 
         if toegewezen_naam:
-            pp2_write_short_break_regular(
+            geschreven = pp2_write_short_break_regular(
                 ws_sheet=ws_pp2,
                 pv_row=pv_row,
                 col=col,
                 naam=toegewezen_naam
             )
 
-            pp2_step5_short_breaks_placed.append({
-                "naam": toegewezen_naam,
-                "pauzevlinder": pv["naam"],
-                "tijd": ws_pp2.cell(1, col).value,
-                "via_lange_pauze_prioriteit": toegewezen_naam in rij_lange_pauze_namen
-            })
+            if geschreven:
+                pp2_step5_short_breaks_placed.append({
+                    "naam": toegewezen_naam,
+                    "pauzevlinder": pv["naam"],
+                    "tijd": ws_pp2.cell(1, col).value,
+                    "via_lange_pauze_prioriteit": toegewezen_naam in rij_lange_pauze_namen,
+                    "dubbel_kwartier_minderjarige": pp2_is_minderjarig_lange_shift(toegewezen_naam)
+                })
 
-            pp2_endworkers_without_long_break.remove(toegewezen_naam)
+                if toegewezen_naam in pp2_endworkers_without_long_break:
+                    pp2_endworkers_without_long_break.remove(toegewezen_naam)
+
+                if toegewezen_naam in pp2_other_pending_short_breaks:
+                    pp2_other_pending_short_breaks.remove(toegewezen_naam)
 
 
 
