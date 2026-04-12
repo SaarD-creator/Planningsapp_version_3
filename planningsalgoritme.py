@@ -3668,6 +3668,55 @@ ws_pp2 = wb_out.copy_worksheet(ws_pauze_basis)
 ws_pp2.title = "PP optie 2"
 
 # -----------------------------
+# PP optie 2 leegmaken voor heropbouw
+# We behouden:
+# - de urenrij
+# - kolom A met Pauzevlinder-titels en namen
+# We wissen:
+# - alle ingevulde studentpauzes in de kwartiercellen
+# - de bovenliggende attractiecellen boven die pauzes
+# -----------------------------
+
+# eerst kwartierkolommen bepalen
+pauze_cols_pp2 = []
+for col in range(2, ws_pp2.max_column + 1):
+    header = ws_pp2.cell(1, col).value
+    if header and ("u" in str(header)):
+        pauze_cols_pp2.append(col)
+
+# pv-rijen bepalen: naam-rijen van de pauzevlinders
+pv_rows_pp2 = []
+for pv in selected:
+    row_found = None
+    for r in range(2, ws_pp2.max_row + 1):
+        val = ws_pp2.cell(r, 1).value
+        if val and str(val).strip() == str(pv["naam"]).strip():
+            row_found = r
+            break
+    if row_found is not None:
+        pv_rows_pp2.append((pv, row_found))
+
+# leegmaken van alle kwartiervakken op naam-rijen
+# en ook de bovenliggende attractie-rijen
+for _pv, pv_row in pv_rows_pp2:
+    attr_row = pv_row - 1
+
+    for col in pauze_cols_pp2:
+        # naamcel leegmaken
+        naamcel = ws_pp2.cell(pv_row, col)
+        naamcel.value = None
+        naamcel.fill = PatternFill(fill_type=None)
+        naamcel.border = thin_border
+        naamcel.alignment = center_align
+
+        # bovenliggende attractiecel leegmaken
+        attrcel = ws_pp2.cell(attr_row, col)
+        attrcel.value = None
+        attrcel.fill = PatternFill(fill_type=None)
+        attrcel.border = thin_border
+        attrcel.alignment = center_align
+
+# -----------------------------
 # Helpers
 # -----------------------------
 def pp2_parse_kwartier_header(header):
