@@ -1776,12 +1776,25 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     ]
     analyse_studenten = sorted(analyse_studenten, key=lambda s: naam_tie_break_key(s["naam"]))
 
-    # Enkel NIET-samengevoegde attracties gebruiken
-    # We nemen hiervoor de gewone attracties uit attracties_te_plannen zonder " + "
-    analyse_attracties = sorted(
-        [a for a in attracties_te_plannen if a and " + " not in str(a)],
-        key=lambda x: str(x).strip().lower()
-    )
+    # Attracties in de volgorde van Input!BL16:BL33
+    analyse_attracties = []
+    for rij_bl in range(16, 34):  # BL16 t.e.m. BL33
+        attr = ws[f"BL{rij_bl}"].value
+        if attr:
+            attr = str(attr).strip()
+            if " + " not in attr:
+                analyse_attracties.append(attr)
+
+    # dubbels verwijderen, volgorde behouden
+    analyse_attracties_uniek = []
+    gezien = set()
+    for attr in analyse_attracties:
+        key = attr.lower()
+        if key not in gezien:
+            gezien.add(key)
+            analyse_attracties_uniek.append(attr)
+
+    analyse_attracties = analyse_attracties_uniek
 
     # Titelrij
     ws_analyse.cell(1, 1, vandaag).font = Font(bold=True)
@@ -1815,14 +1828,16 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
         naam_cel = ws_analyse.cell(rij, 2, naam)
         naam_cel.alignment = center_align
         naam_cel.border = thin_border
+        student_fill = witte_fill
         if naam in student_kleuren:
-            naam_cel.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+            student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+            naam_cel.fill = student_fill
         else:
             naam_cel.fill = witte_fill
 
         # Set van attracties die student kan, zonder samengevoegde attracties
         student_attr_set = {
-            str(attr).strip()
+            str(attr).strip().lower()
             for attr in s.get("attracties", [])
             if attr and " + " not in str(attr)
         }
@@ -1831,13 +1846,14 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
             cel = ws_analyse.cell(rij, idx)
             cel.alignment = center_align
             cel.border = thin_border
-            cel.fill = witte_fill
             cel.font = Font(color="000000")
 
-            if attr in student_attr_set:
+            if attr.strip().lower() in student_attr_set:
                 cel.value = attr
+                cel.fill = student_fill
             else:
                 cel.value = ""
+                cel.fill = witte_fill
 
         rij += 1
 
@@ -1845,8 +1861,9 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     ws_analyse.column_dimensions["A"].width = 8
     ws_analyse.column_dimensions["B"].width = 24
 
+    # attractiekolommen smaller: ongeveer 3/4 van 18 = 13.5
     for idx in range(start_col_attr, start_col_attr + len(analyse_attracties)):
-        ws_analyse.column_dimensions[get_column_letter(idx)].width = 18
+        ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
 
 
 
