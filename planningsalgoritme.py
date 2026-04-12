@@ -2678,6 +2678,7 @@ for _ in range(max_passes):
 
 lichtgroen_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")  # lange pauze
 lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")  # kwartierpauze
+roze_fill = PatternFill(start_color="FFD6E7", end_color="FFD6E7", fill_type="solid")
 
 # Pauze kleuren invullen (lange en korte pauzes)
 for pv, pv_row in pv_rows:
@@ -4312,8 +4313,8 @@ if pv_rows_pp2:
         pp2_write_name(ws_pp2, pv_name_row, tweede_col, naam)
 
         # Dubbele korte pauze van minderjarige visueel lichtgeel maken
-        ws_pp2.cell(pv_name_row, gekozen_col).fill = light_fill
-        ws_pp2.cell(pv_name_row, tweede_col).fill = light_fill
+        ws_pp2.cell(pv_name_row, gekozen_col).fill = roze_fill
+        ws_pp2.cell(pv_name_row, tweede_col).fill = roze_fill
 
         pp2_geplaatste_pauzes.append({
             "naam": naam,
@@ -5207,7 +5208,7 @@ def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
     cel.border = thin_border
 
     if pp2_is_minderjarig(naam) and student_totalen.get(naam, 0) > 4:
-        cel.fill = light_fill
+        cel.fill = roze_fill
     else:
         cel.fill = lichtpaars_fill
 
