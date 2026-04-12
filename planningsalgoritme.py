@@ -204,6 +204,51 @@ if not open_uren:
     open_uren=list(range(10,19))
 open_uren=sorted(set(open_uren))
 
+
+
+# -----------------------------
+# Sorteervolgorde studenten
+# Eerst op aantal attracties,
+# daarna op vaste tie-break regel uit BU2
+# -----------------------------
+bu2_waarde = ws["BU2"].value
+try:
+    tie_break_mode = int(bu2_waarde)
+except:
+    tie_break_mode = 1
+
+if tie_break_mode not in [1, 2, 3, 4, 5]:
+    tie_break_mode = 1
+
+
+def naam_tie_break_key(naam_raw):
+    naam = str(naam_raw).strip().lower()
+
+    if tie_break_mode == 1:
+        # gewone alfabetische volgorde
+        return naam
+
+    elif tie_break_mode == 2:
+        # omgekeerde alfabetische volgorde
+        return "".join(chr(255 - ord(c)) for c in naam)
+
+    elif tie_break_mode == 3:
+        # eerst op aantal letters, daarna alfabetisch
+        return (len(naam), naam)
+
+    elif tie_break_mode == 4:
+        # alfabetisch op basis van laatste letters
+        return naam[::-1]
+
+    elif tie_break_mode == 5:
+        # omgekeerde van mode 4
+        return "".join(chr(255 - ord(c)) for c in naam[::-1])
+
+    return naam
+
+
+
+
 # -----------------------------
 
 # Pauzevlinders
@@ -473,45 +518,6 @@ for vp in vaste_plaatsingen:
     student["uren_beschikbaar"] = []
 
 
-# -----------------------------
-# Sorteervolgorde studenten
-# Eerst op aantal attracties,
-# daarna op vaste tie-break regel uit BU2
-# -----------------------------
-bu2_waarde = ws["BU2"].value
-try:
-    tie_break_mode = int(bu2_waarde)
-except:
-    tie_break_mode = 1
-
-if tie_break_mode not in [1, 2, 3, 4, 5]:
-    tie_break_mode = 1
-
-
-def naam_tie_break_key(naam_raw):
-    naam = str(naam_raw).strip().lower()
-
-    if tie_break_mode == 1:
-        # gewone alfabetische volgorde
-        return naam
-
-    elif tie_break_mode == 2:
-        # omgekeerde alfabetische volgorde
-        return "".join(chr(255 - ord(c)) for c in naam)
-
-    elif tie_break_mode == 3:
-        # eerst op aantal letters, daarna alfabetisch
-        return (len(naam), naam)
-
-    elif tie_break_mode == 4:
-        # alfabetisch op basis van laatste letters
-        return naam[::-1]
-
-    elif tie_break_mode == 5:
-        # omgekeerde van mode 4
-        return "".join(chr(255 - ord(c)) for c in naam[::-1])
-
-    return naam
 
 
 
