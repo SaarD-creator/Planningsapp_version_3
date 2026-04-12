@@ -4004,6 +4004,9 @@ def pp2_choose_middle_col(naam, ws_sheet, pauze_cols):
 
     return best_col
 
+
+
+
 def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
     """
     Zoek startkolom voor 2 opeenvolgende kwartieren voor minderjarigen:
