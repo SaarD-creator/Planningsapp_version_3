@@ -2144,6 +2144,7 @@ for ws in tmp_sheets:
 
 # ---- Lege naamcellen inkleuren ----
 naam_leeg_fill = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
+naam_leeg_fill_pp2 = naam_leeg_fill
 thin_border = Border(left=Side(style="thin"), right=Side(style="thin"),
                      top=Side(style="thin"), bottom=Side(style="thin"))
 center_align = Alignment(horizontal="center", vertical="center")
@@ -5602,18 +5603,24 @@ def pp2_student_works_until_day_end(naam):
 
 def pp2_build_step5_pending_groups():
     """
-    Splits alle studenten die nog korte kwartieren nodig hebben in:
+    Splits alle NIET-pauzevlinders die nog korte kwartieren nodig hebben in:
     A) overige pending korte kwartieren
     B) eindwerkers zonder lange pauze
 
-    Belangrijk:
-    - studenten blijven pending zolang ze nog resterende korte kwartieren hebben
-    - dus minderjarigen >4u kunnen hier ook nog 2 kwartieren nodig hebben
+    Pauzevlinders zelf horen hier niet meer in:
+    - korte pauzevlinders werden al eerder verwerkt
+    - lange pauzevlinders kregen in stap 4 hun eigen aparte fase,
+      enkel in hun eigen rij
     """
+    pauzevlinder_namen_set = {pv["naam"] for pv in selected}
     all_pending = []
 
     for s in studenten:
         naam = s["naam"]
+
+        # Pauzevlinders hier NIET meer meenemen
+        if naam in pauzevlinder_namen_set:
+            continue
 
         resterend = pp2_resterende_korte_kwartieren(
             naam=naam,
