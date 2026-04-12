@@ -5015,30 +5015,45 @@ if pp2_open_spots_count < 0:
 # - script blijft exact hetzelfde gedrag houden als nu
 #   => open spots verdelen zoals nu
 # -----------------------------
+
 if not pp2_is_korte_dag:
-    # Op lange dagen willen we exact het oude gedrag behouden.
-    # Daarom resetten we hier eerst de eigen korte pauzes van de PV's terug
-    # zodat de open spots nog altijd eerst gezet worden, net zoals vroeger.
+    # ---------------------------------------------------
+    # LANGE DAG:
+    # - Open spots eerst verdelen (zoals in het originele script)
+    # - Daarna enkel de korte pauzes van KORTE pauzevlinders plaatsen
+    # - Lange pauzevlinders komen pas in stap 4 aan bod
+    # ---------------------------------------------------
+
+    # Reset eerst eventuele eerder geplaatste korte pauzes van pauzevlinders
     for item in pp2_pv_short_breaks_placed:
         naam = item["naam"]
+
+        pv_row = next(
+            pv_row for pv, pv_row in pv_rows_pp2
+            if pv["naam"] == naam
+        )
+
         for col in item["kolommen"]:
-            top_cel = ws_pp2.cell(next(pv_row for pv, pv_row in pv_rows_pp2 if pv["naam"] == naam) - 1, col)
+            top_cel = ws_pp2.cell(pv_row - 1, col)
             top_cel.value = ""
             top_cel.alignment = center_align
             top_cel.border = thin_border
 
-            cel = ws_pp2.cell(next(pv_row for pv, pv_row in pv_rows_pp2 if pv["naam"] == naam), col)
+            cel = ws_pp2.cell(pv_row, col)
             cel.value = ""
             cel.alignment = center_align
             cel.border = thin_border
-            cel.fill = naam_leeg_fill_pp2 if cel.value in [None, ""] else cel.fill
+            cel.fill = naam_leeg_fill_pp2
 
     pp2_pv_short_breaks_placed = []
 
+    # ---------------------------------------------------
+    # 1) Open spots verdelen
+    # ---------------------------------------------------
     ronde_nummer = 0
+
     while len(pp2_open_spots) < pp2_open_spots_count:
         iets_geplaatst_deze_ronde = False
-
         vooraan = (ronde_nummer % 2 == 0)
 
         for _pv, pv_row in pv_rows_pp2:
@@ -5066,9 +5081,16 @@ if not pp2_is_korte_dag:
 
         ronde_nummer += 1
 
-    # Daarna opnieuw de korte pauzes van de pauzevlinders zelf invullen
+    # ---------------------------------------------------
+    # 2) Enkel korte pauzes van KORTE pauzevlinders plaatsen
+    # Lange pauzevlinders worden hier overgeslagen
+    # ---------------------------------------------------
     for pv, pv_row in pv_rows_pp2:
         naam = pv["naam"]
+
+        # Lange pauzevlinders hier overslaan
+        if naam in pp2_lange_werkers_lijst():
+            continue
 
         resterend_nodig = pp2_resterende_korte_kwartieren(
             naam=naam,
@@ -5094,48 +5116,21 @@ if not pp2_is_korte_dag:
             continue
 
         for col in gekozen_cols:
-            pp2_write_short_break_for_pv(ws_pp2, pv_row, col, naam)
+            pp2_write_short_break_for_pv(
+                ws_sheet=ws_pp2,
+                pv_row=pv_row,
+                col=col,
+                naam=naam
+            )
 
         pp2_pv_short_breaks_placed.append({
             "naam": naam,
             "kolommen": gekozen_cols,
-            "tijden": [ws_pp2.cell(1, col).value for col in gekozen_cols]
+            "tijden": [
+                ws_pp2.cell(1, col).value for col in gekozen_cols
+            ]
         })
 
-else:
-    # KORTE DAG:
-    # de korte pauzes van PV's staan al eerst,
-    # dus nu pas open spots verdelen over de resterende lege vakjes.
-    ronde_nummer = 0
-    while len(pp2_open_spots) < pp2_open_spots_count:
-        iets_geplaatst_deze_ronde = False
-
-        vooraan = (ronde_nummer % 2 == 0)
-
-        for _pv, pv_row in pv_rows_pp2:
-            if len(pp2_open_spots) >= pp2_open_spots_count:
-                break
-
-            lege_cols = pp2_get_empty_cols_for_pv_row(
-                ws_sheet=ws_pp2,
-                pv_row=pv_row,
-                pauze_cols=pauze_cols_pp2,
-                open_spots_set=pp2_open_spots
-            )
-
-            if not lege_cols:
-                continue
-
-            gekozen_col = lege_cols[-1] if vooraan else lege_cols[-1]
-
-            pp2_open_spots.add((pv_row, gekozen_col))
-            pp2_mark_open_spot(ws_pp2, pv_row, gekozen_col)
-            iets_geplaatst_deze_ronde = True
-
-        if not iets_geplaatst_deze_ronde:
-            break
-
-        ronde_nummer += 1
 
 #STAP 4 44444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444
 
