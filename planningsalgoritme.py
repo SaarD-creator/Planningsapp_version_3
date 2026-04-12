@@ -1810,103 +1810,101 @@ def actieve_analyse_attracties_op_uur(uur):
     return resultaat
 
 
-if heeft_extra_studenten() and heeft_echte_lege_plek():
-    ws_analyse = wb_out.create_sheet(title="Analyse", index=1)
+ws_analyse = wb_out.create_sheet(title="Analyse")
 
-    analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-    witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
-    # -----------------------------
-    # Titel bovenaan de Analyse-pagina
-    # -----------------------------
-    titel = "Hier zie je per uur welke studenten aanwezig zijn en welke attracties ze kunnen:"
-    ws_analyse.merge_cells(start_row=1, start_column=1, end_row=1, end_column=20)
+# -----------------------------
+# Titel bovenaan de Analyse-pagina
+# -----------------------------
+titel = "Hier zie je per uur welke studenten aanwezig zijn en welke attracties ze kunnen:"
+ws_analyse.merge_cells(start_row=1, start_column=1, end_row=1, end_column=20)
 
-    titel_cel = ws_analyse.cell(1, 1, titel)
-    titel_cel.font = Font(bold=True, size=12)
-    titel_cel.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-    titel_cel.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-    titel_cel.border = thin_border
+titel_cel = ws_analyse.cell(1, 1, titel)
+titel_cel.font = Font(bold=True, size=12)
+titel_cel.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+titel_cel.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+titel_cel.border = thin_border
 
-    start_rij = 3
+start_rij = 3
 
-    for uur in sorted(open_uren):
-        analyse_studenten_uur = [
-            s for s in studenten
-            if student_is_aanwezig_op_uur_zonder_pauzevlinder(s, uur)
-        ]
-        analyse_studenten_uur = sorted(analyse_studenten_uur, key=lambda s: naam_tie_break_key(s["naam"]))
+for uur in sorted(open_uren):
+    analyse_studenten_uur = [
+        s for s in studenten
+        if student_is_aanwezig_op_uur_zonder_pauzevlinder(s, uur)
+    ]
+    analyse_studenten_uur = sorted(analyse_studenten_uur, key=lambda s: naam_tie_break_key(s["naam"]))
 
-        analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
+    analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
 
-        # Als er voor dit uur niets te tonen is, sla over
-        if not analyse_studenten_uur or not analyse_attracties_uur:
-            continue
+    # Als er voor dit uur niets te tonen is, sla over
+    if not analyse_studenten_uur or not analyse_attracties_uur:
+        continue
 
-        # Uur in plaats van datum
-        ws_analyse.cell(start_rij, 1, f"{uur}:00").font = Font(bold=True)
-        ws_analyse.cell(start_rij, 1).fill = analyse_header_fill
-        ws_analyse.cell(start_rij, 1).alignment = center_align
-        ws_analyse.cell(start_rij, 1).border = thin_border
+    # Uur in plaats van datum
+    ws_analyse.cell(start_rij, 1, f"{uur}:00").font = Font(bold=True)
+    ws_analyse.cell(start_rij, 1).fill = analyse_header_fill
+    ws_analyse.cell(start_rij, 1).alignment = center_align
+    ws_analyse.cell(start_rij, 1).border = thin_border
 
-        ws_analyse.cell(start_rij, 2, "Student").font = Font(bold=True)
-        ws_analyse.cell(start_rij, 2).fill = analyse_header_fill
-        ws_analyse.cell(start_rij, 2).alignment = center_align
-        ws_analyse.cell(start_rij, 2).border = thin_border
+    ws_analyse.cell(start_rij, 2, "Student").font = Font(bold=True)
+    ws_analyse.cell(start_rij, 2).fill = analyse_header_fill
+    ws_analyse.cell(start_rij, 2).alignment = center_align
+    ws_analyse.cell(start_rij, 2).border = thin_border
 
-        # 1 kolom per attractie
-        start_col_attr = 3
+    # 1 kolom per attractie
+    start_col_attr = 3
+    for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
+        cel = ws_analyse.cell(start_rij, idx, attr)
+        cel.font = Font(bold=True)
+        cel.fill = analyse_header_fill
+        cel.alignment = center_align
+        cel.border = thin_border
+
+    # Data voor dit uur
+    rij = start_rij + 1
+    for s in analyse_studenten_uur:
+        naam = s["naam"]
+
+        ws_analyse.cell(rij, 1, rij - start_rij).alignment = center_align
+        ws_analyse.cell(rij, 1).border = thin_border
+        ws_analyse.cell(rij, 1).fill = witte_fill
+
+        naam_cel = ws_analyse.cell(rij, 2, naam)
+        naam_cel.alignment = center_align
+        naam_cel.border = thin_border
+        student_fill = witte_fill
+
+        if naam in student_kleuren:
+            student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+            naam_cel.fill = student_fill
+        else:
+            naam_cel.fill = witte_fill
+
         for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
-            cel = ws_analyse.cell(start_rij, idx, attr)
-            cel.font = Font(bold=True)
-            cel.fill = analyse_header_fill
+            cel = ws_analyse.cell(rij, idx)
             cel.alignment = center_align
             cel.border = thin_border
+            cel.font = Font(color="000000")
 
-        # Data voor dit uur
-        rij = start_rij + 1
-        for s in analyse_studenten_uur:
-            naam = s["naam"]
-
-            ws_analyse.cell(rij, 1, rij - start_rij).alignment = center_align
-            ws_analyse.cell(rij, 1).border = thin_border
-            ws_analyse.cell(rij, 1).fill = witte_fill
-
-            naam_cel = ws_analyse.cell(rij, 2, naam)
-            naam_cel.alignment = center_align
-            naam_cel.border = thin_border
-            student_fill = witte_fill
-
-            if naam in student_kleuren:
-                student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-                naam_cel.fill = student_fill
+            if student_kan_attr_in_analyse(s, attr):
+                cel.value = attr
+                cel.fill = student_fill
             else:
-                naam_cel.fill = witte_fill
+                cel.value = ""
+                cel.fill = witte_fill
 
-            for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
-                cel = ws_analyse.cell(rij, idx)
-                cel.alignment = center_align
-                cel.border = thin_border
-                cel.font = Font(color="000000")
+        rij += 1
 
-                if student_kan_attr_in_analyse(s, attr):
-                    cel.value = attr
-                    cel.fill = student_fill
-                else:
-                    cel.value = ""
-                    cel.fill = witte_fill
+    # Kolombreedtes
+    ws_analyse.column_dimensions["A"].width = 8
+    ws_analyse.column_dimensions["B"].width = 24
+    for idx in range(start_col_attr, start_col_attr + len(analyse_attracties_uur)):
+        ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
 
-            rij += 1
-
-        # Kolombreedtes
-        ws_analyse.column_dimensions["A"].width = 8
-        ws_analyse.column_dimensions["B"].width = 24
-        for idx in range(start_col_attr, start_col_attr + len(analyse_attracties_uur)):
-            ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
-
-        # Enkele lege rijen tussen uurblokken
-        start_rij = rij + 3
-
+    # Enkele lege rijen tussen uurblokken
+    start_rij = rij + 3
 
 
 #DEEL 2
