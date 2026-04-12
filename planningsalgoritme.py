@@ -1763,32 +1763,11 @@ def student_moet_in_analyse(student):
     return heeft_planning or staat_bij_extra
 
 
-def maak_attractie_kleuren(attracties):
-    """
-    Geeft een vaste kleur per attractie.
-    """
-    basis_kleuren = [
-        "F4CCCC", "FCE5CD", "FFF2CC", "D9EAD3", "D0E0E3",
-        "CFE2F3", "D9D2E9", "EAD1DC", "F9CB9C", "B6D7A8",
-        "A2C4C9", "9FC5E8", "B4A7D6", "D5A6BD", "EA9999",
-        "FFD966", "93C47D", "76A5AF", "6FA8DC", "8E7CC3",
-        "C27BA0", "E6B8AF", "FFE599", "B7B7B7", "A4C2F4"
-    ]
-
-    kleuren = {}
-    attracties_sorted = sorted(attracties, key=lambda x: str(x).strip().lower())
-
-    for idx, attr in enumerate(attracties_sorted):
-        kleuren[attr] = basis_kleuren[idx % len(basis_kleuren)]
-
-    return kleuren
-
-
 if heeft_extra_studenten() and heeft_echte_lege_plek():
     ws_analyse = wb_out.create_sheet(title="Analyse", index=1)
 
     analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-    analyse_name_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
     # Studenten selecteren voor analyse
     analyse_studenten = [
@@ -1797,14 +1776,12 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     ]
     analyse_studenten = sorted(analyse_studenten, key=lambda s: naam_tie_break_key(s["naam"]))
 
-    # Alle attracties die minstens 1 van deze studenten kan
-    analyse_attracties = set()
-    for s in analyse_studenten:
-        for attr in s.get("attracties", []):
-            if attr:
-                analyse_attracties.add(str(attr).strip())
-
-    attractie_kleuren = maak_attractie_kleuren(analyse_attracties)
+    # Enkel NIET-samengevoegde attracties gebruiken
+    # We nemen hiervoor de gewone attracties uit attracties_te_plannen zonder " + "
+    analyse_attracties = sorted(
+        [a for a in attracties_te_plannen if a and " + " not in str(a)],
+        key=lambda x: str(x).strip().lower()
+    )
 
     # Titelrij
     ws_analyse.cell(1, 1, vandaag).font = Font(bold=True)
@@ -1817,51 +1794,50 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     ws_analyse.cell(1, 2).alignment = center_align
     ws_analyse.cell(1, 2).border = thin_border
 
-    ws_analyse.cell(1, 3, "Attracties die student kan").font = Font(bold=True)
-    ws_analyse.cell(1, 3).fill = analyse_header_fill
-    ws_analyse.cell(1, 3).alignment = center_align
-    ws_analyse.cell(1, 3).border = thin_border
+    # 1 kolom per attractie
+    start_col_attr = 3
+    for idx, attr in enumerate(analyse_attracties, start=start_col_attr):
+        cel = ws_analyse.cell(1, idx, attr)
+        cel.font = Font(bold=True)
+        cel.fill = analyse_header_fill
+        cel.alignment = center_align
+        cel.border = thin_border
 
+    # Data
     rij = 2
     for s in analyse_studenten:
         naam = s["naam"]
 
         ws_analyse.cell(rij, 1, rij - 1).alignment = center_align
         ws_analyse.cell(rij, 1).border = thin_border
-        ws_analyse.cell(rij, 1).fill = analyse_name_fill
+        ws_analyse.cell(rij, 1).fill = witte_fill
 
-        ws_analyse.cell(rij, 2, naam).alignment = center_align
-        ws_analyse.cell(rij, 2).border = thin_border
-        ws_analyse.cell(rij, 2).fill = (
-            PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-            if naam in student_kleuren else analyse_name_fill
-        )
+        naam_cel = ws_analyse.cell(rij, 2, naam)
+        naam_cel.alignment = center_align
+        naam_cel.border = thin_border
+        if naam in student_kleuren:
+            naam_cel.fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+        else:
+            naam_cel.fill = witte_fill
 
-        # Enkel attracties tonen die student effectief kan volgens de plannerlogica
-        student_attrs = [
-            attr for attr in s.get("attracties", [])
-            if attr and student_kan_attr(s, attr)
-        ]
+        # Set van attracties die student kan, zonder samengevoegde attracties
+        student_attr_set = {
+            str(attr).strip()
+            for attr in s.get("attracties", [])
+            if attr and " + " not in str(attr)
+        }
 
-        # Dubbels eruit, mooie stabiele volgorde
-        unieke_attrs = []
-        gezien = set()
-        for attr in student_attrs:
-            key = str(attr).strip().lower()
-            if key not in gezien:
-                gezien.add(key)
-                unieke_attrs.append(str(attr).strip())
-
-        unieke_attrs = sorted(unieke_attrs, key=lambda x: str(x).strip().lower())
-
-        col = 3
-        for attr in unieke_attrs:
-            cel = ws_analyse.cell(rij, col, attr)
+        for idx, attr in enumerate(analyse_attracties, start=start_col_attr):
+            cel = ws_analyse.cell(rij, idx)
             cel.alignment = center_align
             cel.border = thin_border
-            kleur = attractie_kleuren.get(attr, "FFFFFF")
-            cel.fill = PatternFill(start_color=kleur, end_color=kleur, fill_type="solid")
-            col += 1
+            cel.fill = witte_fill
+            cel.font = Font(color="000000")
+
+            if attr in student_attr_set:
+                cel.value = attr
+            else:
+                cel.value = ""
 
         rij += 1
 
@@ -1869,9 +1845,8 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     ws_analyse.column_dimensions["A"].width = 8
     ws_analyse.column_dimensions["B"].width = 24
 
-    max_col = ws_analyse.max_column
-    for col in range(3, max_col + 1):
-        ws_analyse.column_dimensions[get_column_letter(col)].width = 18
+    for idx in range(start_col_attr, start_col_attr + len(analyse_attracties)):
+        ws_analyse.column_dimensions[get_column_letter(idx)].width = 18
 
 
 
