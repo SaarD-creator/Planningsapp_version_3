@@ -1816,7 +1816,19 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
-    start_rij = 1
+    # -----------------------------
+    # Titel bovenaan de Analyse-pagina
+    # -----------------------------
+    titel = "Hier zie je per uur welke studenten aanwezig zijn en welke attracties ze kunnen:"
+    ws_analyse.merge_cells(start_row=1, start_column=1, end_row=1, end_column=20)
+
+    titel_cel = ws_analyse.cell(1, 1, titel)
+    titel_cel.font = Font(bold=True, size=12)
+    titel_cel.alignment = Alignment(horizontal="center", vertical="center")
+    titel_cel.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    titel_cel.border = thin_border
+
+    start_rij = 3
 
     for uur in sorted(open_uren):
         analyse_studenten_uur = [
@@ -1843,7 +1855,7 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
         ws_analyse.cell(start_rij, 2).border = thin_border
 
         # 1 kolom per attractie
-        start_col_attr = 3
+        start_col_attr = 4
         for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
             cel = ws_analyse.cell(start_rij, idx, attr)
             cel.font = Font(bold=True)
@@ -1864,6 +1876,7 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
             naam_cel.alignment = center_align
             naam_cel.border = thin_border
             student_fill = witte_fill
+
             if naam in student_kleuren:
                 student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
                 naam_cel.fill = student_fill
@@ -1885,7 +1898,7 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
 
             rij += 1
 
-        # Kolombreedtes voor dit blad
+        # Kolombreedtes
         ws_analyse.column_dimensions["A"].width = 8
         ws_analyse.column_dimensions["B"].width = 24
         for idx in range(start_col_attr, start_col_attr + len(analyse_attracties_uur)):
@@ -1893,7 +1906,6 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
 
         # Enkele lege rijen tussen uurblokken
         start_rij = rij + 3
-
 
 
 
