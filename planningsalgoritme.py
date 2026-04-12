@@ -1,3 +1,4 @@
+# zelfde versie als 3.5 maar pauzevlinders zijn ook volgens volgorde uit gekozen nummertje
 #betere verdeling 3 uur blokken, maar te veel 6 uur bij zelfde attractie & 1+3 logica voor 9u30 ipv 3+1 & 2+2 logica voor 4 uur opt einde
 
 #uitschakelen attracties op bepaalde uren lijkt te werken!
@@ -1688,7 +1689,189 @@ for row in ws_out.iter_rows(min_row=2, values_only=True):
 
 
 
+# -----------------------------
+# Analyse-sheet maken indien nodig
+# Alleen als er nog extra's zijn terwijl er elders echte lege plekken zijn
+# -----------------------------
 
+def heeft_echte_lege_plek():
+    """
+    True als er minstens 1 echte lege plek bestaat op de planning:
+    - attractie is actief op dat uur
+    - niet gesloten / niet red spot
+    - geen geblokkeerde 2e plek
+    - plaats is binnen de capaciteit
+    - er staat nog niemand op die plek
+    """
+    for uur in open_uren:
+        for attr in actieve_attracties_per_uur.get(uur, set()):
+            if attr in red_spots.get(uur, set()):
+                continue
+
+            max_pos = aantallen[uur].get(attr, 1)
+            if attr in second_spot_blocked.get(uur, set()):
+                max_pos = 1
+
+            namen = assigned_map.get((uur, attr), [])
+            for pos_idx in range(1, max_pos + 1):
+                naam = namen[pos_idx - 1] if pos_idx - 1 < len(namen) else ""
+                if not naam:
+                    return True
+    return False
+
+
+def heeft_extra_studenten():
+    return any(len(namen) > 0 for namen in extra_assignments.values())
+
+
+def student_werkt_buiten_pauzevlinderuren(student):
+    """
+    True als student effectief werkt buiten de pure pauzevlinderuren.
+    We kijken naar:
+    - toegewezen uren in planning
+    - of uren waar student nog als extra staat
+    """
+    naam = student["naam"]
+
+    assigned_buiten_pv = any(
+        uur not in required_pauze_hours
+        for uur in set(student.get("assigned_hours", []))
+    )
+
+    extra_buiten_pv = any(
+        naam in extra_assignments.get(uur, [])
+        and uur not in required_pauze_hours
+        for uur in open_uren
+    )
+
+    return assigned_buiten_pv or extra_buiten_pv
+
+
+def student_moet_in_analyse(student):
+    """
+    In Analyse tonen we alle studenten die die dag werken,
+    behalve pure pauzevlinders.
+    """
+    naam = student["naam"]
+
+    if student.get("is_pauzevlinder"):
+        return student_werkt_buiten_pauzevlinderuren(student)
+
+    heeft_planning = len(student.get("assigned_hours", [])) > 0
+    staat_bij_extra = any(naam in extra_assignments.get(uur, []) for uur in open_uren)
+
+    return heeft_planning or staat_bij_extra
+
+
+def maak_attractie_kleuren(attracties):
+    """
+    Geeft een vaste kleur per attractie.
+    """
+    basis_kleuren = [
+        "F4CCCC", "FCE5CD", "FFF2CC", "D9EAD3", "D0E0E3",
+        "CFE2F3", "D9D2E9", "EAD1DC", "F9CB9C", "B6D7A8",
+        "A2C4C9", "9FC5E8", "B4A7D6", "D5A6BD", "EA9999",
+        "FFD966", "93C47D", "76A5AF", "6FA8DC", "8E7CC3",
+        "C27BA0", "E6B8AF", "FFE599", "B7B7B7", "A4C2F4"
+    ]
+
+    kleuren = {}
+    attracties_sorted = sorted(attracties, key=lambda x: str(x).strip().lower())
+
+    for idx, attr in enumerate(attracties_sorted):
+        kleuren[attr] = basis_kleuren[idx % len(basis_kleuren)]
+
+    return kleuren
+
+
+if heeft_extra_studenten() and heeft_echte_lege_plek():
+    ws_analyse = wb_out.create_sheet(title="Analyse", index=1)
+
+    analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    analyse_name_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+    # Studenten selecteren voor analyse
+    analyse_studenten = [
+        s for s in studenten
+        if student_moet_in_analyse(s)
+    ]
+    analyse_studenten = sorted(analyse_studenten, key=lambda s: naam_tie_break_key(s["naam"]))
+
+    # Alle attracties die minstens 1 van deze studenten kan
+    analyse_attracties = set()
+    for s in analyse_studenten:
+        for attr in s.get("attracties", []):
+            if attr:
+                analyse_attracties.add(str(attr).strip())
+
+    attractie_kleuren = maak_attractie_kleuren(analyse_attracties)
+
+    # Titelrij
+    ws_analyse.cell(1, 1, vandaag).font = Font(bold=True)
+    ws_analyse.cell(1, 1).fill = analyse_header_fill
+    ws_analyse.cell(1, 1).alignment = center_align
+    ws_analyse.cell(1, 1).border = thin_border
+
+    ws_analyse.cell(1, 2, "Student").font = Font(bold=True)
+    ws_analyse.cell(1, 2).fill = analyse_header_fill
+    ws_analyse.cell(1, 2).alignment = center_align
+    ws_analyse.cell(1, 2).border = thin_border
+
+    ws_analyse.cell(1, 3, "Attracties die student kan").font = Font(bold=True)
+    ws_analyse.cell(1, 3).fill = analyse_header_fill
+    ws_analyse.cell(1, 3).alignment = center_align
+    ws_analyse.cell(1, 3).border = thin_border
+
+    rij = 2
+    for s in analyse_studenten:
+        naam = s["naam"]
+
+        ws_analyse.cell(rij, 1, rij - 1).alignment = center_align
+        ws_analyse.cell(rij, 1).border = thin_border
+        ws_analyse.cell(rij, 1).fill = analyse_name_fill
+
+        ws_analyse.cell(rij, 2, naam).alignment = center_align
+        ws_analyse.cell(rij, 2).border = thin_border
+        ws_analyse.cell(rij, 2).fill = (
+            PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+            if naam in student_kleuren else analyse_name_fill
+        )
+
+        # Enkel attracties tonen die student effectief kan volgens de plannerlogica
+        student_attrs = [
+            attr for attr in s.get("attracties", [])
+            if attr and student_kan_attr(s, attr)
+        ]
+
+        # Dubbels eruit, mooie stabiele volgorde
+        unieke_attrs = []
+        gezien = set()
+        for attr in student_attrs:
+            key = str(attr).strip().lower()
+            if key not in gezien:
+                gezien.add(key)
+                unieke_attrs.append(str(attr).strip())
+
+        unieke_attrs = sorted(unieke_attrs, key=lambda x: str(x).strip().lower())
+
+        col = 3
+        for attr in unieke_attrs:
+            cel = ws_analyse.cell(rij, col, attr)
+            cel.alignment = center_align
+            cel.border = thin_border
+            kleur = attractie_kleuren.get(attr, "FFFFFF")
+            cel.fill = PatternFill(start_color=kleur, end_color=kleur, fill_type="solid")
+            col += 1
+
+        rij += 1
+
+    # Kolombreedtes
+    ws_analyse.column_dimensions["A"].width = 8
+    ws_analyse.column_dimensions["B"].width = 24
+
+    max_col = ws_analyse.max_column
+    for col in range(3, max_col + 1):
+        ws_analyse.column_dimensions[get_column_letter(col)].width = 18
 
 
 
