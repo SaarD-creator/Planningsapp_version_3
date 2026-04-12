@@ -1687,12 +1687,10 @@ for row in ws_out.iter_rows(min_row=2, values_only=True):
             student_totalen[naam] += 1
 
 
-
 # -----------------------------
 # Analyse-sheet maken indien nodig
 # Alleen als er nog extra's zijn terwijl er elders echte lege plekken zijn
 # -----------------------------
-from openpyxl.worksheet.datavalidation import DataValidation
 
 def heeft_echte_lege_plek():
     """
@@ -1724,52 +1722,18 @@ def heeft_extra_studenten():
     return any(len(namen) > 0 for namen in extra_assignments.values())
 
 
-def student_werkt_buiten_pauzevlinderuren(student):
+def student_is_aanwezig_op_uur_zonder_pauzevlinder(student, uur):
     """
-    True als student effectief werkt buiten de pure pauzevlinderuren.
-    We kijken naar:
-    - toegewezen uren in planning
-    - of uren waar student nog als extra staat
-    """
-    naam = student["naam"]
-
-    assigned_buiten_pv = any(
-        uur not in required_pauze_hours
-        for uur in set(student.get("assigned_hours", []))
-    )
-
-    extra_buiten_pv = any(
-        naam in extra_assignments.get(uur, [])
-        and uur not in required_pauze_hours
-        for uur in open_uren
-    )
-
-    return assigned_buiten_pv or extra_buiten_pv
-
-
-def student_moet_in_analyse(student):
-    """
-    In Analyse tonen we alle studenten die die dag werken,
-    behalve pure pauzevlinders.
+    Student telt mee in analyse voor dit uur als:
+    - student effectief aanwezig is op dit uur
+      (ingepland of extra)
+    - en NIET als pauzevlinder bezig is op dit uur
     """
     naam = student["naam"]
 
-    if student.get("is_pauzevlinder"):
-        return student_werkt_buiten_pauzevlinderuren(student)
-
-    heeft_planning = len(student.get("assigned_hours", [])) > 0
-    staat_bij_extra = any(naam in extra_assignments.get(uur, []) for uur in open_uren)
-
-    return heeft_planning or staat_bij_extra
-
-
-def student_is_aanwezig_op_uur(student, uur):
-    """
-    Student telt als aanwezig op dit uur als hij/zij:
-    - ingepland staat op dat uur
-    - of bij extra staat op dat uur
-    """
-    naam = student["naam"]
+    # Pauzevlinder tijdens pauzevlinderuur telt niet mee
+    if student.get("is_pauzevlinder") and uur in required_pauze_hours:
+        return False
 
     if uur in set(student.get("assigned_hours", [])):
         return True
@@ -1780,189 +1744,155 @@ def student_is_aanwezig_op_uur(student, uur):
     return False
 
 
+def student_kan_attr_in_analyse(student, attr):
+    """
+    Voor analyse:
+    - respecteer blacklist
+    - samengevoegde attractie mag enkel als student alle onderdelen kan
+    """
+    naam = student["naam"]
+
+    if " + " not in attr:
+        return attr.lower() not in student_blacklist.get(naam, set()) and attr in student.get("attracties", [])
+
+    onderdelen = [a.strip() for a in attr.split("+")]
+    for onderdeel in onderdelen:
+        if onderdeel.lower() in student_blacklist.get(naam, set()):
+            return False
+
+    return all(onderdeel in student.get("attracties", []) for onderdeel in onderdelen)
+
+
+def actieve_analyse_attracties_op_uur(uur):
+    """
+    Geeft attracties terug in de volgorde van Input!BL16:BL33,
+    maar aangepast aan het specifieke uur:
+    - losse attracties als ze actief zijn
+    - samengevoegde attracties enkel als ze dat uur actief samengevoegd zijn
+    """
+    actieve_set = actieve_attracties_per_uur.get(uur, set())
+
+    input_volgorde_lokaal = []
+    for rij_bl in range(16, 34):  # BL16 t.e.m. BL33
+        attr = ws[f"BL{rij_bl}"].value
+        if attr:
+            input_volgorde_lokaal.append(str(attr).strip())
+
+    resultaat = []
+    gebruikte = set()
+
+    # Eerst gewone attracties in inputvolgorde
+    for attr in input_volgorde_lokaal:
+        if attr in actieve_set and attr not in gebruikte:
+            resultaat.append(attr)
+            gebruikte.add(attr)
+
+        # Kijk of een samengestelde attractie met dit onderdeel actief is op dit uur
+        for actief_attr in actieve_set:
+            if " + " not in str(actief_attr):
+                continue
+            onderdelen = [x.strip() for x in str(actief_attr).split("+")]
+            if attr in onderdelen and actief_attr not in gebruikte:
+                # pas invoegen na laatste onderdeel uit de inputvolgorde
+                if all(o in input_volgorde_lokaal for o in onderdelen):
+                    laatst_idx = max(input_volgorde_lokaal.index(o) for o in onderdelen)
+                    huidig_idx = input_volgorde_lokaal.index(attr)
+                    if huidig_idx == laatst_idx:
+                        resultaat.append(actief_attr)
+                        gebruikte.add(actief_attr)
+
+    # Daarna nog eventuele actieve attracties die niet in BL-lijst zaten
+    for attr in actieve_set:
+        if attr not in gebruikte:
+            resultaat.append(attr)
+            gebruikte.add(attr)
+
+    return resultaat
+
+
 if heeft_extra_studenten() and heeft_echte_lege_plek():
     ws_analyse = wb_out.create_sheet(title="Analyse", index=1)
 
     analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
-    # Studenten selecteren voor analyse
-    analyse_studenten = [
-        s for s in studenten
-        if student_moet_in_analyse(s)
-    ]
-    analyse_studenten = sorted(analyse_studenten, key=lambda s: naam_tie_break_key(s["naam"]))
+    start_rij = 1
 
-    # Attracties in de volgorde van Input!BL16:BL33
-    # Samengevoegde attracties eruit
-    analyse_attracties = []
-    for rij_bl in range(16, 34):  # BL16 t.e.m. BL33
-        attr = ws[f"BL{rij_bl}"].value
-        if attr:
-            attr = str(attr).strip()
-            if " + " not in attr:
-                analyse_attracties.append(attr)
+    for uur in sorted(open_uren):
+        analyse_studenten_uur = [
+            s for s in studenten
+            if student_is_aanwezig_op_uur_zonder_pauzevlinder(s, uur)
+        ]
+        analyse_studenten_uur = sorted(analyse_studenten_uur, key=lambda s: naam_tie_break_key(s["naam"]))
 
-    # dubbels verwijderen, volgorde behouden
-    analyse_attracties_uniek = []
-    gezien = set()
-    for attr in analyse_attracties:
-        key = attr.lower()
-        if key not in gezien:
-            gezien.add(key)
-            analyse_attracties_uniek.append(attr)
+        analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
 
-    analyse_attracties = analyse_attracties_uniek
+        # Als er voor dit uur niets te tonen is, sla over
+        if not analyse_studenten_uur or not analyse_attracties_uur:
+            continue
 
-    # Titelrij
-    ws_analyse.cell(1, 1, vandaag).font = Font(bold=True)
-    ws_analyse.cell(1, 1).fill = analyse_header_fill
-    ws_analyse.cell(1, 1).alignment = center_align
-    ws_analyse.cell(1, 1).border = thin_border
+        # Uur in plaats van datum
+        ws_analyse.cell(start_rij, 1, f"{uur}:00").font = Font(bold=True)
+        ws_analyse.cell(start_rij, 1).fill = analyse_header_fill
+        ws_analyse.cell(start_rij, 1).alignment = center_align
+        ws_analyse.cell(start_rij, 1).border = thin_border
 
-    ws_analyse.cell(1, 2, "Student").font = Font(bold=True)
-    ws_analyse.cell(1, 2).fill = analyse_header_fill
-    ws_analyse.cell(1, 2).alignment = center_align
-    ws_analyse.cell(1, 2).border = thin_border
+        ws_analyse.cell(start_rij, 2, "Student").font = Font(bold=True)
+        ws_analyse.cell(start_rij, 2).fill = analyse_header_fill
+        ws_analyse.cell(start_rij, 2).alignment = center_align
+        ws_analyse.cell(start_rij, 2).border = thin_border
 
-    # 1 kolom per attractie
-    start_col_attr = 3
-    for idx, attr in enumerate(analyse_attracties, start=start_col_attr):
-        cel = ws_analyse.cell(1, idx, attr)
-        cel.font = Font(bold=True)
-        cel.fill = analyse_header_fill
-        cel.alignment = center_align
-        cel.border = thin_border
-
-    # Extra verborgen helperkolom voor FILTER-formule
-    helper_col = start_col_attr + len(analyse_attracties)
-    ws_analyse.cell(1, helper_col, "_uren_helper").font = Font(bold=True)
-    ws_analyse.cell(1, helper_col).border = thin_border
-    ws_analyse.column_dimensions[get_column_letter(helper_col)].hidden = True
-
-    # Data
-    rij = 2
-    for s in analyse_studenten:
-        naam = s["naam"]
-
-        ws_analyse.cell(rij, 1, rij - 1).alignment = center_align
-        ws_analyse.cell(rij, 1).border = thin_border
-        ws_analyse.cell(rij, 1).fill = witte_fill
-
-        naam_cel = ws_analyse.cell(rij, 2, naam)
-        naam_cel.alignment = center_align
-        naam_cel.border = thin_border
-        student_fill = witte_fill
-        if naam in student_kleuren:
-            student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-            naam_cel.fill = student_fill
-        else:
-            naam_cel.fill = witte_fill
-
-        # Set van attracties die student kan, zonder samengevoegde attracties
-        # EN met respect voor blacklist BC:BG
-        student_attr_set = set()
-        for attr in s.get("attracties", []):
-            if not attr:
-                continue
-            attr = str(attr).strip()
-            if " + " in attr:
-                continue
-            if attr.lower() in student_blacklist.get(naam, set()):
-                continue
-            student_attr_set.add(attr.lower())
-
-        for idx, attr in enumerate(analyse_attracties, start=start_col_attr):
-            cel = ws_analyse.cell(rij, idx)
+        # 1 kolom per attractie
+        start_col_attr = 3
+        for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
+            cel = ws_analyse.cell(start_rij, idx, attr)
+            cel.font = Font(bold=True)
+            cel.fill = analyse_header_fill
             cel.alignment = center_align
             cel.border = thin_border
-            cel.font = Font(color="000000")
 
-            if attr.strip().lower() in student_attr_set:
-                cel.value = attr
-                cel.fill = student_fill
+        # Data voor dit uur
+        rij = start_rij + 1
+        for s in analyse_studenten_uur:
+            naam = s["naam"]
+
+            ws_analyse.cell(rij, 1, rij - start_rij).alignment = center_align
+            ws_analyse.cell(rij, 1).border = thin_border
+            ws_analyse.cell(rij, 1).fill = witte_fill
+
+            naam_cel = ws_analyse.cell(rij, 2, naam)
+            naam_cel.alignment = center_align
+            naam_cel.border = thin_border
+            student_fill = witte_fill
+            if naam in student_kleuren:
+                student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
+                naam_cel.fill = student_fill
             else:
-                cel.value = ""
-                cel.fill = witte_fill
+                naam_cel.fill = witte_fill
 
-        # Helperstring met aanwezige uren, bv. |10|12|14|
-        aanwezige_uren = sorted({
-            uur for uur in open_uren
-            if student_is_aanwezig_op_uur(s, uur)
-        })
-        helper_string = "|" + "|".join(str(u) for u in aanwezige_uren) + "|" if aanwezige_uren else ""
-        ws_analyse.cell(rij, helper_col, helper_string).border = thin_border
+            for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
+                cel = ws_analyse.cell(rij, idx)
+                cel.alignment = center_align
+                cel.border = thin_border
+                cel.font = Font(color="000000")
 
-        rij += 1
+                if student_kan_attr_in_analyse(s, attr):
+                    cel.value = attr
+                    cel.fill = student_fill
+                else:
+                    cel.value = ""
+                    cel.fill = witte_fill
 
-    laatste_data_rij = rij - 1
-    laatste_data_col = start_col_attr + len(analyse_attracties) - 1
+            rij += 1
 
-    # Kolombreedtes
-    ws_analyse.column_dimensions["A"].width = 8
-    ws_analyse.column_dimensions["B"].width = 24
+        # Kolombreedtes voor dit blad
+        ws_analyse.column_dimensions["A"].width = 8
+        ws_analyse.column_dimensions["B"].width = 24
+        for idx in range(start_col_attr, start_col_attr + len(analyse_attracties_uur)):
+            ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
 
-    # attractiekolommen smaller: ongeveer 3/4 van 18 = 13.5
-    for idx in range(start_col_attr, start_col_attr + len(analyse_attracties)):
-        ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
-
-    # -----------------------------
-    # Uurfilter onder de tabel
-    # -----------------------------
-    filter_start_rij = laatste_data_rij + 3
-
-    ws_analyse.cell(filter_start_rij, 1, "Filter op uur:").font = Font(bold=True)
-    ws_analyse.cell(filter_start_rij, 1).alignment = center_align
-    ws_analyse.cell(filter_start_rij, 1).border = thin_border
-
-    dropdown_cel = ws_analyse.cell(filter_start_rij, 2)
-    dropdown_cel.value = open_uren[0] if open_uren else ""
-    dropdown_cel.alignment = center_align
-    dropdown_cel.border = thin_border
-    dropdown_cel.fill = witte_fill
-
-    # Dropdownlijst met uren
-    uren_csv = ",".join(str(u) for u in sorted(open_uren))
-    dv = DataValidation(
-        type="list",
-        formula1=f'"{uren_csv}"',
-        allow_blank=False
-    )
-    dv.prompt = "Kies een uur"
-    dv.error = "Kies een uur uit de lijst."
-    ws_analyse.add_data_validation(dv)
-    dv.add(dropdown_cel)
-
-    # Titel voor gefilterde output
-    filter_header_rij = filter_start_rij + 2
-    ws_analyse.cell(filter_header_rij, 1, "Gefilterde analyse").font = Font(bold=True)
-    ws_analyse.cell(filter_header_rij, 1).alignment = center_align
-    ws_analyse.cell(filter_header_rij, 1).border = thin_border
-
-    # Header opnieuw tonen
-    for col in range(1, laatste_data_col + 1):
-        bron = ws_analyse.cell(1, col)
-        doel = ws_analyse.cell(filter_header_rij + 1, col)
-        doel.value = bron.value
-        doel.font = Font(bold=True)
-        doel.fill = analyse_header_fill
-        doel.alignment = center_align
-        doel.border = thin_border
-
-    # FILTER-formule
-    # Filtert alle rijen van de analyse op basis van gekozen uur in B(filter_start_rij)
-    filter_output_start_rij = filter_header_rij + 2
-    data_range = f"A2:{get_column_letter(laatste_data_col)}{laatste_data_rij}"
-    helper_range = f"{get_column_letter(helper_col)}2:{get_column_letter(helper_col)}{laatste_data_rij}"
-    dropdown_ref = f"$B${filter_start_rij}"
-
-    formule = (
-        f'=FILTER({data_range},'
-        f'ISNUMBER(SEARCH("|"&{dropdown_ref}&"|",{helper_range})),'
-        f'"")'
-    )
-
-    ws_analyse.cell(filter_output_start_rij, 1, formule)
+        # Enkele lege rijen tussen uurblokken
+        start_rij = rij + 3
 
 
 
