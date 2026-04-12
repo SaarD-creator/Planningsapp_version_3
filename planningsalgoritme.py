@@ -5920,6 +5920,19 @@ for col_idx, breedte in breedtes.items():
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 
+# -----------------------------
+# Werkbladen verbergen op basis van AS2
+# -----------------------------
+as2_vinkje = ws.cell(2, 45).value  # Kolom AS = 45
+
+verberg_bladen = as2_vinkje in [1, True, "WAAR", "X"]
+
+if verberg_bladen:
+    if "Pauzevlinders" in wb_out.sheetnames:
+        wb_out["Pauzevlinders"].sheet_state = "hidden"
+
+    if "Feedback" in wb_out.sheetnames:
+        wb_out["Feedback"].sheet_state = "hidden"
 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
