@@ -210,7 +210,6 @@ open_uren=sorted(set(open_uren))
 # -----------------------------
 pauzevlinder_namen=[ws[f'BN{rij}'].value for rij in range(4,11) if ws[f'BN{rij}'].value]
 
-
 def compute_pauze_hours(open_uren):
     if 10 in open_uren and 18 in open_uren:
         return [h for h in open_uren if 12 <= h <= 16]
@@ -235,7 +234,7 @@ for idx,pvnaam in enumerate(pauzevlinder_namen,start=1):
 
 # Maak 'selected' lijst van pauzevlinders (dicts met naam en attracties)
 selected = [s for s in studenten if s.get("is_pauzevlinder")]
-
+selected = sorted(selected, key=lambda s: naam_tie_break_key(s["naam"]))
 
 # -----------------------------
 # Attracties & aantallen (raw)
@@ -488,8 +487,9 @@ except:
 if tie_break_mode not in [1, 2, 3, 4, 5]:
     tie_break_mode = 1
 
-def student_tie_break_key(student):
-    naam = str(student["naam"]).strip().lower()
+
+def naam_tie_break_key(naam_raw):
+    naam = str(naam_raw).strip().lower()
 
     if tie_break_mode == 1:
         # gewone alfabetische volgorde
@@ -497,11 +497,10 @@ def student_tie_break_key(student):
 
     elif tie_break_mode == 2:
         # omgekeerde alfabetische volgorde
-        # opgelost via reversed-string zodat sorted(..., reverse=False) kan blijven werken
         return "".join(chr(255 - ord(c)) for c in naam)
 
     elif tie_break_mode == 3:
-        # eerst op aantal letters, daarna gewoon alfabetisch
+        # eerst op aantal letters, daarna alfabetisch
         return (len(naam), naam)
 
     elif tie_break_mode == 4:
@@ -513,6 +512,11 @@ def student_tie_break_key(student):
         return "".join(chr(255 - ord(c)) for c in naam[::-1])
 
     return naam
+
+
+
+def student_tie_break_key(student):
+    return naam_tie_break_key(student["naam"])
 
 studenten_sorted = sorted(
     studenten_workend,
@@ -1629,9 +1633,11 @@ for attr in alle_actieve_attracties:
         
 # Pauzevlinders
 rij_out += 1
-for pv_idx, pvnaam in enumerate(pauzevlinder_namen, start=1):
-    ws_out.cell(rij_out, 1, f"Pauzevlinder {pv_idx}").font = Font(bold=True)  # tekst blijft zwart
-    ws_out.cell(rij_out, 1).fill = white_fill  # cel wit
+pauzevlinder_namen_sorted = [pv["naam"] for pv in selected]
+
+for pv_idx, pvnaam in enumerate(pauzevlinder_namen_sorted, start=1):
+    ws_out.cell(rij_out, 1, f"Pauzevlinder {pv_idx}").font = Font(bold=True)
+    ws_out.cell(rij_out, 1).fill = white_fill
     ws_out.cell(rij_out, 1).border = thin_border
     for col_idx, uur in enumerate(sorted(open_uren), start=2):
         naam = pvnaam if uur in required_pauze_hours else ""
