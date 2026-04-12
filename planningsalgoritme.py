@@ -4004,7 +4004,28 @@ def pp2_choose_middle_col(naam, ws_sheet, pauze_cols):
 
     return best_col
 
+def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
+    """
+    Geldige korte pauze:
+    - student werkt dat uur
+    - niet in eerste of laatste werkuur
+    """
+    header = ws_sheet.cell(1, col).value
+    uur = parse_header_uur(header)
+    if uur is None:
+        return False
 
+    werk_uren = pp2_get_student_work_hours(naam)
+    if len(werk_uren) < 4:
+        return False
+
+    if uur not in werk_uren:
+        return False
+
+    if uur == werk_uren[0] or uur == werk_uren[-1]:
+        return False
+
+    return True
 
 
 def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
@@ -4815,28 +4836,6 @@ def pp2_mark_open_spot(ws_sheet, pv_row, col):
     cel.fill = naam_leeg_fill_pp2
 
 
-def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
-    """
-    Geldige korte pauze:
-    - student werkt dat uur
-    - niet in eerste of laatste werkuur
-    """
-    header = ws_sheet.cell(1, col).value
-    uur = parse_header_uur(header)
-    if uur is None:
-        return False
-
-    werk_uren = pp2_get_student_work_hours(naam)
-    if len(werk_uren) < 4:
-        return False
-
-    if uur not in werk_uren:
-        return False
-
-    if uur == werk_uren[0] or uur == werk_uren[-1]:
-        return False
-
-    return True
 
 
 def pp2_write_short_break_for_pv(ws_sheet, pv_row, col, naam):
