@@ -1688,11 +1688,11 @@ for row in ws_out.iter_rows(min_row=2, values_only=True):
 
 
 
-
 # -----------------------------
 # Analyse-sheet maken indien nodig
 # Alleen als er nog extra's zijn terwijl er elders echte lege plekken zijn
 # -----------------------------
+from openpyxl.worksheet.datavalidation import DataValidation
 
 def heeft_echte_lege_plek():
     """
@@ -1763,6 +1763,23 @@ def student_moet_in_analyse(student):
     return heeft_planning or staat_bij_extra
 
 
+def student_is_aanwezig_op_uur(student, uur):
+    """
+    Student telt als aanwezig op dit uur als hij/zij:
+    - ingepland staat op dat uur
+    - of bij extra staat op dat uur
+    """
+    naam = student["naam"]
+
+    if uur in set(student.get("assigned_hours", [])):
+        return True
+
+    if naam in extra_assignments.get(uur, []):
+        return True
+
+    return False
+
+
 if heeft_extra_studenten() and heeft_echte_lege_plek():
     ws_analyse = wb_out.create_sheet(title="Analyse", index=1)
 
@@ -1777,6 +1794,7 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     analyse_studenten = sorted(analyse_studenten, key=lambda s: naam_tie_break_key(s["naam"]))
 
     # Attracties in de volgorde van Input!BL16:BL33
+    # Samengevoegde attracties eruit
     analyse_attracties = []
     for rij_bl in range(16, 34):  # BL16 t.e.m. BL33
         attr = ws[f"BL{rij_bl}"].value
@@ -1816,6 +1834,12 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
         cel.alignment = center_align
         cel.border = thin_border
 
+    # Extra verborgen helperkolom voor FILTER-formule
+    helper_col = start_col_attr + len(analyse_attracties)
+    ws_analyse.cell(1, helper_col, "_uren_helper").font = Font(bold=True)
+    ws_analyse.cell(1, helper_col).border = thin_border
+    ws_analyse.column_dimensions[get_column_letter(helper_col)].hidden = True
+
     # Data
     rij = 2
     for s in analyse_studenten:
@@ -1836,11 +1860,17 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
             naam_cel.fill = witte_fill
 
         # Set van attracties die student kan, zonder samengevoegde attracties
-        student_attr_set = {
-            str(attr).strip().lower()
-            for attr in s.get("attracties", [])
-            if attr and " + " not in str(attr)
-        }
+        # EN met respect voor blacklist BC:BG
+        student_attr_set = set()
+        for attr in s.get("attracties", []):
+            if not attr:
+                continue
+            attr = str(attr).strip()
+            if " + " in attr:
+                continue
+            if attr.lower() in student_blacklist.get(naam, set()):
+                continue
+            student_attr_set.add(attr.lower())
 
         for idx, attr in enumerate(analyse_attracties, start=start_col_attr):
             cel = ws_analyse.cell(rij, idx)
@@ -1855,7 +1885,18 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
                 cel.value = ""
                 cel.fill = witte_fill
 
+        # Helperstring met aanwezige uren, bv. |10|12|14|
+        aanwezige_uren = sorted({
+            uur for uur in open_uren
+            if student_is_aanwezig_op_uur(s, uur)
+        })
+        helper_string = "|" + "|".join(str(u) for u in aanwezige_uren) + "|" if aanwezige_uren else ""
+        ws_analyse.cell(rij, helper_col, helper_string).border = thin_border
+
         rij += 1
+
+    laatste_data_rij = rij - 1
+    laatste_data_col = start_col_attr + len(analyse_attracties) - 1
 
     # Kolombreedtes
     ws_analyse.column_dimensions["A"].width = 8
@@ -1865,6 +1906,63 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
     for idx in range(start_col_attr, start_col_attr + len(analyse_attracties)):
         ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
 
+    # -----------------------------
+    # Uurfilter onder de tabel
+    # -----------------------------
+    filter_start_rij = laatste_data_rij + 3
+
+    ws_analyse.cell(filter_start_rij, 1, "Filter op uur:").font = Font(bold=True)
+    ws_analyse.cell(filter_start_rij, 1).alignment = center_align
+    ws_analyse.cell(filter_start_rij, 1).border = thin_border
+
+    dropdown_cel = ws_analyse.cell(filter_start_rij, 2)
+    dropdown_cel.value = open_uren[0] if open_uren else ""
+    dropdown_cel.alignment = center_align
+    dropdown_cel.border = thin_border
+    dropdown_cel.fill = witte_fill
+
+    # Dropdownlijst met uren
+    uren_csv = ",".join(str(u) for u in sorted(open_uren))
+    dv = DataValidation(
+        type="list",
+        formula1=f'"{uren_csv}"',
+        allow_blank=False
+    )
+    dv.prompt = "Kies een uur"
+    dv.error = "Kies een uur uit de lijst."
+    ws_analyse.add_data_validation(dv)
+    dv.add(dropdown_cel)
+
+    # Titel voor gefilterde output
+    filter_header_rij = filter_start_rij + 2
+    ws_analyse.cell(filter_header_rij, 1, "Gefilterde analyse").font = Font(bold=True)
+    ws_analyse.cell(filter_header_rij, 1).alignment = center_align
+    ws_analyse.cell(filter_header_rij, 1).border = thin_border
+
+    # Header opnieuw tonen
+    for col in range(1, laatste_data_col + 1):
+        bron = ws_analyse.cell(1, col)
+        doel = ws_analyse.cell(filter_header_rij + 1, col)
+        doel.value = bron.value
+        doel.font = Font(bold=True)
+        doel.fill = analyse_header_fill
+        doel.alignment = center_align
+        doel.border = thin_border
+
+    # FILTER-formule
+    # Filtert alle rijen van de analyse op basis van gekozen uur in B(filter_start_rij)
+    filter_output_start_rij = filter_header_rij + 2
+    data_range = f"A2:{get_column_letter(laatste_data_col)}{laatste_data_rij}"
+    helper_range = f"{get_column_letter(helper_col)}2:{get_column_letter(helper_col)}{laatste_data_rij}"
+    dropdown_ref = f"$B${filter_start_rij}"
+
+    formule = (
+        f'=FILTER({data_range},'
+        f'ISNUMBER(SEARCH("|"&{dropdown_ref}&"|",{helper_range})),'
+        f'"")'
+    )
+
+    ws_analyse.cell(filter_output_start_rij, 1, formule)
 
 
 
