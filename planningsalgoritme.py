@@ -5921,32 +5921,12 @@ for col_idx, breedte in breedtes.items():
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 
 # -----------------------------
-# Werkbladen verbergen op basis van AS2
+# Werkbladen altijd verbergen
 # -----------------------------
-def is_aangevinkt_excel_checkbox(val):
-    """
-    Robuuste interpretatie van een Excel-checkbox / gekoppelde cel.
-    Werkt met booleans, 1/0, tekst zoals WAAR/TRUE/X, enz.
-    """
-    if val is None:
-        return False
-
-    if isinstance(val, bool):
-        return val
-
-    if isinstance(val, (int, float)):
-        return val == 1
-
-    s = str(val).strip().upper()
-    return s in ["1", "TRUE", "WAAR", "X", "YES", "JA"]
-
-as2_vinkje = ws["AS2"].value
-
-if is_aangevinkt_excel_checkbox(as2_vinkje):
-    for bladnaam in ["Pauzevlinders", "Feedback"]:
-        if bladnaam in wb_out.sheetnames:
-            wb_out[bladnaam].sheet_state = "hidden"
-
+for bladnaam in ["Pauzevlinders", "Feedback"]:
+    if bladnaam in wb_out.sheetnames:
+        ws_hide = wb_out[bladnaam]
+        ws_hide.sheet_state = "veryHidden" 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
 
