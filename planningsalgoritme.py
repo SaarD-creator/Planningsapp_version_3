@@ -1824,7 +1824,7 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
 
     titel_cel = ws_analyse.cell(1, 1, titel)
     titel_cel.font = Font(bold=True, size=12)
-    titel_cel.alignment = Alignment(horizontal="center", vertical="center")
+    titel_cel.alignment = Alignment(horizontal="left", vertical="center", indent=1)
     titel_cel.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     titel_cel.border = thin_border
 
@@ -1855,7 +1855,7 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
         ws_analyse.cell(start_rij, 2).border = thin_border
 
         # 1 kolom per attractie
-        start_col_attr = 4
+        start_col_attr = 3
         for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
             cel = ws_analyse.cell(start_rij, idx, attr)
             cel.font = Font(bold=True)
@@ -1906,9 +1906,6 @@ if heeft_extra_studenten() and heeft_echte_lege_plek():
 
         # Enkele lege rijen tussen uurblokken
         start_rij = rij + 3
-
-
-
 
 
 
