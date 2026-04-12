@@ -5929,10 +5929,10 @@ verberg_bladen = as2_vinkje in [1, True, "WAAR", "X"]
 
 if verberg_bladen:
     if "Pauzevlinders" in wb_out.sheetnames:
-        wb_out["Pauzevlinders"].sheet_state = "hidden"
+        wb_out["Pauzevlinders"].sheet_state = "veryHidden"
 
     if "Feedback" in wb_out.sheetnames:
-        wb_out["Feedback"].sheet_state = "hidden"
+        wb_out["Feedback"].sheet_state = "veryHidden"
 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
