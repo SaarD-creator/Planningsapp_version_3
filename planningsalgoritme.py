@@ -5183,7 +5183,9 @@ def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
     """
     Korte pauze voor gewone student:
     - bovenliggende cel = attractie
-    - naamcel = paars
+    - naamcel:
+        * lichtgeel voor minderjarigen die >4u werken
+        * lichtpaars voor alle andere korte pauzes
     """
     header = ws_sheet.cell(1, col).value
     uur = parse_header_uur(header)
@@ -5199,7 +5201,11 @@ def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
     cel.value = naam
     cel.alignment = center_align
     cel.border = thin_border
-    cel.fill = lichtpaars_fill
+
+    if pp2_is_minderjarig(naam) and student_totalen.get(naam, 0) > 4:
+        cel.fill = light_fill
+    else:
+        cel.fill = lichtpaars_fill
 
 
 def pp2_get_long_break_owners_on_row(ws_sheet, pv_row, pauze_cols):
@@ -5856,72 +5862,20 @@ ws_feedback2.cell(row_fb2, 1, "Feedback PP optie 2").font = Font(bold=True)
 row_fb2 += 2
 
 # -----------------------------------
-# HULPFUNCTIES FEEDBACK PP2
-# -----------------------------------
-def pp2_feedback_total_assigned_quarters(naam):
-    count = 0
-    for _pv, pv_row in pv_rows_pp2:
-        for col in pauze_cols_pp2:
-            if ws_pp2.cell(pv_row, col).value == naam:
-                count += 1
-    return count
-
-
-def pp2_feedback_heeft_lange_pauze(naam):
-    return pp2_heeft_al_lange_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2)
-
-
-def pp2_feedback_benodigde_korte_kwartieren(naam):
-    gewerkte_uren = student_totalen.get(naam, 0)
-
-    if gewerkte_uren < 4:
-        return 0
-
-    if pp2_is_minderjarig(naam) and gewerkte_uren > 4:
-        return 2
-
-    return 1
-
-
-def pp2_feedback_toegekende_korte_kwartieren(naam):
-    totaal = pp2_feedback_total_assigned_quarters(naam)
-
-    if pp2_feedback_heeft_lange_pauze(naam):
-        return max(0, totaal - 2)
-
-    return totaal
-
-
-def pp2_feedback_resterende_korte_kwartieren(naam):
-    nodig = pp2_feedback_benodigde_korte_kwartieren(naam)
-    toegekend = pp2_feedback_toegekende_korte_kwartieren(naam)
-    return max(0, nodig - toegekend)
-
-
-# -----------------------------------
-# Bepaal wie een LANGE pauze moet krijgen
+# 1) Lange pauzes controleren
 # Nieuwe logica PP optie 2:
-# - alleen > 6 uur gewerkt
-# - minderjarigen van 5u of 6u dus NIET
-# - minderjarigen > 6u WEL
+# - alleen studenten met >6 uur werk moeten een lange pauze hebben
 # -----------------------------------
-pp2_lange_pauze_verplicht = []
+pp2_lange_pauze_ontbreekt = []
 
 for s in studenten:
     naam = s["naam"]
     gewerkte_uren = student_totalen.get(naam, 0)
 
     if gewerkte_uren > 6:
-        pp2_lange_pauze_verplicht.append(naam)
+        if not pp2_heeft_al_lange_pauze(naam, ws_pp2, pv_rows_pp2, pauze_cols_pp2):
+            pp2_lange_pauze_ontbreekt.append(naam)
 
-pp2_lange_pauze_ontbreekt = []
-for naam in pp2_lange_pauze_verplicht:
-    if not pp2_feedback_heeft_lange_pauze(naam):
-        pp2_lange_pauze_ontbreekt.append(naam)
-
-# -----------------------------------
-# Check 1: lange pauzes
-# -----------------------------------
 if not pp2_lange_pauze_ontbreekt:
     cel = ws_feedback2.cell(row_fb2, 1, "✓ Alle lange pauzes toegekend")
     cel.fill = groen_fill
@@ -5933,40 +5887,40 @@ else:
     cel.font = Font(bold=True)
     row_fb2 += 1
 
-    for naam in pp2_lange_pauze_ontbreekt:
+    for naam in sorted(pp2_lange_pauze_ontbreekt):
         ws_feedback2.cell(row_fb2, 1, naam)
         row_fb2 += 1
 
     row_fb2 += 1
 
 # -----------------------------------
-# Bepaal wie KORTE kwartieren moet krijgen
-# Nieuwe logica PP optie 2:
-# - <4u: 0
-# - exact 4u: 1 kort kwartier
-# - >4u en minderjarig: 2 korte kwartieren
-# - >4u en niet-minderjarig: 1 kort kwartier
-# Ook studenten met lange pauze kunnen dus hier nog 2 korte kwartieren nodig hebben.
+# 2) Korte kwartieren controleren
+# Gebruik exact dezelfde logica als de planner zelf:
+# - pp2_benodigde_korte_kwartieren(...)
+# - pp2_resterende_korte_kwartieren(...)
+# Dus geen aparte feedbacktelling meer
 # -----------------------------------
-pp2_korte_pauze_verplicht = []
+pp2_korte_kwartieren_ontbreekt = []
 
 for s in studenten:
     naam = s["naam"]
-    nodig = pp2_feedback_benodigde_korte_kwartieren(naam)
 
-    if nodig > 0:
-        pp2_korte_pauze_verplicht.append(naam)
+    nodig = pp2_benodigde_korte_kwartieren(naam)
+    if nodig <= 0:
+        continue
 
-pp2_korte_pauze_ontbreekt = []
-for naam in pp2_korte_pauze_verplicht:
-    resterend = pp2_feedback_resterende_korte_kwartieren(naam)
+    resterend = pp2_resterende_korte_kwartieren(
+        naam=naam,
+        ws_sheet=ws_pp2,
+        pv_rows=pv_rows_pp2,
+        pauze_cols=pauze_cols_pp2,
+        lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
+    )
+
     if resterend > 0:
-        pp2_korte_pauze_ontbreekt.append((naam, resterend))
+        pp2_korte_kwartieren_ontbreekt.append((naam, resterend))
 
-# -----------------------------------
-# Check 2: korte pauzes
-# -----------------------------------
-if not pp2_korte_pauze_ontbreekt:
+if not pp2_korte_kwartieren_ontbreekt:
     cel = ws_feedback2.cell(row_fb2, 1, "✓ Alle korte kwartieren toegekend")
     cel.fill = groen_fill
     cel.font = Font(bold=True, color="006100")
@@ -5977,7 +5931,7 @@ else:
     cel.font = Font(bold=True)
     row_fb2 += 1
 
-    for naam, resterend in pp2_korte_pauze_ontbreekt:
+    for naam, resterend in sorted(pp2_korte_kwartieren_ontbreekt, key=lambda x: x[0].lower()):
         if resterend == 1:
             ws_feedback2.cell(row_fb2, 1, f"{naam} - nog 1 kwartier tekort")
         else:
@@ -5987,41 +5941,9 @@ else:
     row_fb2 += 1
 
 # -----------------------------------
-# Extra check: toon overzicht per student indien gewenst
+# kolombreedte en opmaak
 # -----------------------------------
-ws_feedback2.cell(row_fb2, 1, "Overzicht korte kwartieren per student").font = Font(bold=True)
-row_fb2 += 1
-
-for s in studenten:
-    naam = s["naam"]
-    nodig = pp2_feedback_benodigde_korte_kwartieren(naam)
-
-    if nodig <= 0:
-        continue
-
-    toegekend = pp2_feedback_toegekende_korte_kwartieren(naam)
-    lange = "ja" if pp2_feedback_heeft_lange_pauze(naam) else "nee"
-
-    ws_feedback2.cell(row_fb2, 1, naam)
-    ws_feedback2.cell(row_fb2, 2, f"lange pauze: {lange}")
-    ws_feedback2.cell(row_fb2, 3, f"korte kwartieren nodig: {nodig}")
-    ws_feedback2.cell(row_fb2, 4, f"korte kwartieren toegekend: {toegekend}")
-
-    if toegekend >= nodig:
-        ws_feedback2.cell(row_fb2, 5, "OK").fill = groen_fill
-    else:
-        ws_feedback2.cell(row_fb2, 5, "TEKORT").fill = rood_fill
-
-    row_fb2 += 1
-
-# -----------------------------------
-# kolombreedte netjes maken
-# -----------------------------------
-ws_feedback2.column_dimensions['A'].width = 40
-ws_feedback2.column_dimensions['B'].width = 18
-ws_feedback2.column_dimensions['C'].width = 24
-ws_feedback2.column_dimensions['D'].width = 28
-ws_feedback2.column_dimensions['E'].width = 12
+ws_feedback2.column_dimensions["A"].width = 45
 
 for row in ws_feedback2.iter_rows():
     for cell in row:
