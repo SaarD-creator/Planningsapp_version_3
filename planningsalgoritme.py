@@ -5923,16 +5923,29 @@ for col_idx, breedte in breedtes.items():
 # -----------------------------
 # Werkbladen verbergen op basis van AS2
 # -----------------------------
-as2_vinkje = ws.cell(2, 45).value  # Kolom AS = 45
+def is_aangevinkt_excel_checkbox(val):
+    """
+    Robuuste interpretatie van een Excel-checkbox / gekoppelde cel.
+    Werkt met booleans, 1/0, tekst zoals WAAR/TRUE/X, enz.
+    """
+    if val is None:
+        return False
 
-verberg_bladen = as2_vinkje in [1, True, "WAAR", "X"]
+    if isinstance(val, bool):
+        return val
 
-if verberg_bladen:
-    if "Pauzevlinders" in wb_out.sheetnames:
-        wb_out["Pauzevlinders"].sheet_state = "veryHidden"
+    if isinstance(val, (int, float)):
+        return val == 1
 
-    if "Feedback" in wb_out.sheetnames:
-        wb_out["Feedback"].sheet_state = "veryHidden"
+    s = str(val).strip().upper()
+    return s in ["1", "TRUE", "WAAR", "X", "YES", "JA"]
+
+as2_vinkje = ws["AS2"].value
+
+if is_aangevinkt_excel_checkbox(as2_vinkje):
+    for bladnaam in ["Pauzevlinders", "Feedback"]:
+        if bladnaam in wb_out.sheetnames:
+            wb_out[bladnaam].sheet_state = "hidden"
 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
