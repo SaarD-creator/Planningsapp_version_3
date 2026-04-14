@@ -4031,15 +4031,16 @@ def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
     return True
 
 
-def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
+def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols, pv_name_row):
     """
     Zoek startkolom voor 2 opeenvolgende kwartieren voor minderjarigen:
     - student werkt op beide kwartieren
     - student stopt om of voor 16u (dus laatste werkblok <= 15)
     - student werkt >4u en <=6u
     - start enkel op een heel uur of half uur (:00 of :30)
-    - beide cellen moeten geldig zijn volgens de gewone korte-pauze-regels
+    - niet in eerste of laatste uur van de shift
     - kies het EERST mogelijke geldige moment
+    - maar enkel als BEIDE vakjes op deze pauzevlinder-rij nog leeg zijn
     """
     werk_uren = pp2_get_student_work_hours(naam)
     if not werk_uren:
@@ -4085,7 +4086,12 @@ def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
         if uur1 not in werk_uren or uur2 not in werk_uren:
             continue
 
-        # eerste geldige optie meteen nemen
+        # beide vakjes op deze specifieke pauzevlinder-rij moeten nog leeg zijn
+        if ws_sheet.cell(pv_name_row, col1).value not in [None, ""]:
+            continue
+        if ws_sheet.cell(pv_name_row, col2).value not in [None, ""]:
+            continue
+
         return col1
 
     return None
@@ -4277,13 +4283,14 @@ if pv_rows_pp2:
         gekozen_col = pp2_choose_middle_double_col_for_minor(
             naam=naam,
             ws_sheet=ws_pp2,
-            pauze_cols=pauze_cols_pp2
+            pauze_cols=pauze_cols_pp2,
+            pv_name_row=pv_name_row
         )
 
         if gekozen_col is None:
             pp2_niet_geplaatst.append({
                 "naam": naam,
-                "reden": "geen geldige startkolom gevonden voor dubbele korte pauze minderjarige"
+                "reden": "geen geldige vrije startkolom gevonden voor dubbele korte pauze minderjarige"
             })
             continue
 
@@ -4293,20 +4300,6 @@ if pv_rows_pp2:
             pp2_niet_geplaatst.append({
                 "naam": naam,
                 "reden": "tweede kwartier valt buiten pauzekolommen"
-            })
-            continue
-
-        if ws_pp2.cell(pv_name_row, gekozen_col).value not in [None, ""]:
-            pp2_niet_geplaatst.append({
-                "naam": naam,
-                "reden": "eerste kwartier voor dubbele korte pauze is al bezet"
-            })
-            continue
-
-        if ws_pp2.cell(pv_name_row, tweede_col).value not in [None, ""]:
-            pp2_niet_geplaatst.append({
-                "naam": naam,
-                "reden": "tweede kwartier voor dubbele korte pauze is al bezet"
             })
             continue
 
