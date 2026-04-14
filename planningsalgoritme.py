@@ -4029,15 +4029,16 @@ def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
     return True
 
 
-def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
+def pp2_choose_earliest_double_col_for_minor(naam, ws_sheet, pauze_cols):
     """
     Zoek startkolom voor 2 opeenvolgende kwartieren voor minderjarigen:
     - student werkt op beide kwartieren
     - student stopt om of voor 16u (dus laatste werkblok <= 15)
     - student werkt >4u en <=6u
-    - start enkel op een half uur (:00 of :30)
-    - zo dicht mogelijk bij het midden van de shift
-    - beide cellen moeten geldig zijn volgens de gewone korte-pauze-regels
+    - start enkel op een heel uur of half uur (:00 of :30)
+    - niet in het eerste of laatste werkuur
+    - kies het EERST mogelijke geldige moment van links naar rechts
+      (= eerst mogelijke moment dat pauzevlinders kunnen)
     """
     werk_uren = pp2_get_student_work_hours(naam)
     if not werk_uren:
@@ -4049,46 +4050,45 @@ def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
     if max(werk_uren) > 15:
         return None
 
-    kandidaten = []
+    pauze_cols_sorted = sorted(pauze_cols)
 
-    for idx in range(len(pauze_cols) - 1):
-        col1 = pauze_cols[idx]
-        col2 = pauze_cols[idx + 1]
+    for idx in range(len(pauze_cols_sorted) - 1):
+        col1 = pauze_cols_sorted[idx]
+        col2 = pauze_cols_sorted[idx + 1]
 
-        # moeten opeenvolgende kwartieren zijn
+        # moeten echt opeenvolgende kwartieren zijn
         if col2 != col1 + 1:
             continue
 
         header1 = ws_sheet.cell(1, col1).value
+        header2 = ws_sheet.cell(1, col2).value
+
         uur1 = parse_header_uur(header1)
-        if uur1 is None:
+        uur2 = parse_header_uur(header2)
+
+        if uur1 is None or uur2 is None:
             continue
 
         # start enkel op heel uur of half uur
-        header_text = str(header1).strip().lower()
-        if not (header_text.endswith("u") or header_text.endswith("u30")):
+        header1_text = str(header1).strip().lower()
+        if not (header1_text.endswith("u") or header1_text.endswith("u30")):
             continue
 
-        # beide kwartieren moeten geldig zijn volgens gewone korte-pauze-regels
+        # beide kwartieren moeten binnen geldige korte-pauze-uren vallen
+        # (= dus niet in eerste of laatste werkuur)
         if not pp2_is_valid_short_break_for_student(naam, col1, ws_sheet):
             continue
         if not pp2_is_valid_short_break_for_student(naam, col2, ws_sheet):
             continue
 
-        # beide kwartieren moeten effectief tijdens werkuren vallen
-        uur2 = parse_header_uur(ws_sheet.cell(1, col2).value)
+        # beide kwartieren moeten tijdens effectieve werkuren vallen
         if uur1 not in werk_uren or uur2 not in werk_uren:
             continue
 
-        midden_score = abs(idx - ((len(pauze_cols) - 1) / 2.0))
-        kandidaten.append((midden_score, col1))
+        # eerste geldige optie meteen teruggeven
+        return col1
 
-    if not kandidaten:
-        return None
-
-    kandidaten.sort(key=lambda x: x[0])
-    return kandidaten[0][1]
-
+    return None
 
 
 def pp2_same_halfhour(col_a, col_b, ws_sheet):
@@ -4273,7 +4273,7 @@ if pv_rows_pp2:
         pv, pv_name_row = pv_rows_pp2[pv_index]
         pv_label = pv["naam"]
 
-        gekozen_col = pp2_choose_middle_double_col_for_minor(
+        gekozen_col = pp2_choose_earliest_double_col_for_minor(
             naam=naam,
             ws_sheet=ws_pp2,
             pauze_cols=pauze_cols_pp2
