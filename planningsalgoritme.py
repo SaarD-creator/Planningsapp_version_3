@@ -1,3 +1,5 @@
+# andere pauzes voor minderjarigen, maar die kloppen mogelijks niet lol (ook lange pauzes van pauzevlinders zijn beter)
+# nieuw werkblad analyse
 # zelfde versie als 3.5 maar pauzevlinders zijn ook volgens volgorde uit gekozen nummertje
 #betere verdeling 3 uur blokken, maar te veel 6 uur bij zelfde attractie & 1+3 logica voor 9u30 ipv 3+1 & 2+2 logica voor 4 uur opt einde
 
@@ -4029,16 +4031,15 @@ def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
     return True
 
 
-def pp2_choose_earliest_double_col_for_minor(naam, ws_sheet, pauze_cols):
+def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
     """
     Zoek startkolom voor 2 opeenvolgende kwartieren voor minderjarigen:
     - student werkt op beide kwartieren
     - student stopt om of voor 16u (dus laatste werkblok <= 15)
     - student werkt >4u en <=6u
     - start enkel op een heel uur of half uur (:00 of :30)
-    - niet in het eerste of laatste werkuur
-    - kies het EERST mogelijke geldige moment van links naar rechts
-      (= eerst mogelijke moment dat pauzevlinders kunnen)
+    - beide cellen moeten geldig zijn volgens de gewone korte-pauze-regels
+    - kies het EERST mogelijke geldige moment
     """
     werk_uren = pp2_get_student_work_hours(naam)
     if not werk_uren:
@@ -4056,7 +4057,7 @@ def pp2_choose_earliest_double_col_for_minor(naam, ws_sheet, pauze_cols):
         col1 = pauze_cols_sorted[idx]
         col2 = pauze_cols_sorted[idx + 1]
 
-        # moeten echt opeenvolgende kwartieren zijn
+        # moeten opeenvolgende kwartieren zijn
         if col2 != col1 + 1:
             continue
 
@@ -4074,21 +4075,21 @@ def pp2_choose_earliest_double_col_for_minor(naam, ws_sheet, pauze_cols):
         if not (header1_text.endswith("u") or header1_text.endswith("u30")):
             continue
 
-        # beide kwartieren moeten binnen geldige korte-pauze-uren vallen
-        # (= dus niet in eerste of laatste werkuur)
+        # beide kwartieren moeten geldig zijn volgens gewone korte-pauze-regels
         if not pp2_is_valid_short_break_for_student(naam, col1, ws_sheet):
             continue
         if not pp2_is_valid_short_break_for_student(naam, col2, ws_sheet):
             continue
 
-        # beide kwartieren moeten tijdens effectieve werkuren vallen
+        # beide kwartieren moeten effectief tijdens werkuren vallen
         if uur1 not in werk_uren or uur2 not in werk_uren:
             continue
 
-        # eerste geldige optie meteen teruggeven
+        # eerste geldige optie meteen nemen
         return col1
 
     return None
+
 
 
 def pp2_same_halfhour(col_a, col_b, ws_sheet):
@@ -4273,7 +4274,7 @@ if pv_rows_pp2:
         pv, pv_name_row = pv_rows_pp2[pv_index]
         pv_label = pv["naam"]
 
-        gekozen_col = pp2_choose_earliest_double_col_for_minor(
+        gekozen_col = pp2_choose_middle_double_col_for_minor(
             naam=naam,
             ws_sheet=ws_pp2,
             pauze_cols=pauze_cols_pp2
