@@ -5503,16 +5503,17 @@ def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
 
 def pp2_place_minor_early_stopper_short_breaks_first():
     """
-    Plaats het extra korte kwartier van minderjarige vroege stoppers
+    Plaats het korte kwartier van minderjarige vroege stoppers
     VOOR de andere korte pauzes van vroege stoppers.
 
     Regels:
     - student moet nog effectief 1 kort kwartier nodig hebben
     - zo laat mogelijk zetten
-    - liefst op dezelfde rij als het lange halfuur
-    - liefst direct NA het halfuur, anders direct VOOR het halfuur
     - nooit in eerste of laatste werkuur
     - open spots niet gebruiken
+    - bij gelijke laatheid: liefst op dezelfde rij als het lange halfuur
+    - bij gelijke laatheid op dezelfde rij:
+      liever direct NA het halfuur dan direct VOOR het halfuur
     """
     kandidaten = [
         naam for naam in pp2_get_students_stopping_before_end()
@@ -5540,7 +5541,7 @@ def pp2_place_minor_early_stopper_short_breaks_first():
     )
 
     for naam in kandidaten:
-        geplaatste_cols = []
+        alle_opties = []
 
         for _pv, pv_row in pv_rows_pp2:
             lange_blokken = []
@@ -5554,85 +5555,47 @@ def pp2_place_minor_early_stopper_short_breaks_first():
                 ):
                     lange_blokken.append((col1, col2))
 
-            if not lange_blokken:
-                continue
+            if lange_blokken:
+                for col1, col2 in lange_blokken:
+                    na_col = col2 + 1
+                    voor_col = col1 - 1
 
-            voorkeur_cols = []
+                    if na_col in pauze_cols_pp2:
+                        if (
+                            (pv_row, na_col) not in pp2_open_spots
+                            and ws_pp2.cell(pv_row, na_col).value in [None, ""]
+                            and pp2_is_valid_short_break_for_student(naam, na_col, ws_pp2)
+                        ):
+                            alle_opties.append((na_col, 2, 1, pv_row))
 
-            for col1, col2 in lange_blokken:
-                na_col = col2 + 1
-                voor_col = col1 - 1
+                    if voor_col in pauze_cols_pp2:
+                        if (
+                            (pv_row, voor_col) not in pp2_open_spots
+                            and ws_pp2.cell(pv_row, voor_col).value in [None, ""]
+                            and pp2_is_valid_short_break_for_student(naam, voor_col, ws_pp2)
+                        ):
+                            alle_opties.append((voor_col, 2, 0, pv_row))
 
-                if na_col in pauze_cols_pp2:
-                    voorkeur_cols.append(na_col)
-                if voor_col in pauze_cols_pp2:
-                    voorkeur_cols.append(voor_col)
+            for col in pauze_cols_pp2:
+                if (
+                    (pv_row, col) not in pp2_open_spots
+                    and ws_pp2.cell(pv_row, col).value in [None, ""]
+                    and pp2_is_valid_short_break_for_student(naam, col, ws_pp2)
+                ):
+                    alle_opties.append((col, 1, 0, pv_row))
 
-            geldige_voorkeur_cols = []
-            for col in voorkeur_cols:
-                if (pv_row, col) in pp2_open_spots:
-                    continue
-                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
-                    continue
-                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
-                    continue
-                geldige_voorkeur_cols.append(col)
-
-            if geldige_voorkeur_cols:
-                gekozen_col = max(geldige_voorkeur_cols)
-                pp2_place_short_break_cols_on_row(
-                    naam=naam,
-                    pv={"naam": "minderjarige vroege stopper"},
-                    pv_row=pv_row,
-                    cols=[gekozen_col]
-                )
-                geplaatste_cols = [gekozen_col]
-                break
-
-            fallback_cols = []
-            for col in reversed(pauze_cols_pp2):
-                if (pv_row, col) in pp2_open_spots:
-                    continue
-                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
-                    continue
-                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
-                    continue
-                fallback_cols.append(col)
-
-            if fallback_cols:
-                gekozen_col = fallback_cols[0]
-                pp2_place_short_break_cols_on_row(
-                    naam=naam,
-                    pv={"naam": "minderjarige vroege stopper"},
-                    pv_row=pv_row,
-                    cols=[gekozen_col]
-                )
-                geplaatste_cols = [gekozen_col]
-                break
-
-        if geplaatste_cols:
+        if not alle_opties:
             continue
 
-        for pv, pv_row in reversed(pv_rows_pp2):
-            fallback_cols = []
-            for col in reversed(pauze_cols_pp2):
-                if (pv_row, col) in pp2_open_spots:
-                    continue
-                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
-                    continue
-                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
-                    continue
-                fallback_cols.append(col)
+        gekozen_col, _zelfde_rij_score, _na_score, gekozen_pv_row = max(alle_opties)
 
-            if fallback_cols:
-                gekozen_col = fallback_cols[0]
-                pp2_place_short_break_cols_on_row(
-                    naam=naam,
-                    pv=pv,
-                    pv_row=pv_row,
-                    cols=[gekozen_col]
-                )
-                break
+        pp2_place_short_break_cols_on_row(
+            naam=naam,
+            pv={"naam": "minderjarige vroege stopper"},
+            pv_row=gekozen_pv_row,
+            cols=[gekozen_col]
+        )
+
 
 
 def pp2_student_heeft_nog_lange_pauze_nodig(naam, ws_sheet, pv_rows, pauze_cols):
