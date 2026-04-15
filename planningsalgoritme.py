@@ -3941,6 +3941,9 @@ def pp2_get_student_work_hours(naam):
     return sorted(uren)
 
 
+def pp2_is_minderjarig(naam):
+    return "-18" in str(naam)
+
 def pp2_is_minor_early_stopper(naam):
     """
     True als student:
@@ -4800,8 +4803,6 @@ lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_typ
 naam_leeg_fill_pp2 = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
 
 
-def pp2_is_minderjarig(naam):
-    return "-18" in str(naam)
 
 
 def pp2_benodigde_korte_kwartieren(naam):
