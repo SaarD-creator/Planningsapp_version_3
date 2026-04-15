@@ -4477,17 +4477,23 @@ def pp2_sort_step2_namen(namenlijst):
     """
     Sorteer voor stap 2:
     - eerst wie vroeger stopt
-    - daarna wie vroeger begint
-    - daarna alfabetisch
+    - bij gelijke eindtijd: random volgorde
     """
-    def sort_key(naam):
+    per_einduur = defaultdict(list)
+
+    for naam in namenlijst:
         werk_uren = pp2_get_student_work_hours(naam)
-        if not werk_uren:
-            return (999, 999, str(naam))
-        return (max(werk_uren), min(werk_uren), str(naam))
+        if werk_uren:
+            einduur = max(werk_uren)
+            per_einduur[einduur].append(naam)
 
-    return sorted(namenlijst, key=sort_key)
+    resultaat = []
+    for einduur in sorted(per_einduur.keys()):
+        groep = per_einduur[einduur][:]
+        random.shuffle(groep)
+        resultaat.extend(groep)
 
+    return resultaat
 
 def pp2_get_pv_row_for_name(naam, pv_rows):
     """
