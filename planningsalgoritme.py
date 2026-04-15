@@ -5976,10 +5976,11 @@ for pv, pv_row in pv_rows_pp2:
 def pp2_get_long_break_students_on_row_in_order(ws_sheet, pv_row, pauze_cols):
     """
     Geef de studenten terug die op deze rij een lange pauze hebben,
-    in volgorde van LAATST eindigende lange pauze.
+    in dezelfde volgorde als de lange pauzes op de rij zelf:
+    dus van links naar rechts.
 
-    Zo krijgen studenten met een latere lange pauze op deze rij
-    eerst kans om hun korte pauze ook later te krijgen.
+    Dit zorgt ervoor dat korte pauzes later ook in een logische
+    volgorde kunnen volgen, gelijklopend met de lange pauzes.
     """
     found = {}
 
@@ -5992,58 +5993,54 @@ def pp2_get_long_break_students_on_row_in_order(ws_sheet, pv_row, pauze_cols):
 
         if val1 and val1 == val2:
             naam = str(val1).strip()
-            found[naam] = col2
+            # bewaar de startkolom van de eerste lange pauze op deze rij
+            if naam not in found:
+                found[naam] = col1
 
-    return [naam for naam, _col in sorted(found.items(), key=lambda x: x[1], reverse=True)]
+    return [naam for naam, _col in sorted(found.items(), key=lambda x: x[1])]
 
 
-
-def pp2_get_last_long_break_end_col_on_row(naam, ws_sheet, pv_row, pauze_cols):
+def pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
     """
-    Geef de eindkolom terug van de LAATSTE lange pauze van deze student op deze rij.
+    True als deze student op deze specifieke rij ergens een lange pauze heeft.
     """
-    laatste_eindcol = None
-
     for idx in range(len(pauze_cols) - 1):
         col1 = pauze_cols[idx]
         col2 = pauze_cols[idx + 1]
 
-        if ws_sheet.cell(pv_row, col1).value == naam and ws_sheet.cell(pv_row, col2).value == naam:
-            laatste_eindcol = col2
+        if (
+            ws_sheet.cell(pv_row, col1).value == naam and
+            ws_sheet.cell(pv_row, col2).value == naam
+        ):
+            return True
 
-    return laatste_eindcol
+    return False
 
 
-def pp2_try_assign_from_candidate_list_on_row_after_last_long_break(candidate_list, pv, pv_row):
+def pp2_try_assign_from_candidate_list_on_row(candidate_list, pv, pv_row, shuffle_candidates=False):
     """
-    Probeer op deze rij eerst een kandidaat te plaatsen NA zijn laatste lange pauze op die rij.
-    Als dat niet lukt, dan valt hij terug op de gewone zoeklogica.
-    """
-    for kandidaat in candidate_list:
-        laatste_eindcol = pp2_get_last_long_break_end_col_on_row(
-            naam=kandidaat,
-            ws_sheet=ws_pp2,
-            pv_row=pv_row,
-            pauze_cols=pauze_cols_pp2
-        )
+    Probeer op deze rij een kandidaat te plaatsen uit de opgegeven lijst.
+    Werkt met 1 of 2 kwartieren, afhankelijk van wat nog nodig is.
 
+    Belangrijk:
+    - de volgorde van candidate_list blijft behouden als dat een prioriteitslijst is
+      (bv. dezelfde volgorde als de lange pauzes op de rij)
+    - voor gewone fallback-lijsten kan shuffle_candidates=True gebruikt worden
+      zodat niet-minderjarigen daar opnieuw randomer verdeeld worden
+    """
+    kandidaten = candidate_list[:]
+
+    if shuffle_candidates and len(kandidaten) > 1:
+        random.shuffle(kandidaten)
+
+    for kandidaat in kandidaten:
         cols = pp2_find_needed_short_cols_for_student_on_row(
             naam=kandidaat,
             pv_row=pv_row,
             ws_sheet=ws_pp2,
             pauze_cols=pauze_cols_pp2,
-            open_spots_set=pp2_open_spots,
-            min_col_exclusive=laatste_eindcol
+            open_spots_set=pp2_open_spots
         )
-
-        if not cols:
-            cols = pp2_find_needed_short_cols_for_student_on_row(
-                naam=kandidaat,
-                pv_row=pv_row,
-                ws_sheet=ws_pp2,
-                pauze_cols=pauze_cols_pp2,
-                open_spots_set=pp2_open_spots
-            )
 
         if not cols:
             continue
@@ -6193,7 +6190,7 @@ for col in pauze_cols_pp2:
         # -----------------------------------
         # PRIORITEIT 1:
         # studenten die in deze rij al een lange pauze kregen,
-        # in volgorde van vroegst gekregen lange pauze
+        # in dezelfde volgorde als hun lange pauzes op die rij
         # -----------------------------------
         rij_lange_pauze_namen = pp2_get_long_break_students_on_row_in_order(
             ws_sheet=ws_pp2,
@@ -6206,15 +6203,17 @@ for col in pauze_cols_pp2:
             if naam in pp2_other_pending_short_breaks
         ]
 
-        toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row_after_last_long_break(
+        toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
             candidate_list=prioriteitslijst,
             pv=pv,
-            pv_row=pv_row
+            pv_row=pv_row,
+            shuffle_candidates=False
         )
 
         # -----------------------------------
         # PRIORITEIT 2:
         # fallback naar overige nog open korte kwartieren
+        # hier mag het randomer blijven voor niet-minderjarigen
         # -----------------------------------
         if toegewezen_naam is None:
             fallback_lijst = [
@@ -6225,7 +6224,8 @@ for col in pauze_cols_pp2:
             toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
                 candidate_list=fallback_lijst,
                 pv=pv,
-                pv_row=pv_row
+                pv_row=pv_row,
+                shuffle_candidates=True
             )
 
         # schrijven/loggen indien kandidaat gevonden
@@ -6246,6 +6246,7 @@ for col in pauze_cols_pp2:
             ) <= 0:
                 if toegewezen_naam in pp2_other_pending_short_breaks:
                     pp2_other_pending_short_breaks.remove(toegewezen_naam)
+
 
 # -----------------------------------
 # 3) Pas daarna:
@@ -6284,7 +6285,8 @@ for col in pauze_cols_pp2:
         toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
             candidate_list=prioriteitslijst,
             pv=pv,
-            pv_row=pv_row
+            pv_row=pv_row,
+            shuffle_candidates=False
         )
 
         if toegewezen_naam is None:
@@ -6296,7 +6298,8 @@ for col in pauze_cols_pp2:
             toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
                 candidate_list=fallback_lijst,
                 pv=pv,
-                pv_row=pv_row
+                pv_row=pv_row,
+                shuffle_candidates=True
             )
 
         if toegewezen_naam:
