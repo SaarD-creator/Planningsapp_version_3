@@ -5508,12 +5508,10 @@ def pp2_place_minor_early_stopper_short_breaks_first():
 
     Regels:
     - student moet nog effectief 1 kort kwartier nodig hebben
-    - zo laat mogelijk zetten
+    - zo laat mogelijk zetten in het HELE rooster
     - nooit in eerste of laatste werkuur
     - open spots niet gebruiken
-    - bij gelijke laatheid: liefst op dezelfde rij als het lange halfuur
-    - bij gelijke laatheid op dezelfde rij:
-      liever direct NA het halfuur dan direct VOOR het halfuur
+    - géén voorrang meer voor 'zelfde rij als lange pauze' als dat vroeger ligt
     """
     kandidaten = [
         naam for naam in pp2_get_students_stopping_before_end()
@@ -5541,57 +5539,36 @@ def pp2_place_minor_early_stopper_short_breaks_first():
     )
 
     for naam in kandidaten:
-        alle_opties = []
+        alle_geldige_opties = []
 
-        for _pv, pv_row in pv_rows_pp2:
-            lange_blokken = []
-            for idx in range(len(pauze_cols_pp2) - 1):
-                col1 = pauze_cols_pp2[idx]
-                col2 = pauze_cols_pp2[idx + 1]
-
-                if (
-                    ws_pp2.cell(pv_row, col1).value == naam and
-                    ws_pp2.cell(pv_row, col2).value == naam
-                ):
-                    lange_blokken.append((col1, col2))
-
-            if lange_blokken:
-                for col1, col2 in lange_blokken:
-                    na_col = col2 + 1
-                    voor_col = col1 - 1
-
-                    if na_col in pauze_cols_pp2:
-                        if (
-                            (pv_row, na_col) not in pp2_open_spots
-                            and ws_pp2.cell(pv_row, na_col).value in [None, ""]
-                            and pp2_is_valid_short_break_for_student(naam, na_col, ws_pp2)
-                        ):
-                            alle_opties.append((na_col, 2, 1, pv_row))
-
-                    if voor_col in pauze_cols_pp2:
-                        if (
-                            (pv_row, voor_col) not in pp2_open_spots
-                            and ws_pp2.cell(pv_row, voor_col).value in [None, ""]
-                            and pp2_is_valid_short_break_for_student(naam, voor_col, ws_pp2)
-                        ):
-                            alle_opties.append((voor_col, 2, 0, pv_row))
-
+        for pv, pv_row in pv_rows_pp2:
             for col in pauze_cols_pp2:
-                if (
-                    (pv_row, col) not in pp2_open_spots
-                    and ws_pp2.cell(pv_row, col).value in [None, ""]
-                    and pp2_is_valid_short_break_for_student(naam, col, ws_pp2)
-                ):
-                    alle_opties.append((col, 1, 0, pv_row))
+                if (pv_row, col) in pp2_open_spots:
+                    continue
 
-        if not alle_opties:
+                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+                    continue
+
+                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+                    continue
+
+                zelfde_rij_lange_pauze = pp2_student_has_long_break_in_row(
+                    naam, ws_pp2, pv_row, pauze_cols_pp2
+                )
+
+                alle_geldige_opties.append((col, 1 if zelfde_rij_lange_pauze else 0, pv, pv_row))
+
+        if not alle_geldige_opties:
             continue
 
-        gekozen_col, _zelfde_rij_score, _na_score, gekozen_pv_row = max(alle_opties)
+        gekozen_col, _zelfde_rij_bonus, gekozen_pv, gekozen_pv_row = max(
+            alle_geldige_opties,
+            key=lambda x: (x[0], x[1])
+        )
 
         pp2_place_short_break_cols_on_row(
             naam=naam,
-            pv={"naam": "minderjarige vroege stopper"},
+            pv=gekozen_pv,
             pv_row=gekozen_pv_row,
             cols=[gekozen_col]
         )
@@ -5643,11 +5620,20 @@ def pp2_student_heeft_nog_lange_pauze_nodig(naam, ws_sheet, pv_rows, pauze_cols)
 def pp2_find_first_valid_long_block_in_step4(naam, ws_sheet, pv_rows, pauze_cols, open_spots_set):
     """
     Zoek in stap 4 alsnog een geldig halfuur voor een student.
-    - van links naar rechts
-    - op eender welke rij
-    - beide vakjes moeten leeg zijn
-    - open spots mogen niet gebruikt worden
+
+    Nieuwe logica:
+    - voor minderjarige vroege stoppers: zo laat mogelijk
+    - voor alle anderen: zoals vroeger, het eerste geldige halfuur
     """
+    is_minor_early_stopper = (
+        pp2_is_minderjarig(naam)
+        and len(pp2_get_student_work_hours(naam)) >= 4
+        and pp2_get_student_work_hours(naam)
+        and max(pp2_get_student_work_hours(naam)) <= 15
+    )
+
+    gevonden_blokken = []
+
     for idx in range(len(pauze_cols) - 1):
         col1 = pauze_cols[idx]
         col2 = pauze_cols[idx + 1]
@@ -5664,9 +5650,15 @@ def pp2_find_first_valid_long_block_in_step4(naam, ws_sheet, pv_rows, pauze_cols
             if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
                 continue
 
-            return pv_row, col1, col2
+            if not is_minor_early_stopper:
+                return pv_row, col1, col2
 
-    return None
+            gevonden_blokken.append((pv_row, col1, col2))
+
+    if not gevonden_blokken:
+        return None
+
+    return max(gevonden_blokken, key=lambda x: x[2])
 
 
 # ---------------------------------------
