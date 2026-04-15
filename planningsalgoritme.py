@@ -5658,13 +5658,24 @@ def pp2_find_first_valid_long_block_in_step4(naam, ws_sheet, pv_rows, pauze_cols
 #    en stap 2 geen geldig halfuur vond.
 # ---------------------------------------
 pp2_step4_late_long_break_rescue = []
+pp2_regular_short_breaks_placed = []
 
-for s in studenten:
-    naam = s["naam"]
+# ---------------------------------------
+# 0A) Eerst: minderjarige vroege stoppers
+#     die nog een LANGE pauze missen
+#     => zo vroeg mogelijk (links naar rechts)
+# ---------------------------------------
+pp2_minor_early_stoppers = [
+    s["naam"] for s in studenten
+    if (
+        pp2_is_minderjarig(s["naam"])
+        and len(pp2_get_student_work_hours(s["naam"])) >= 4
+        and pp2_get_student_work_hours(s["naam"])
+        and max(pp2_get_student_work_hours(s["naam"])) <= 15
+    )
+]
 
-    if not pp2_is_minderjarig(naam):
-        continue
-
+for naam in pp2_minor_early_stoppers:
     if not pp2_student_heeft_nog_lange_pauze_nodig(
         naam=naam,
         ws_sheet=ws_pp2,
@@ -5673,15 +5684,31 @@ for s in studenten:
     ):
         continue
 
-    gevonden = pp2_find_first_valid_long_block_in_step4(
-        naam=naam,
-        ws_sheet=ws_pp2,
-        pv_rows=pv_rows_pp2,
-        pauze_cols=pauze_cols_pp2,
-        open_spots_set=pp2_open_spots
-    )
+    gevonden = None
 
-    if not gevonden:
+    for idx in range(len(pauze_cols_pp2) - 1):
+        col1 = pauze_cols_pp2[idx]
+        col2 = pauze_cols_pp2[idx + 1]
+
+        for _pv, pv_row in pv_rows_pp2:
+            if (pv_row, col1) in pp2_open_spots or (pv_row, col2) in pp2_open_spots:
+                continue
+
+            if ws_pp2.cell(pv_row, col1).value not in [None, ""]:
+                continue
+            if ws_pp2.cell(pv_row, col2).value not in [None, ""]:
+                continue
+
+            if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_pp2):
+                continue
+
+            gevonden = (pv_row, col1, col2)
+            break
+
+        if gevonden is not None:
+            break
+
+    if gevonden is None:
         continue
 
     pv_row, col1, col2 = gevonden
@@ -5703,25 +5730,86 @@ for s in studenten:
     })
 
 
+# ---------------------------------------
+# 0B) Daarna: exact diezelfde minderjarige
+#     vroege stoppers hun KORTE pauze
+#     => zo laat mogelijk (rechts naar links)
+# ---------------------------------------
+for naam in pp2_minor_early_stoppers:
+    resterend = pp2_resterende_korte_kwartieren(
+        naam=naam,
+        ws_sheet=ws_pp2,
+        pv_rows=pv_rows_pp2,
+        pauze_cols=pauze_cols_pp2,
+        lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
+    )
 
+    if resterend <= 0:
+        continue
+
+    laatste_lange_eindcol = None
+
+    for _pv, pv_row in pv_rows_pp2:
+        for idx in range(len(pauze_cols_pp2) - 1):
+            col1 = pauze_cols_pp2[idx]
+            col2 = pauze_cols_pp2[idx + 1]
+
+            if (
+                ws_pp2.cell(pv_row, col1).value == naam
+                and ws_pp2.cell(pv_row, col2).value == naam
+            ):
+                if laatste_lange_eindcol is None or col2 > laatste_lange_eindcol:
+                    laatste_lange_eindcol = col2
+
+    if laatste_lange_eindcol is None:
+        continue
+
+    gekozen = None
+
+    for col in reversed(pauze_cols_pp2):
+        if col <= laatste_lange_eindcol:
+            continue
+
+        for pv, pv_row in pv_rows_pp2:
+            if (pv_row, col) in pp2_open_spots:
+                continue
+
+            if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+                continue
+
+            if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+                continue
+
+            gekozen = (pv, pv_row, col)
+            break
+
+        if gekozen is not None:
+            break
+
+    if gekozen is None:
+        continue
+
+    pv, pv_row, col = gekozen
+
+    pp2_place_short_break_cols_on_row(
+        naam=naam,
+        pv=pv,
+        pv_row=pv_row,
+        cols=[col]
+    )
 
 
 # ---------------------------------------
-# 1) Korte werkers die vroeger stoppen dan het einde van de dag
-#    Minderjarigen van 4u t.e.m. 6u horen hier NIET meer bij.
-#    Hun korte kwartier mag later mee met de lange-werker-logica.
+# 1) Daarna pas: gewone korte werkers
+#    die vroeger stoppen dan het einde
+#    van de dag, maar GEEN minderjarige
+#    vroege stoppers zijn
 # ---------------------------------------
 pp2_students_before_end_all = pp2_get_students_stopping_before_end()
 
-
 pp2_students_before_end_pending = [
     naam for naam in pp2_students_before_end_all
-    if not (
-        pp2_is_minderjarig(naam)
-        and len(pp2_get_student_work_hours(naam)) >= 4
-        and pp2_get_student_work_hours(naam)
-        and max(pp2_get_student_work_hours(naam)) <= 15
-    )
+    if naam not in pp2_minor_early_stoppers
     and pp2_resterende_korte_kwartieren(
         naam=naam,
         ws_sheet=ws_pp2,
@@ -5730,93 +5818,6 @@ pp2_students_before_end_pending = [
         lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
     ) > 0
 ]
-
-
-
-def pp2_place_minor_early_stopper_short_breaks_first():
-    """
-    Plaats het korte kwartier van minderjarige vroege stoppers
-    pas NADAT hun lange pauze al bestaat.
-
-    Regels:
-    - student is minderjarig
-    - student stopt vroeg (laatste werkuur <= 15)
-    - student heeft al een lange pauze
-    - korte pauze moet STRIKT na de lange pauze liggen
-    - korte pauze wordt zo laat mogelijk gezet
-    - nooit in eerste of laatste werkuur
-    """
-    kandidaten = [
-        naam for naam in pp2_get_students_stopping_before_end()
-        if (
-            pp2_is_minderjarig(naam)
-            and len(pp2_get_student_work_hours(naam)) >= 4
-            and pp2_get_student_work_hours(naam)
-            and max(pp2_get_student_work_hours(naam)) <= 15
-        )
-        and naam in pp2_lange_pauze_ontvangers
-        and pp2_resterende_korte_kwartieren(
-            naam=naam,
-            ws_sheet=ws_pp2,
-            pv_rows=pv_rows_pp2,
-            pauze_cols=pauze_cols_pp2,
-            lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
-        ) > 0
-    ]
-
-    for naam in kandidaten:
-        laatste_lange_eindcol = None
-
-        for _pv, pv_row in pv_rows_pp2:
-            for idx in range(len(pauze_cols_pp2) - 1):
-                col1 = pauze_cols_pp2[idx]
-                col2 = pauze_cols_pp2[idx + 1]
-
-                if (
-                    ws_pp2.cell(pv_row, col1).value == naam
-                    and ws_pp2.cell(pv_row, col2).value == naam
-                ):
-                    laatste_lange_eindcol = col2
-
-        if laatste_lange_eindcol is None:
-            continue
-
-        gekozen = None
-
-        for col in reversed(pauze_cols_pp2):
-            if col <= laatste_lange_eindcol:
-                continue
-
-            for pv, pv_row in pv_rows_pp2:
-                if (pv_row, col) in pp2_open_spots:
-                    continue
-
-                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
-                    continue
-
-                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
-                    continue
-
-                gekozen = (pv, pv_row, col)
-                break
-
-            if gekozen is not None:
-                break
-
-        if gekozen is None:
-            continue
-
-        gekozen_pv, gekozen_pv_row, gekozen_col = gekozen
-
-        pp2_place_short_break_cols_on_row(
-            naam=naam,
-            pv=gekozen_pv,
-            pv_row=gekozen_pv_row,
-            cols=[gekozen_col]
-        )
-
-
-pp2_place_minor_early_stopper_short_breaks_first()
 
 random.shuffle(pp2_students_before_end_pending)
 
