@@ -4229,6 +4229,31 @@ def pp2_student_heeft_al_lange_pauze_op_blok(naam, col1, col2, ws_sheet, pv_rows
     return False
 
 
+
+def pp2_get_last_long_break_end_col_any_row(naam, ws_sheet, pv_rows, pauze_cols):
+    """
+    Geef de eindkolom terug van de LAATSTE lange pauze van deze student
+    over alle pauzevlinder-rijen heen.
+    """
+    eindcols = []
+
+    for _pv, pv_row in pv_rows:
+        for idx in range(len(pauze_cols) - 1):
+            col1 = pauze_cols[idx]
+            col2 = pauze_cols[idx + 1]
+
+            if (
+                ws_sheet.cell(pv_row, col1).value == naam
+                and ws_sheet.cell(pv_row, col2).value == naam
+            ):
+                eindcols.append(col2)
+
+    if not eindcols:
+        return None
+
+    return max(eindcols)
+
+
 # -----------------------------
 # Vind de pauzevlinder-rijen in PP optie 2
 # -----------------------------
@@ -5695,14 +5720,17 @@ for s in studenten:
 def pp2_place_minor_early_stopper_short_breaks_first():
     """
     Plaats het korte kwartier van minderjarige vroege stoppers
-    VOOR de andere korte pauzes van vroege stoppers.
+    alleen NADAT hun lange pauze al bestaat.
 
     Regels:
-    - student moet nog effectief 1 kort kwartier nodig hebben
-    - zo laat mogelijk zetten in het HELE rooster
+    - student moet minderjarig zijn
+    - student moet vroeg stoppen
+    - student moet nog een kort kwartier nodig hebben
+    - student moet al een lange pauze hebben
+    - korte kwartier moet STRIKT na het einde van de lange pauze liggen
+    - korte kwartier moet zo laat mogelijk in de shift vallen
     - nooit in eerste of laatste werkuur
     - open spots niet gebruiken
-    - géén voorrang meer voor 'zelfde rij als lange pauze' als dat vroeger ligt
     """
     kandidaten = [
         naam for naam in pp2_get_students_stopping_before_end()
@@ -5712,6 +5740,7 @@ def pp2_place_minor_early_stopper_short_breaks_first():
             and pp2_get_student_work_hours(naam)
             and max(pp2_get_student_work_hours(naam)) <= 15
         )
+        and naam in pp2_lange_pauze_ontvangers
         and pp2_resterende_korte_kwartieren(
             naam=naam,
             ws_sheet=ws_pp2,
@@ -5730,10 +5759,23 @@ def pp2_place_minor_early_stopper_short_breaks_first():
     )
 
     for naam in kandidaten:
+        laatste_lange_eindcol = pp2_get_last_long_break_end_col_any_row(
+            naam=naam,
+            ws_sheet=ws_pp2,
+            pv_rows=pv_rows_pp2,
+            pauze_cols=pauze_cols_pp2
+        )
+
+        if laatste_lange_eindcol is None:
+            continue
+
         alle_geldige_opties = []
 
         for pv, pv_row in pv_rows_pp2:
             for col in pauze_cols_pp2:
+                if col <= laatste_lange_eindcol:
+                    continue
+
                 if (pv_row, col) in pp2_open_spots:
                     continue
 
@@ -5743,18 +5785,14 @@ def pp2_place_minor_early_stopper_short_breaks_first():
                 if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
                     continue
 
-                zelfde_rij_lange_pauze = pp2_student_has_long_break_in_row(
-                    naam, ws_pp2, pv_row, pauze_cols_pp2
-                )
-
-                alle_geldige_opties.append((col, 1 if zelfde_rij_lange_pauze else 0, pv, pv_row))
+                alle_geldige_opties.append((col, pv, pv_row))
 
         if not alle_geldige_opties:
             continue
 
-        gekozen_col, _zelfde_rij_bonus, gekozen_pv, gekozen_pv_row = max(
+        gekozen_col, gekozen_pv, gekozen_pv_row = max(
             alle_geldige_opties,
-            key=lambda x: (x[0], x[1])
+            key=lambda x: x[0]
         )
 
         pp2_place_short_break_cols_on_row(
@@ -5763,6 +5801,7 @@ def pp2_place_minor_early_stopper_short_breaks_first():
             pv_row=gekozen_pv_row,
             cols=[gekozen_col]
         )
+        
 
 
 # ---------------------------------------
