@@ -5692,6 +5692,79 @@ for s in studenten:
     })
 
 
+def pp2_place_minor_early_stopper_short_breaks_first():
+    """
+    Plaats het korte kwartier van minderjarige vroege stoppers
+    VOOR de andere korte pauzes van vroege stoppers.
+
+    Regels:
+    - student moet nog effectief 1 kort kwartier nodig hebben
+    - zo laat mogelijk zetten in het HELE rooster
+    - nooit in eerste of laatste werkuur
+    - open spots niet gebruiken
+    - géén voorrang meer voor 'zelfde rij als lange pauze' als dat vroeger ligt
+    """
+    kandidaten = [
+        naam for naam in pp2_get_students_stopping_before_end()
+        if (
+            pp2_is_minderjarig(naam)
+            and len(pp2_get_student_work_hours(naam)) >= 4
+            and pp2_get_student_work_hours(naam)
+            and max(pp2_get_student_work_hours(naam)) <= 15
+        )
+        and pp2_resterende_korte_kwartieren(
+            naam=naam,
+            ws_sheet=ws_pp2,
+            pv_rows=pv_rows_pp2,
+            pauze_cols=pauze_cols_pp2,
+            lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
+        ) > 0
+    ]
+
+    kandidaten.sort(
+        key=lambda naam: (
+            max(pp2_get_student_work_hours(naam)),
+            min(pp2_get_student_work_hours(naam)),
+            naam
+        )
+    )
+
+    for naam in kandidaten:
+        alle_geldige_opties = []
+
+        for pv, pv_row in pv_rows_pp2:
+            for col in pauze_cols_pp2:
+                if (pv_row, col) in pp2_open_spots:
+                    continue
+
+                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+                    continue
+
+                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+                    continue
+
+                zelfde_rij_lange_pauze = pp2_student_has_long_break_in_row(
+                    naam, ws_pp2, pv_row, pauze_cols_pp2
+                )
+
+                alle_geldige_opties.append((col, 1 if zelfde_rij_lange_pauze else 0, pv, pv_row))
+
+        if not alle_geldige_opties:
+            continue
+
+        gekozen_col, _zelfde_rij_bonus, gekozen_pv, gekozen_pv_row = max(
+            alle_geldige_opties,
+            key=lambda x: (x[0], x[1])
+        )
+
+        pp2_place_short_break_cols_on_row(
+            naam=naam,
+            pv=gekozen_pv,
+            pv_row=gekozen_pv_row,
+            cols=[gekozen_col]
+        )
+
+
 # ---------------------------------------
 # 1) Korte werkers die vroeger stoppen dan het einde van de dag
 #    Minderjarigen van 4u t.e.m. 6u horen hier NIET meer bij.
