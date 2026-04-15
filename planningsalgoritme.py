@@ -4090,6 +4090,28 @@ def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
 
 
 
+def pp2_is_minor_early_stopper(naam):
+    """
+    True als student:
+    - minderjarig is
+    - minstens 4 uur werkt
+    - en stopt om of voor 16u (dus laatste werkblok <= 15)
+    """
+    if not pp2_is_minderjarig(naam):
+        return False
+
+    werk_uren = pp2_get_student_work_hours(naam)
+    if not werk_uren:
+        return False
+
+    if len(werk_uren) < 4:
+        return False
+
+    return max(werk_uren) <= 15
+
+
+
+
 def pp2_same_halfhour(col_a, col_b, ws_sheet):
     mins_a = pp2_parse_kwartier_header(ws_sheet.cell(1, col_a).value)
     mins_b = pp2_parse_kwartier_header(ws_sheet.cell(1, col_b).value)
@@ -5480,24 +5502,6 @@ def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
     })
 
 
-def pp2_is_minor_early_stopper(naam):
-    """
-    True als student:
-    - minderjarig is
-    - minstens 4 uur werkt
-    - en stopt om of voor 16u (dus laatste werkblok <= 15)
-    """
-    if not pp2_is_minderjarig(naam):
-        return False
-
-    werk_uren = pp2_get_student_work_hours(naam)
-    if not werk_uren:
-        return False
-
-    if len(werk_uren) < 4:
-        return False
-
-    return max(werk_uren) <= 15
 
 
 def pp2_is_minor_4_to_6_worker(naam):
