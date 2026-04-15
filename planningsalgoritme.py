@@ -4009,27 +4009,39 @@ def pp2_choose_middle_col(naam, ws_sheet, pauze_cols):
 
 def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
     """
-    Geldige korte pauze:
-    - student werkt dat uur
+    Een korte pauze mag alleen als:
+    - student werkt in dat kwartier
     - niet in eerste of laatste werkuur
+    - student op dat kwartier nog nergens anders in het pauzerooster staat
     """
     header = ws_sheet.cell(1, col).value
     uur = parse_header_uur(header)
+
     if uur is None:
         return False
 
     werk_uren = pp2_get_student_work_hours(naam)
-    if len(werk_uren) < 4:
+    if not werk_uren:
         return False
 
     if uur not in werk_uren:
         return False
 
-    if uur == werk_uren[0] or uur == werk_uren[-1]:
+    eerste_uur = werk_uren[0]
+    laatste_uur = werk_uren[-1]
+
+    if uur == eerste_uur or uur == laatste_uur:
+        return False
+
+    if pp2_student_heeft_al_pauze_op_kolom(
+        naam=naam,
+        col=col,
+        ws_sheet=ws_sheet,
+        pv_rows=pv_rows_pp2
+    ):
         return False
 
     return True
-
 
 def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
     """
@@ -4191,6 +4203,31 @@ def pp2_clear_pauze_grid(ws_sheet, pv_rows, pauze_cols):
             ws_sheet.cell(naam_rij, col).alignment = center_align
             ws_sheet.cell(naam_rij, col).border = thin_border
             ws_sheet.cell(naam_rij, col).fill = leeg_fill
+
+
+def pp2_student_heeft_al_pauze_op_kolom(naam, col, ws_sheet, pv_rows):
+    """
+    True als deze student op deze kwartierkolom al ergens in het pauzerooster staat,
+    ongeacht op welke pauzevlinder-rij.
+    """
+    for _pv, pv_row in pv_rows:
+        if ws_sheet.cell(pv_row, col).value == naam:
+            return True
+    return False
+
+
+def pp2_student_heeft_al_lange_pauze_op_blok(naam, col1, col2, ws_sheet, pv_rows):
+    """
+    True als deze student deze 2 kwartieren al ergens als lange pauze heeft staan.
+    """
+    for _pv, pv_row in pv_rows:
+        if (
+            ws_sheet.cell(pv_row, col1).value == naam and
+            ws_sheet.cell(pv_row, col2).value == naam
+        ):
+            return True
+    return False
+
 
 # -----------------------------
 # Vind de pauzevlinder-rijen in PP optie 2
@@ -4489,6 +4526,7 @@ def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
     - beide kwartieren samen exact 30 min vormen
     - student werkt in beide kwartieren
     - niet in eerste of laatste werkuur
+    - student op geen van beide kwartieren al elders in het pauzerooster staat
     """
     header1 = ws_sheet.cell(1, col1).value
     header2 = ws_sheet.cell(1, col2).value
@@ -4499,7 +4537,6 @@ def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
     if mins1 is None or mins2 is None:
         return False
 
-    # Moet exact 2 opeenvolgende kwartieren zijn
     if mins2 - mins1 != 15:
         return False
 
@@ -4519,14 +4556,29 @@ def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
     eerste_uur = werk_uren[0]
     laatste_uur = werk_uren[-1]
 
-    # Geen pauze in eerste of laatste werkuur
     if uur1 == eerste_uur or uur1 == laatste_uur:
         return False
     if uur2 == eerste_uur or uur2 == laatste_uur:
         return False
 
-    return True
+    if pp2_student_heeft_al_pauze_op_kolom(
+        naam=naam,
+        col=col1,
+        ws_sheet=ws_sheet,
+        pv_rows=pv_rows_pp2
+    ):
+        return False
 
+    if pp2_student_heeft_al_pauze_op_kolom(
+        naam=naam,
+        col=col2,
+        ws_sheet=ws_sheet,
+        pv_rows=pv_rows_pp2
+    ):
+        return False
+
+    return True
+    
 
 def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam, leave_top_blank=False):
     """
@@ -5501,78 +5553,6 @@ def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
 
 
 
-def pp2_place_minor_early_stopper_short_breaks_first():
-    """
-    Plaats het korte kwartier van minderjarige vroege stoppers
-    VOOR de andere korte pauzes van vroege stoppers.
-
-    Regels:
-    - student moet nog effectief 1 kort kwartier nodig hebben
-    - zo laat mogelijk zetten in het HELE rooster
-    - nooit in eerste of laatste werkuur
-    - open spots niet gebruiken
-    - géén voorrang meer voor 'zelfde rij als lange pauze' als dat vroeger ligt
-    """
-    kandidaten = [
-        naam for naam in pp2_get_students_stopping_before_end()
-        if (
-            pp2_is_minderjarig(naam)
-            and len(pp2_get_student_work_hours(naam)) >= 4
-            and pp2_get_student_work_hours(naam)
-            and max(pp2_get_student_work_hours(naam)) <= 15
-        )
-        and pp2_resterende_korte_kwartieren(
-            naam=naam,
-            ws_sheet=ws_pp2,
-            pv_rows=pv_rows_pp2,
-            pauze_cols=pauze_cols_pp2,
-            lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
-        ) > 0
-    ]
-
-    kandidaten.sort(
-        key=lambda naam: (
-            max(pp2_get_student_work_hours(naam)),
-            min(pp2_get_student_work_hours(naam)),
-            naam
-        )
-    )
-
-    for naam in kandidaten:
-        alle_geldige_opties = []
-
-        for pv, pv_row in pv_rows_pp2:
-            for col in pauze_cols_pp2:
-                if (pv_row, col) in pp2_open_spots:
-                    continue
-
-                if ws_pp2.cell(pv_row, col).value not in [None, ""]:
-                    continue
-
-                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
-                    continue
-
-                zelfde_rij_lange_pauze = pp2_student_has_long_break_in_row(
-                    naam, ws_pp2, pv_row, pauze_cols_pp2
-                )
-
-                alle_geldige_opties.append((col, 1 if zelfde_rij_lange_pauze else 0, pv, pv_row))
-
-        if not alle_geldige_opties:
-            continue
-
-        gekozen_col, _zelfde_rij_bonus, gekozen_pv, gekozen_pv_row = max(
-            alle_geldige_opties,
-            key=lambda x: (x[0], x[1])
-        )
-
-        pp2_place_short_break_cols_on_row(
-            naam=naam,
-            pv=gekozen_pv,
-            pv_row=gekozen_pv_row,
-            cols=[gekozen_col]
-        )
-
 
 
 def pp2_student_heeft_nog_lange_pauze_nodig(naam, ws_sheet, pv_rows, pauze_cols):
@@ -5997,7 +5977,11 @@ def pp2_build_step5_pending_groups():
     A) overige pending korte kwartieren
     B) eindwerkers zonder lange pauze
 
-    Pauzevlinders zelf horen hier niet meer in:
+    Minderjarige vroege stoppers horen hier ook NIET meer in:
+    die werden al eerder apart behandeld en mogen in stap 5
+    niet opnieuw een kort kwartier krijgen.
+
+    Pauzevlinders zelf horen hier ook niet meer in:
     - korte pauzevlinders werden al eerder verwerkt
     - lange pauzevlinders kregen in stap 4 hun eigen aparte fase,
       enkel in hun eigen rij
@@ -6010,6 +5994,15 @@ def pp2_build_step5_pending_groups():
 
         # Pauzevlinders hier NIET meer meenemen
         if naam in pauzevlinder_namen_set:
+            continue
+
+        # Minderjarige vroege stoppers hier ook NIET meer meenemen
+        if (
+            pp2_is_minderjarig(naam)
+            and len(pp2_get_student_work_hours(naam)) >= 4
+            and pp2_get_student_work_hours(naam)
+            and max(pp2_get_student_work_hours(naam)) <= 15
+        ):
             continue
 
         resterend = pp2_resterende_korte_kwartieren(
@@ -6039,7 +6032,6 @@ def pp2_build_step5_pending_groups():
     random.shuffle(endworkers_without_long_break)
 
     return other_pending_short_breaks, endworkers_without_long_break
-
 
 def pp2_try_assign_from_candidate_list_on_row(candidate_list, pv, pv_row):
     """
