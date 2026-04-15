@@ -3941,8 +3941,10 @@ def pp2_get_student_work_hours(naam):
     return sorted(uren)
 
 
+
 def pp2_is_minderjarig(naam):
     return "-18" in str(naam)
+
 
 def pp2_is_minor_early_stopper(naam):
     """
@@ -3962,6 +3964,7 @@ def pp2_is_minor_early_stopper(naam):
         return False
 
     return max(werk_uren) <= 15
+
 
 
 def pp2_is_first_or_last_work_hour(naam, kwartier_col, ws_sheet):
@@ -5441,7 +5444,15 @@ def pp2_find_one_valid_col_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols
     return []
 
 
-def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols, open_spots_set, min_col_exclusive=None):
+def pp2_find_needed_short_cols_for_student_on_row(
+    naam,
+    pv_row,
+    ws_sheet,
+    pauze_cols,
+    open_spots_set,
+    min_col_exclusive=None,
+    reverse_search=False
+):
     """
     Zoek het korte kwartier dat deze student nog nodig heeft op deze specifieke rij.
 
@@ -5449,7 +5460,8 @@ def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_
     - niemand krijgt nog 2 korte kwartieren
     - vanaf 4 uur werk heeft een student maximaal 1 kort kwartier nodig
     - optioneel kan je pas zoeken NA een bepaalde kolom
-      (handig voor studenten die al een lange pauze op deze rij hadden)
+    - optioneel kan je van rechts naar links zoeken
+      (handig voor minderjarige vroege stoppers die hun korte kwartier zo laat mogelijk moeten krijgen)
     """
     resterend = pp2_resterende_korte_kwartieren(
         naam=naam,
@@ -5462,7 +5474,11 @@ def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_
     if resterend <= 0:
         return []
 
-    for col in pauze_cols:
+    zoek_cols = list(pauze_cols)
+    if reverse_search:
+        zoek_cols = list(reversed(zoek_cols))
+
+    for col in zoek_cols:
         if min_col_exclusive is not None and col <= min_col_exclusive:
             continue
 
@@ -5892,6 +5908,56 @@ def pp2_try_assign_from_candidate_list_on_row_after_last_long_break(candidate_li
     return None, []
 
 
+def pp2_try_assign_minor_early_stopper_late_on_row(candidate_list, pv, pv_row):
+    """
+    Probeer minderjarige vroege stoppers op deze rij zo laat mogelijk te plaatsen.
+    Eerst NA hun laatste lange pauze op deze rij, van rechts naar links.
+    Als dat niet lukt, dan gewoon zo laat mogelijk op deze rij.
+    """
+    for kandidaat in candidate_list:
+        laatste_eindcol = pp2_get_last_long_break_end_col_on_row(
+            naam=kandidaat,
+            ws_sheet=ws_pp2,
+            pv_row=pv_row,
+            pauze_cols=pauze_cols_pp2
+        )
+
+        cols = pp2_find_needed_short_cols_for_student_on_row(
+            naam=kandidaat,
+            pv_row=pv_row,
+            ws_sheet=ws_pp2,
+            pauze_cols=pauze_cols_pp2,
+            open_spots_set=pp2_open_spots,
+            min_col_exclusive=laatste_eindcol,
+            reverse_search=True
+        )
+
+        if not cols:
+            cols = pp2_find_needed_short_cols_for_student_on_row(
+                naam=kandidaat,
+                pv_row=pv_row,
+                ws_sheet=ws_pp2,
+                pauze_cols=pauze_cols_pp2,
+                open_spots_set=pp2_open_spots,
+                reverse_search=True
+            )
+
+        if not cols:
+            continue
+
+        pp2_place_short_break_cols_on_row(
+            naam=kandidaat,
+            pv=pv,
+            pv_row=pv_row,
+            cols=cols
+        )
+
+        return kandidaat, cols
+
+    return None, []
+
+
+
 def pp2_student_works_until_day_end(naam):
     """
     True als student werkt tot het einduur van de dag.
@@ -5989,7 +6055,7 @@ pp2_step5_short_breaks_placed = []
 # 2) Eerst alle "gewone" resterende korte kwartieren invullen
 #    inclusief:
 #    - studenten met lange pauze die nog korte kwartieren missen
-#    - minderjarigen met dubbele korte kwartieren
+#    - minderjarige vroege stoppers, maar dan zo laat mogelijk
 # -----------------------------------
 for col in pauze_cols_pp2:
     if not pp2_other_pending_short_breaks:
@@ -6012,8 +6078,8 @@ for col in pauze_cols_pp2:
 
         # -----------------------------------
         # PRIORITEIT 1:
-        # studenten die in deze rij al een lange pauze kregen,
-        # in volgorde van vroegst gekregen lange pauze
+        # minderjarige vroege stoppers op deze rij
+        # zo laat mogelijk, liefst NA hun laatste lange pauze
         # -----------------------------------
         rij_lange_pauze_namen = pp2_get_long_break_students_on_row_in_order(
             ws_sheet=ws_pp2,
@@ -6021,25 +6087,43 @@ for col in pauze_cols_pp2:
             pauze_cols=pauze_cols_pp2
         )
 
-        prioriteitslijst = [
+        minor_early_priority = [
             naam for naam in rij_lange_pauze_namen
             if naam in pp2_other_pending_short_breaks
+            and pp2_is_minor_early_stopper(naam)
         ]
 
-        toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row_after_last_long_break(
-            candidate_list=prioriteitslijst,
+        toegewezen_naam, toegewezen_cols = pp2_try_assign_minor_early_stopper_late_on_row(
+            candidate_list=minor_early_priority,
             pv=pv,
             pv_row=pv_row
         )
 
         # -----------------------------------
         # PRIORITEIT 2:
+        # andere studenten die in deze rij al een lange pauze kregen
+        # -----------------------------------
+        if toegewezen_naam is None:
+            prioriteitslijst = [
+                naam for naam in rij_lange_pauze_namen
+                if naam in pp2_other_pending_short_breaks
+                and naam not in minor_early_priority
+            ]
+
+            toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row_after_last_long_break(
+                candidate_list=prioriteitslijst,
+                pv=pv,
+                pv_row=pv_row
+            )
+
+        # -----------------------------------
+        # PRIORITEIT 3:
         # fallback naar overige nog open korte kwartieren
         # -----------------------------------
         if toegewezen_naam is None:
             fallback_lijst = [
                 naam for naam in pp2_other_pending_short_breaks
-                if naam not in prioriteitslijst
+                if naam not in minor_early_priority
             ]
 
             toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
@@ -6066,6 +6150,7 @@ for col in pauze_cols_pp2:
             ) <= 0:
                 if toegewezen_naam in pp2_other_pending_short_breaks:
                     pp2_other_pending_short_breaks.remove(toegewezen_naam)
+                
 
 # -----------------------------------
 # 3) Pas daarna:
