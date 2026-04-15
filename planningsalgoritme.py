@@ -264,7 +264,7 @@ def compute_pauze_hours(open_uren):
     elif 10 in open_uren and 17 in open_uren:
         return [h for h in open_uren if 12 <= h <= 16]
     elif 12 in open_uren and 18 in open_uren:
-        return [h for h in open_uren if 13 <= h <= 17]
+        return [h for h in open_uren if 14 <= h <= 17]
     elif 14 in open_uren and 18 in open_uren:
         return [h for h in open_uren if 16 <= h <= 17]
     else:
@@ -5470,13 +5470,6 @@ def pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
     return False
 
 
-def pp2_get_long_break_row_for_student(naam, ws_sheet, pv_rows, pauze_cols):
-    for _pv, pv_row in pv_rows:
-        if pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
-            return pv_row
-    return None
-
-
 def pp2_student_is_long_worker(naam):
     return naam in pp2_lange_werkers_lijst()
 
@@ -6198,24 +6191,12 @@ for col in pauze_cols_pp2:
         # -----------------------------------
         # PRIORITEIT 2:
         # fallback naar overige nog open korte kwartieren
-        # maar minderjarigen met lange pauze
-        # alleen op hun eigen pauzevlinderrij
+        # hier mag het randomer blijven voor niet-minderjarigen
         # -----------------------------------
         if toegewezen_naam is None:
             fallback_lijst = [
                 naam for naam in pp2_other_pending_short_breaks
                 if naam not in prioriteitslijst
-            ]
-
-            fallback_lijst = [
-                naam for naam in fallback_lijst
-                if not pp2_is_minderjarig(naam)
-                or pp2_get_long_break_row_for_student(
-                    naam,
-                    ws_pp2,
-                    pv_rows_pp2,
-                    pauze_cols_pp2
-                ) in [None, pv_row]
             ]
 
             toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
@@ -6244,6 +6225,78 @@ for col in pauze_cols_pp2:
                 if toegewezen_naam in pp2_other_pending_short_breaks:
                     pp2_other_pending_short_breaks.remove(toegewezen_naam)
 
+
+# -----------------------------------
+# 3) Pas daarna:
+#    studenten die tot het einduur werken én geen lange pauze kregen
+# -----------------------------------
+for col in pauze_cols_pp2:
+    if not pp2_endworkers_without_long_break:
+        break
+
+    for pv, pv_row in pv_rows_pp2:
+        if not pp2_endworkers_without_long_break:
+            break
+
+        # open spots overslaan
+        if (pv_row, col) in pp2_open_spots:
+            continue
+
+        # vak moet leeg zijn
+        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+            continue
+
+        toegewezen_naam = None
+        toegewezen_cols = []
+
+        rij_lange_pauze_namen = pp2_get_long_break_students_on_row_in_order(
+            ws_sheet=ws_pp2,
+            pv_row=pv_row,
+            pauze_cols=pauze_cols_pp2
+        )
+
+        prioriteitslijst = [
+            naam for naam in rij_lange_pauze_namen
+            if naam in pp2_endworkers_without_long_break
+        ]
+
+        toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
+            candidate_list=prioriteitslijst,
+            pv=pv,
+            pv_row=pv_row,
+            shuffle_candidates=False
+        )
+
+        if toegewezen_naam is None:
+            fallback_lijst = [
+                naam for naam in pp2_endworkers_without_long_break
+                if naam not in prioriteitslijst
+            ]
+
+            toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
+                candidate_list=fallback_lijst,
+                pv=pv,
+                pv_row=pv_row,
+                shuffle_candidates=True
+            )
+
+        if toegewezen_naam:
+            pp2_step5_short_breaks_placed.append({
+                "naam": toegewezen_naam,
+                "pauzevlinder": pv["naam"],
+                "tijden": [ws_pp2.cell(1, c).value for c in toegewezen_cols],
+                "via_lange_pauze_prioriteit": toegewezen_naam in rij_lange_pauze_namen
+            })
+
+            if pp2_resterende_korte_kwartieren(
+                naam=toegewezen_naam,
+                ws_sheet=ws_pp2,
+                pv_rows=pv_rows_pp2,
+                pauze_cols=pauze_cols_pp2,
+                lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
+            ) <= 0:
+                if toegewezen_naam in pp2_endworkers_without_long_break:
+                    pp2_endworkers_without_long_break.remove(toegewezen_naam)
 
 # -----------------------------------
 # 3) Pas daarna:
