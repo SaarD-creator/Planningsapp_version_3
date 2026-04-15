@@ -4241,7 +4241,7 @@ for s in studenten:
     # Gewone vroege stoppers:
     # - minstens 4u gewerkt
     # - laatste werkblok <= 15
-    if laatste_werkblok <= 15:
+    if laatste_werkblok <= 15 and not pp2_is_minor_early_stopper(naam):
         vroege_stoppers_gewoon.append(item)
 
 # Sorteervolgorde:
@@ -5479,6 +5479,27 @@ def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
         )
     })
 
+
+def pp2_is_minor_early_stopper(naam):
+    """
+    True als student:
+    - minderjarig is
+    - minstens 4 uur werkt
+    - en stopt om of voor 16u (dus laatste werkblok <= 15)
+    """
+    if not pp2_is_minderjarig(naam):
+        return False
+
+    werk_uren = pp2_get_student_work_hours(naam)
+    if not werk_uren:
+        return False
+
+    if len(werk_uren) < 4:
+        return False
+
+    return max(werk_uren) <= 15
+
+
 def pp2_is_minor_4_to_6_worker(naam):
     """
     True als student minderjarig is en tussen 4u en 6u gewerkt heeft.
@@ -5611,14 +5632,15 @@ for s in studenten:
 
 # ---------------------------------------
 # 1) Korte werkers die vroeger stoppen dan het einde van de dag
-#    Minderjarigen van 4u t.e.m. 6u horen hier NIET meer bij.
-#    Hun korte kwartier mag later mee met de lange-werker-logica.
+#    Minderjarige vroege stoppers horen hier NIET meer bij.
+#    Hun lange pauze moet vroeg komen,
+#    hun korte kwartier moet later pas vallen.
 # ---------------------------------------
 pp2_students_before_end_all = pp2_get_students_stopping_before_end()
 
 pp2_students_before_end_pending = [
     naam for naam in pp2_students_before_end_all
-    if not pp2_is_minor_4_to_6_worker(naam)
+    if not pp2_is_minor_early_stopper(naam)
     and pp2_resterende_korte_kwartieren(
         naam=naam,
         ws_sheet=ws_pp2,
@@ -5629,7 +5651,6 @@ pp2_students_before_end_pending = [
 ]
 
 random.shuffle(pp2_students_before_end_pending)
-
 
 
 pp2_regular_short_breaks_placed = []
