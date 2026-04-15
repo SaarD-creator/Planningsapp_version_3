@@ -5528,7 +5528,7 @@ def pp2_place_minor_early_stopper_short_breaks_first():
     """
     kandidaten = [
         naam for naam in pp2_get_students_stopping_before_end()
-        if pp2_is_minor_4_to_6_worker(naam):
+        if pp2_is_minor_4_to_6_worker(naam)
         and pp2_resterende_korte_kwartieren(
             naam=naam,
             ws_sheet=ws_pp2,
