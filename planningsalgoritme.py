@@ -4918,7 +4918,7 @@ def pp2_korte_pauze_nodig_namen():
     for s in studenten:
         naam = s["naam"]
 
-        if pp2_is_minor_early_stopper(naam):
+        if pp2_is_minor_4_to_6_worker(naam):
             continue
 
         if pp2_benodigde_korte_kwartieren(naam) > 0:
@@ -5495,7 +5495,7 @@ def pp2_is_minor_4_to_6_worker(naam):
     return pp2_is_minderjarig(naam) and 4 <= gewerkte_uren <= 6
 
 
-def pp2_is_minor_early_stopper(naam):
+def pp2_is_minor_4_to_6_worker(naam):
     """
     Minderjarige vroege stopper:
     - minderjarig
@@ -5513,7 +5513,6 @@ def pp2_is_minor_early_stopper(naam):
         and max(werk_uren) <= 15
     )
 
-
 def pp2_place_minor_early_stopper_short_breaks_first():
     """
     Plaats het extra korte kwartier van minderjarige vroege stoppers
@@ -5529,7 +5528,7 @@ def pp2_place_minor_early_stopper_short_breaks_first():
     """
     kandidaten = [
         naam for naam in pp2_get_students_stopping_before_end()
-        if pp2_is_minor_early_stopper(naam)
+        if pp2_is_minor_4_to_6_worker(naam):
         and pp2_resterende_korte_kwartieren(
             naam=naam,
             ws_sheet=ws_pp2,
