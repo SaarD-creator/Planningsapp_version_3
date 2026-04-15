@@ -4910,21 +4910,33 @@ def pp2_korte_pauze_nodig_namen():
     Iedereen met minstens 4 uur werk heeft recht op 1 kort kwartier,
     BEHALVE minderjarige vroege stoppers.
 
-    Minderjarige vroege stoppers worden hier bewust uitgehaald,
-    zodat hun korte kwartier later apart en zo laat mogelijk
-    naast hun lange halfuur kan ingepland worden.
+    Minderjarige vroege stoppers:
+    - minderjarig
+    - minstens 4u gewerkt
+    - laatste werkuur <= 15
     """
     namen = []
+
     for s in studenten:
         naam = s["naam"]
+        werk_uren = pp2_get_student_work_hours(naam)
 
-        if pp2_is_minor_4_to_6_worker(naam):
+        is_minor_early_stopper = (
+            pp2_is_minderjarig(naam)
+            and len(werk_uren) >= 4
+            and werk_uren
+            and max(werk_uren) <= 15
+        )
+
+        if is_minor_early_stopper:
             continue
 
         if pp2_benodigde_korte_kwartieren(naam) > 0:
             namen.append(naam)
 
     return namen
+
+
 
 def pp2_count_remaining_empty_quarters(ws_sheet, pv_rows, pauze_cols):
     """
@@ -5487,31 +5499,7 @@ def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
         )
     })
 
-def pp2_is_minor_4_to_6_worker(naam):
-    """
-    True als student minderjarig is en tussen 4u en 6u gewerkt heeft.
-    """
-    gewerkte_uren = student_totalen.get(naam, 0)
-    return pp2_is_minderjarig(naam) and 4 <= gewerkte_uren <= 6
 
-
-def pp2_is_minor_4_to_6_worker(naam):
-    """
-    Minderjarige vroege stopper:
-    - minderjarig
-    - minstens 4u gewerkt
-    - stopt om of voor 16u
-      => in deze uur-logica betekent dat laatste werkblok <= 15
-    """
-    werk_uren = pp2_get_student_work_hours(naam)
-    if not werk_uren:
-        return False
-
-    return (
-        pp2_is_minderjarig(naam)
-        and len(werk_uren) >= 4
-        and max(werk_uren) <= 15
-    )
 
 def pp2_place_minor_early_stopper_short_breaks_first():
     """
@@ -5528,7 +5516,12 @@ def pp2_place_minor_early_stopper_short_breaks_first():
     """
     kandidaten = [
         naam for naam in pp2_get_students_stopping_before_end()
-        if pp2_is_minor_4_to_6_worker(naam)
+        if (
+            pp2_is_minderjarig(naam)
+            and len(pp2_get_student_work_hours(naam)) >= 4
+            and pp2_get_student_work_hours(naam)
+            and max(pp2_get_student_work_hours(naam)) <= 15
+        )
         and pp2_resterende_korte_kwartieren(
             naam=naam,
             ws_sheet=ws_pp2,
@@ -5771,9 +5764,15 @@ for s in studenten:
 # ---------------------------------------
 pp2_students_before_end_all = pp2_get_students_stopping_before_end()
 
+
 pp2_students_before_end_pending = [
     naam for naam in pp2_students_before_end_all
-    if not pp2_is_minor_early_stopper(naam)
+    if not (
+        pp2_is_minderjarig(naam)
+        and len(pp2_get_student_work_hours(naam)) >= 4
+        and pp2_get_student_work_hours(naam)
+        and max(pp2_get_student_work_hours(naam)) <= 15
+    )
     and pp2_resterende_korte_kwartieren(
         naam=naam,
         ws_sheet=ws_pp2,
