@@ -3940,6 +3940,27 @@ def pp2_get_student_work_hours(naam):
                 break
     return sorted(uren)
 
+
+def pp2_is_minor_early_stopper(naam):
+    """
+    True als student:
+    - minderjarig is
+    - minstens 4 uur werkt
+    - en stopt om of voor 16u (dus laatste werkblok <= 15)
+    """
+    if not pp2_is_minderjarig(naam):
+        return False
+
+    werk_uren = pp2_get_student_work_hours(naam)
+    if not werk_uren:
+        return False
+
+    if len(werk_uren) < 4:
+        return False
+
+    return max(werk_uren) <= 15
+
+
 def pp2_is_first_or_last_work_hour(naam, kwartier_col, ws_sheet):
     """
     Checkt of dit kwartier in het eerste of laatste werkuur valt.
@@ -4087,28 +4108,6 @@ def pp2_choose_middle_double_col_for_minor(naam, ws_sheet, pauze_cols):
         return col1
 
     return None
-
-
-
-def pp2_is_minor_early_stopper(naam):
-    """
-    True als student:
-    - minderjarig is
-    - minstens 4 uur werkt
-    - en stopt om of voor 16u (dus laatste werkblok <= 15)
-    """
-    if not pp2_is_minderjarig(naam):
-        return False
-
-    werk_uren = pp2_get_student_work_hours(naam)
-    if not werk_uren:
-        return False
-
-    if len(werk_uren) < 4:
-        return False
-
-    return max(werk_uren) <= 15
-
 
 
 
@@ -5501,9 +5500,6 @@ def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
         )
     })
 
-
-
-
 def pp2_is_minor_4_to_6_worker(naam):
     """
     True als student minderjarig is en tussen 4u en 6u gewerkt heeft.
@@ -5655,6 +5651,7 @@ pp2_students_before_end_pending = [
 ]
 
 random.shuffle(pp2_students_before_end_pending)
+
 
 
 pp2_regular_short_breaks_placed = []
