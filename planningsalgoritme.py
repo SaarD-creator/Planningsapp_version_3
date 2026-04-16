@@ -4254,38 +4254,6 @@ def pp2_get_last_long_break_end_col_any_row(naam, ws_sheet, pv_rows, pauze_cols)
     return max(eindcols)
 
 
-
-def pp2_find_first_valid_long_block_any_row(naam, ws_sheet, pv_rows, pauze_cols):
-    """
-    Zoek het eerste geldige halfuur over alle pauzevlinderrijen.
-    We lopen strikt van links naar rechts door de halve uren
-    en per halfuur van boven naar beneden door de pauzevlinderrijen.
-
-    Retourneert:
-    - (pv_row, col1, col2) als er een geldig halfuur gevonden is
-    - None als er geen geldig halfuur bestaat
-    """
-    for idx in range(len(pauze_cols) - 1):
-        col1 = pauze_cols[idx]
-        col2 = pauze_cols[idx + 1]
-
-        if col2 != col1 + 1:
-            continue
-
-        for _pv, pv_row in pv_rows:
-            if ws_sheet.cell(pv_row, col1).value not in [None, ""]:
-                continue
-            if ws_sheet.cell(pv_row, col2).value not in [None, ""]:
-                continue
-
-            if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
-                continue
-
-            return pv_row, col1, col2
-
-    return None
-
-
 # -----------------------------
 # Vind de pauzevlinder-rijen in PP optie 2
 # -----------------------------
@@ -4353,34 +4321,35 @@ pp2_minor_early_stopper_first_long_row = {}
 for item in pp2_minor_early_stoppers:
     naam = item["naam"]
 
-    gevonden = pp2_find_first_valid_long_block_any_row(
-        naam=naam,
-        ws_sheet=ws_pp2,
-        pv_rows=pv_rows_pp2,
-        pauze_cols=pauze_cols_pp2
-    )
+    gevonden_lang = None
 
-    if gevonden is None:
+    for idx in range(len(pauze_cols_pp2) - 1):
+        col1 = pauze_cols_pp2[idx]
+        col2 = pauze_cols_pp2[idx + 1]
+
+        for pv, pv_row in pv_rows_pp2:
+            if ws_pp2.cell(pv_row, col1).value not in [None, ""]:
+                continue
+            if ws_pp2.cell(pv_row, col2).value not in [None, ""]:
+                continue
+
+            if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_pp2):
+                continue
+
+            gevonden_lang = (pv, pv_row, col1, col2)
+            break
+
+        if gevonden_lang is not None:
+            break
+
+    if gevonden_lang is None:
         pp2_niet_geplaatst.append({
             "naam": naam,
             "reden": "geen geldig vroeg halfuur gevonden voor minderjarige vroege stopper"
         })
         continue
 
-    pv_row, col1, col2 = gevonden
-
-    gekozen_pv = None
-    for pv, rij in pv_rows_pp2:
-        if rij == pv_row:
-            gekozen_pv = pv
-            break
-
-    if gekozen_pv is None:
-        pp2_niet_geplaatst.append({
-            "naam": naam,
-            "reden": "geen bijhorende pauzevlinder-rij gevonden voor vroeg halfuur"
-        })
-        continue
+    gekozen_pv, pv_row, col1, col2 = gevonden_lang
 
     eigen_pv_row = pp2_get_pv_row_for_name(naam, pv_rows_pp2)
     leave_top_blank = eigen_pv_row == pv_row
