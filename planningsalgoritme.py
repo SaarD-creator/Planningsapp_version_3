@@ -5470,6 +5470,17 @@ def pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
     return False
 
 
+def pp2_get_long_break_row_for_student(naam, ws_sheet, pv_rows, pauze_cols):
+    """
+    Geef de pauzevlinderrij terug waarop deze student een lange pauze heeft.
+    Als de student geen lange pauze heeft: None.
+    """
+    for _pv, pv_row in pv_rows:
+        if pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
+            return pv_row
+    return None
+
+
 def pp2_student_is_long_worker(naam):
     return naam in pp2_lange_werkers_lijst()
 
@@ -6146,6 +6157,7 @@ pp2_step5_short_breaks_placed = []
 #    - studenten met lange pauze die nog korte kwartieren missen
 #    - minderjarigen met dubbele korte kwartieren
 # -----------------------------------
+
 for col in pauze_cols_pp2:
     if not pp2_other_pending_short_breaks:
         break
@@ -6191,12 +6203,27 @@ for col in pauze_cols_pp2:
         # -----------------------------------
         # PRIORITEIT 2:
         # fallback naar overige nog open korte kwartieren
-        # hier mag het randomer blijven voor niet-minderjarigen
+        # maar minderjarigen met lange pauze mogen alleen
+        # op hun eigen lange-pauzerij gekozen worden
         # -----------------------------------
         if toegewezen_naam is None:
             fallback_lijst = [
                 naam for naam in pp2_other_pending_short_breaks
                 if naam not in prioriteitslijst
+            ]
+
+            fallback_lijst = [
+                naam for naam in fallback_lijst
+                if not (
+                    pp2_is_minderjarig(naam)
+                    and naam in pp2_lange_pauze_ontvangers
+                    and pp2_get_long_break_row_for_student(
+                        naam,
+                        ws_pp2,
+                        pv_rows_pp2,
+                        pauze_cols_pp2
+                    ) != pv_row
+                )
             ]
 
             toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
@@ -6224,7 +6251,6 @@ for col in pauze_cols_pp2:
             ) <= 0:
                 if toegewezen_naam in pp2_other_pending_short_breaks:
                     pp2_other_pending_short_breaks.remove(toegewezen_naam)
-
 
 # -----------------------------------
 # 3) Pas daarna:
