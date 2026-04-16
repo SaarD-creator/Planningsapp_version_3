@@ -6201,29 +6201,52 @@ for col in pauze_cols_pp2:
         )
 
         # -----------------------------------
-        # PRIORITEIT 2:
-        # fallback naar overige nog open korte kwartieren
-        # maar minderjarigen met lange pauze mogen alleen
-        # op hun eigen lange-pauzerij gekozen worden
+        # PRIORITEIT 2A:
+        # minderjarigen met lange pauze:
+        # probeer EERST op dezelfde lange-pauzerij
+        # -----------------------------------
+        if toegewezen_naam is None:
+            voorkeur_minderjarigen = [
+                naam for naam in pp2_other_pending_short_breaks
+                if naam not in prioriteitslijst
+                and pp2_is_minderjarig(naam)
+                and naam in pp2_lange_pauze_ontvangers
+                and pp2_get_long_break_row_for_student(
+                    naam,
+                    ws_pp2,
+                    pv_rows_pp2,
+                    pauze_cols_pp2
+                ) == pv_row
+            ]
+
+            toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
+                candidate_list=voorkeur_minderjarigen,
+                pv=pv,
+                pv_row=pv_row,
+                shuffle_candidates=True
+            )
+
+        # -----------------------------------
+        # PRIORITEIT 2B:
+        # algemene fallback:
+        # als het niet op dezelfde rij lukt,
+        # mag de minderjarige nog altijd elders landen
         # -----------------------------------
         if toegewezen_naam is None:
             fallback_lijst = [
                 naam for naam in pp2_other_pending_short_breaks
                 if naam not in prioriteitslijst
-            ]
-
-            fallback_lijst = [
-                naam for naam in fallback_lijst
-                if not (
-                    pp2_is_minderjarig(naam)
-                    and naam in pp2_lange_pauze_ontvangers
+                and naam not in [
+                    n for n in pp2_other_pending_short_breaks
+                    if pp2_is_minderjarig(n)
+                    and n in pp2_lange_pauze_ontvangers
                     and pp2_get_long_break_row_for_student(
-                        naam,
+                        n,
                         ws_pp2,
                         pv_rows_pp2,
                         pauze_cols_pp2
-                    ) != pv_row
-                )
+                    ) == pv_row
+                ]
             ]
 
             toegewezen_naam, toegewezen_cols = pp2_try_assign_from_candidate_list_on_row(
@@ -6251,7 +6274,6 @@ for col in pauze_cols_pp2:
             ) <= 0:
                 if toegewezen_naam in pp2_other_pending_short_breaks:
                     pp2_other_pending_short_breaks.remove(toegewezen_naam)
-
 # -----------------------------------
 # 3) Pas daarna:
 #    studenten die tot het einduur werken én geen lange pauze kregen
