@@ -4254,6 +4254,38 @@ def pp2_get_last_long_break_end_col_any_row(naam, ws_sheet, pv_rows, pauze_cols)
     return max(eindcols)
 
 
+
+def pp2_find_first_valid_long_block_any_row(naam, ws_sheet, pv_rows, pauze_cols):
+    """
+    Zoek het eerste geldige halfuur over alle pauzevlinderrijen.
+    We lopen strikt van links naar rechts door de halve uren
+    en per halfuur van boven naar beneden door de pauzevlinderrijen.
+
+    Retourneert:
+    - (pv_row, col1, col2) als er een geldig halfuur gevonden is
+    - None als er geen geldig halfuur bestaat
+    """
+    for idx in range(len(pauze_cols) - 1):
+        col1 = pauze_cols[idx]
+        col2 = pauze_cols[idx + 1]
+
+        if col2 != col1 + 1:
+            continue
+
+        for _pv, pv_row in pv_rows:
+            if ws_sheet.cell(pv_row, col1).value not in [None, ""]:
+                continue
+            if ws_sheet.cell(pv_row, col2).value not in [None, ""]:
+                continue
+
+            if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
+                continue
+
+            return pv_row, col1, col2
+
+    return None
+
+
 # -----------------------------
 # Vind de pauzevlinder-rijen in PP optie 2
 # -----------------------------
