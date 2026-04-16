@@ -5739,6 +5739,7 @@ for naam in pp2_minor_early_stoppers:
 # ---------------------------------------
 # 0B) Daarna: exact diezelfde minderjarige
 #     vroege stoppers hun KORTE pauze
+#     => op DEZELFDE rij als hun lange pauze
 #     => zo laat mogelijk (rechts naar links)
 # ---------------------------------------
 for naam in pp2_minor_early_stoppers:
@@ -5753,6 +5754,7 @@ for naam in pp2_minor_early_stoppers:
     if resterend <= 0:
         continue
 
+    lange_pauze_row = None
     laatste_lange_eindcol = None
 
     for _pv, pv_row in pv_rows_pp2:
@@ -5765,45 +5767,49 @@ for naam in pp2_minor_early_stoppers:
                 and ws_pp2.cell(pv_row, col2).value == naam
             ):
                 if laatste_lange_eindcol is None or col2 > laatste_lange_eindcol:
+                    lange_pauze_row = pv_row
                     laatste_lange_eindcol = col2
 
-    if laatste_lange_eindcol is None:
+    if lange_pauze_row is None or laatste_lange_eindcol is None:
         continue
 
-    gekozen = None
+    gekozen_col = None
 
     for col in reversed(pauze_cols_pp2):
         if col <= laatste_lange_eindcol:
             continue
 
-        for pv, pv_row in pv_rows_pp2:
-            if (pv_row, col) in pp2_open_spots:
-                continue
+        if (lange_pauze_row, col) in pp2_open_spots:
+            continue
 
-            if ws_pp2.cell(pv_row, col).value not in [None, ""]:
-                continue
+        if ws_pp2.cell(lange_pauze_row, col).value not in [None, ""]:
+            continue
 
-            if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
-                continue
+        if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+            continue
 
-            gekozen = (pv, pv_row, col)
-            break
+        gekozen_col = col
+        break
 
-        if gekozen is not None:
-            break
-
-    if gekozen is None:
+    if gekozen_col is None:
         continue
 
-    pv, pv_row, col = gekozen
+    bijhorende_pv = None
+
+    for pv, pv_row in pv_rows_pp2:
+        if pv_row == lange_pauze_row:
+            bijhorende_pv = pv
+            break
+
+    if bijhorende_pv is None:
+        continue
 
     pp2_place_short_break_cols_on_row(
         naam=naam,
-        pv=pv,
-        pv_row=pv_row,
-        cols=[col]
+        pv=bijhorende_pv,
+        pv_row=lange_pauze_row,
+        cols=[gekozen_col]
     )
-
 
 # ---------------------------------------
 # 1) Daarna pas: gewone korte werkers
