@@ -1868,101 +1868,91 @@ def actieve_analyse_attracties_op_uur(uur):
     return resultaat
 
 
-ws_analyse = wb_out.create_sheet(title="Analyse")
+def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg):
+    # Verwijder oud sheet
+    if "Analyse" in wb_arg.sheetnames:
+        del wb_arg["Analyse"]
 
-analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    ws_analyse = wb_arg.create_sheet(title="Analyse")
+    analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
-# -----------------------------
-# Titel bovenaan de Analyse-pagina
-# -----------------------------
-titel = "Hier zie je per uur welke studenten aanwezig zijn en welke attracties ze kunnen:"
-ws_analyse.merge_cells(start_row=1, start_column=1, end_row=1, end_column=20)
+    # Herdefinieer de hulpfunctie lokaal zodat ze de juiste data gebruikt
+    def is_aanwezig(student, uur):
+        naam = student["naam"]
+        if student.get("is_pauzevlinder") and uur in required_pauze_hours:
+            return False
+        if uur in set(student.get("assigned_hours", [])):
+            return True
+        if naam in ea_arg.get(uur, []):
+            return True
+        return False
 
-titel_cel = ws_analyse.cell(1, 1, titel)
-titel_cel.font = Font(bold=True, size=12)
-titel_cel.alignment = Alignment(horizontal="left", vertical="center", indent=1)
-titel_cel.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
-titel_cel.border = thin_border
+    titel = "Hier zie je per uur welke studenten aanwezig zijn en welke attracties ze kunnen:"
+    ws_analyse.merge_cells(start_row=1, start_column=1, end_row=1, end_column=20)
+    titel_cel = ws_analyse.cell(1, 1, titel)
+    titel_cel.font = Font(bold=True, size=12)
+    titel_cel.alignment = Alignment(horizontal="left", vertical="center", indent=1)
+    titel_cel.fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+    titel_cel.border = thin_border
 
-start_rij = 3
+    start_rij = 3
+    for uur in sorted(open_uren):
+        analyse_studenten_uur = sorted(
+            [s for s in st_arg if is_aanwezig(s, uur)],
+            key=lambda s: naam_tie_break_key(s["naam"])
+        )
+        analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
+        if not analyse_studenten_uur or not analyse_attracties_uur:
+            continue
 
-for uur in sorted(open_uren):
-    analyse_studenten_uur = [
-        s for s in studenten
-        if student_is_aanwezig_op_uur_zonder_pauzevlinder(s, uur)
-    ]
-    analyse_studenten_uur = sorted(analyse_studenten_uur, key=lambda s: naam_tie_break_key(s["naam"]))
+        ws_analyse.cell(start_rij, 1, f"{uur}:00").font = Font(bold=True)
+        ws_analyse.cell(start_rij, 1).fill = analyse_header_fill
+        ws_analyse.cell(start_rij, 1).alignment = center_align
+        ws_analyse.cell(start_rij, 1).border = thin_border
+        ws_analyse.cell(start_rij, 2, "Student").font = Font(bold=True)
+        ws_analyse.cell(start_rij, 2).fill = analyse_header_fill
+        ws_analyse.cell(start_rij, 2).alignment = center_align
+        ws_analyse.cell(start_rij, 2).border = thin_border
 
-    analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
-
-    # Als er voor dit uur niets te tonen is, sla over
-    if not analyse_studenten_uur or not analyse_attracties_uur:
-        continue
-
-    # Uur in plaats van datum
-    ws_analyse.cell(start_rij, 1, f"{uur}:00").font = Font(bold=True)
-    ws_analyse.cell(start_rij, 1).fill = analyse_header_fill
-    ws_analyse.cell(start_rij, 1).alignment = center_align
-    ws_analyse.cell(start_rij, 1).border = thin_border
-
-    ws_analyse.cell(start_rij, 2, "Student").font = Font(bold=True)
-    ws_analyse.cell(start_rij, 2).fill = analyse_header_fill
-    ws_analyse.cell(start_rij, 2).alignment = center_align
-    ws_analyse.cell(start_rij, 2).border = thin_border
-
-    # 1 kolom per attractie
-    start_col_attr = 3
-    for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
-        cel = ws_analyse.cell(start_rij, idx, attr)
-        cel.font = Font(bold=True)
-        cel.fill = analyse_header_fill
-        cel.alignment = center_align
-        cel.border = thin_border
-
-    # Data voor dit uur
-    rij = start_rij + 1
-    for s in analyse_studenten_uur:
-        naam = s["naam"]
-
-        ws_analyse.cell(rij, 1, rij - start_rij).alignment = center_align
-        ws_analyse.cell(rij, 1).border = thin_border
-        ws_analyse.cell(rij, 1).fill = witte_fill
-
-        naam_cel = ws_analyse.cell(rij, 2, naam)
-        naam_cel.alignment = center_align
-        naam_cel.border = thin_border
-        student_fill = witte_fill
-
-        if naam in student_kleuren:
-            student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid")
-            naam_cel.fill = student_fill
-        else:
-            naam_cel.fill = witte_fill
-
+        start_col_attr = 3
         for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
-            cel = ws_analyse.cell(rij, idx)
+            cel = ws_analyse.cell(start_rij, idx, attr)
+            cel.font = Font(bold=True)
+            cel.fill = analyse_header_fill
             cel.alignment = center_align
             cel.border = thin_border
-            cel.font = Font(color="000000")
 
-            if student_kan_attr_in_analyse(s, attr):
-                cel.value = attr
-                cel.fill = student_fill
-            else:
-                cel.value = ""
-                cel.fill = witte_fill
+        rij = start_rij + 1
+        for s in analyse_studenten_uur:
+            naam = s["naam"]
+            ws_analyse.cell(rij, 1, rij - start_rij).alignment = center_align
+            ws_analyse.cell(rij, 1).border = thin_border
+            ws_analyse.cell(rij, 1).fill = witte_fill
+            naam_cel = ws_analyse.cell(rij, 2, naam)
+            naam_cel.alignment = center_align
+            naam_cel.border = thin_border
+            student_fill = PatternFill(start_color=student_kleuren[naam], fill_type="solid") if naam in student_kleuren else witte_fill
+            naam_cel.fill = student_fill
 
-        rij += 1
+            for idx, attr in enumerate(analyse_attracties_uur, start=start_col_attr):
+                cel = ws_analyse.cell(rij, idx)
+                cel.alignment = center_align
+                cel.border = thin_border
+                cel.font = Font(color="000000")
+                if student_kan_attr_in_analyse(s, attr):
+                    cel.value = attr
+                    cel.fill = student_fill
+                else:
+                    cel.value = ""
+                    cel.fill = witte_fill
+            rij += 1
 
-    # Kolombreedtes
-    ws_analyse.column_dimensions["A"].width = 8
-    ws_analyse.column_dimensions["B"].width = 24
-    for idx in range(start_col_attr, start_col_attr + len(analyse_attracties_uur)):
-        ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
-
-    # Enkele lege rijen tussen uurblokken
-    start_rij = rij + 3
+        ws_analyse.column_dimensions["A"].width = 8
+        ws_analyse.column_dimensions["B"].width = 24
+        for idx in range(start_col_attr, start_col_attr + len(analyse_attracties_uur)):
+            ws_analyse.column_dimensions[get_column_letter(idx)].width = 13.5
+        start_rij = rij + 3
 
 
 #DEEL 2
@@ -7343,145 +7333,118 @@ def classify_hourly_switches(uur, newcomers, movers, leavers=None, disappearing_
 
 
 
-# -----------------------------
-# Stap 1: student → uur → attractie
-# -----------------------------
-student_per_uur = build_student_per_hour_map(assigned_map)
+# ─────────────────────────────────────────────────────────────────
+# DEEL 6 uitvoer als herbruikbare functie
+# ─────────────────────────────────────────────────────────────────
+def maak_wisselplanning_sheet(wb_arg, am_arg):
+    """
+    Bouw het 'Wissels'-werkblad op basis van am_arg (assigned_map).
+    Vervangt het bestaande sheet als het al bestaat.
+    """
+    # Verwijder oud sheet indien aanwezig
+    if "Wissels" in wb_arg.sheetnames:
+        del wb_arg["Wissels"]
 
-# -----------------------------
-# Stap 2: veranderingen per uur opbouwen
-# -----------------------------
-changes_per_hour = extract_hourly_changes(student_per_uur, open_uren)
+    # Stap 1: student → uur → attractie
+    student_per_uur = build_student_per_hour_map(am_arg)
 
-# -----------------------------
-# Stap 3: per uur classificeren en ordenen
-# -----------------------------
-wissels_per_uur = {}
+    # Stap 2: veranderingen per uur opbouwen
+    changes_per_hour = extract_hourly_changes(student_per_uur, open_uren)
 
-for uur in sorted(open_uren):
-    newcomers = changes_per_hour[uur]["newcomers"]
-    movers = changes_per_hour[uur]["movers"]
-    leavers = changes_per_hour[uur]["leavers"]
-    disappearing_sources = changes_per_hour[uur]["disappearing_sources"]
+    # Stap 3: per uur classificeren en ordenen
+    wissels_per_uur = {}
+    for uur in sorted(open_uren):
+        newcomers        = changes_per_hour[uur]["newcomers"]
+        movers           = changes_per_hour[uur]["movers"]
+        leavers          = changes_per_hour[uur]["leavers"]
+        disappearing_sources = changes_per_hour[uur]["disappearing_sources"]
 
-    ordered_switches = classify_hourly_switches(
-        uur,
-        newcomers,
-        movers,
-        leavers,
-        disappearing_sources
+        ordered_switches = classify_hourly_switches(
+            uur, newcomers, movers, leavers, disappearing_sources
+        )
+        if ordered_switches:
+            wissels_per_uur[uur] = ordered_switches
+
+    # KPI berekenen
+    totaal_wissels = 0
+    aantal_auto    = 0
+    for uur in wissels_per_uur:
+        for w in wissels_per_uur[uur]:
+            totaal_wissels += 1
+            if w["type"] == "volledig automatisch":
+                aantal_auto += 1
+    niet_groen = totaal_wissels - aantal_auto
+
+    # Stap 4: werkblad aanmaken
+    ws_wissels = wb_arg.create_sheet(title="Wissels")
+
+    # KPI rechts van de tabel (kolom G)
+    ws_wissels.cell(1, 7, "KPI Wissels").font = Font(bold=True)
+    ws_wissels.cell(2, 7, "Totaal wissels:")
+    ws_wissels.cell(2, 8, totaal_wissels)
+    ws_wissels.cell(3, 7, "Volledig automatisch:")
+    ws_wissels.cell(3, 8, aantal_auto)
+    ws_wissels.cell(4, 7, "Niet-groen (KPI):")
+    ws_wissels.cell(4, 8, niet_groen)
+    ws_wissels.cell(4, 8).font = Font(bold=True)
+
+    _center = Alignment(horizontal="center", vertical="center")
+    _border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"),  bottom=Side(style="thin")
     )
+    green_fill  = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
+    yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
+    orange_fill = PatternFill(start_color="F4B084", end_color="F4B084", fill_type="solid")
 
-    if ordered_switches:
-        wissels_per_uur[uur] = ordered_switches
-
-
-# KPI berekenen
-totaal_wissels = 0
-aantal_auto = 0
-
-for uur in wissels_per_uur:
-    for w in wissels_per_uur[uur]:
-        totaal_wissels += 1
-        if w["type"] == "volledig automatisch":
-            aantal_auto += 1
-
-niet_groen = totaal_wissels - aantal_auto
-
-# -----------------------------
-# Stap 4: werkblad "Wissels" maken
-# -----------------------------
-ws_wissels = wb_out.create_sheet(title="Wissels")
-
-# -----------------------------
-# KPI rechts van de tabel (kolom G)
-# -----------------------------
-ws_wissels.cell(1, 7, "KPI Wissels").font = Font(bold=True)
-
-ws_wissels.cell(2, 7, "Totaal wissels:")
-ws_wissels.cell(2, 8, totaal_wissels)
-
-ws_wissels.cell(3, 7, "Volledig automatisch:")
-ws_wissels.cell(3, 8, aantal_auto)
-
-ws_wissels.cell(4, 7, "Niet-groen (KPI):")
-ws_wissels.cell(4, 8, niet_groen)
-ws_wissels.cell(4, 8).font = Font(bold=True)
-
-center_align = Alignment(horizontal="center", vertical="center")
-thin_border = Border(
-    left=Side(style="thin"),
-    right=Side(style="thin"),
-    top=Side(style="thin"),
-    bottom=Side(style="thin")
-)
-
-green_fill = PatternFill(start_color="C6EFCE", end_color="C6EFCE", fill_type="solid")
-yellow_fill = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")
-orange_fill = PatternFill(start_color="F4B084", end_color="F4B084", fill_type="solid")
-
-current_row = 1
-
-
-for uur in sorted(wissels_per_uur.keys()):
-    # Titelrij per uur
-    title_cell = ws_wissels.cell(current_row, 1, f"Wissels om {uur}:00")
-    title_cell.font = Font(bold=True)
-    title_cell.alignment = center_align
-    current_row += 1
-
-    # Headers
-    headers = ["Student", "Van", "Naar"]
-    for col_idx, header in enumerate(headers, start=1):
-        cell = ws_wissels.cell(current_row, col_idx, header)
-        cell.font = Font(bold=True)
-        cell.alignment = center_align
-        cell.border = thin_border
-    current_row += 1
-
-    # Wissels
-    for w in wissels_per_uur[uur]:
-        ws_wissels.cell(current_row, 1, w["naam"])
-        ws_wissels.cell(current_row, 2, w["van"])
-        ws_wissels.cell(current_row, 3, w["naar"])
-
-        # Basis layout
-        for col_idx in range(1, 4):
-            cell = ws_wissels.cell(current_row, col_idx)
-            cell.alignment = center_align
-            cell.border = thin_border
-
-        # Kleuren enkel op kolom B en C
-        if w["type"] == "volledig automatisch":
-            ws_wissels.cell(current_row, 2).fill = green_fill
-            ws_wissels.cell(current_row, 3).fill = green_fill
-
-        elif w["type"] == "half-automatisch":
-            ws_wissels.cell(current_row, 2).fill = yellow_fill
-            ws_wissels.cell(current_row, 3).fill = yellow_fill
-
-        elif w["type"] == "half-start":
-            ws_wissels.cell(current_row, 2).fill = orange_fill
-            ws_wissels.cell(current_row, 3).fill = orange_fill
-
+    current_row = 1
+    for uur in sorted(wissels_per_uur.keys()):
+        # Titelrij per uur
+        title_cell = ws_wissels.cell(current_row, 1, f"Wissels om {uur}:00")
+        title_cell.font      = Font(bold=True)
+        title_cell.alignment = _center
         current_row += 1
 
-    # Lege rij tussen uren
-    current_row += 1
+        # Headers
+        for col_idx, header in enumerate(["Student", "Van", "Naar"], start=1):
+            cell           = ws_wissels.cell(current_row, col_idx, header)
+            cell.font      = Font(bold=True)
+            cell.alignment = _center
+            cell.border    = _border
+        current_row += 1
 
-# -----------------------------
-# Stap 5: kolombreedtes
-# -----------------------------
-breedtes = {
-    1: 22,
-    2: 25,
-    3: 25,
-    7: 24,
-    8: 18
-}
+        # Wissels
+        for w in wissels_per_uur[uur]:
+            ws_wissels.cell(current_row, 1, w["naam"])
+            ws_wissels.cell(current_row, 2, w["van"])
+            ws_wissels.cell(current_row, 3, w["naar"])
 
-for col_idx, breedte in breedtes.items():
-    ws_wissels.column_dimensions[get_column_letter(col_idx)].width = breedte
+            for col_idx in range(1, 4):
+                cell           = ws_wissels.cell(current_row, col_idx)
+                cell.alignment = _center
+                cell.border    = _border
+
+            if w["type"] == "volledig automatisch":
+                ws_wissels.cell(current_row, 2).fill = green_fill
+                ws_wissels.cell(current_row, 3).fill = green_fill
+            elif w["type"] == "half-automatisch":
+                ws_wissels.cell(current_row, 2).fill = yellow_fill
+                ws_wissels.cell(current_row, 3).fill = yellow_fill
+            elif w["type"] == "half-start":
+                ws_wissels.cell(current_row, 2).fill = orange_fill
+                ws_wissels.cell(current_row, 3).fill = orange_fill
+
+            current_row += 1
+        current_row += 1  # lege rij tussen uren
+
+    # Stap 5: kolombreedtes
+    for col_idx, breedte in {1: 22, 2: 25, 3: 25, 7: 24, 8: 18}.items():
+        ws_wissels.column_dimensions[get_column_letter(col_idx)].width = breedte
+
+
+# ── oorspronkelijke aanroep (vervangt de oude losse code) ──
+maak_wisselplanning_sheet(wb_out, assigned_map)
+
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
@@ -9006,6 +8969,20 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
 # ------------------------------------------------------------
 # Output schrijven
 # ------------------------------------------------------------
+
+def lm5_reconstruct_studenten(ctx_assigned_map):
+    """Maak een kopie van studenten met assigned_hours vanuit de nieuwe ctx."""
+    import copy as _copy
+    hours_per_student = defaultdict(list)
+    for (uur, attr), namen in ctx_assigned_map.items():
+        for naam in namen:
+            hours_per_student[str(naam).strip()].append(uur)
+
+    lm_studenten = _copy.deepcopy(studenten)
+    for s in lm_studenten:
+        s["assigned_hours"] = hours_per_student.get(str(s["naam"]).strip(), [])
+    return lm_studenten
+
 def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absentees):
     wb_lm = load_workbook(BytesIO(base_bytes))
     ws_plan = wb_lm["Planning"]
@@ -9140,7 +9117,28 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     for i, naam in enumerate(absentees, start=4):
         ws_info.cell(i, 1).value = str(naam).strip()
 
+    # ── Reconstruct assigned_hours per student vanuit ctx ──
+    import copy as _copy
+    _hours_per_student = defaultdict(list)
+    for (uur, attr), namen in ctx["assigned_map"].items():
+        for naam in namen:
+            _hours_per_student[str(naam).strip()].append(uur)
+
+    studenten_lm = _copy.deepcopy(studenten)
+    for s in studenten_lm:
+        s["assigned_hours"] = _hours_per_student.get(str(s["naam"]).strip(), [])
+
+    # ── Herwerk Analyse ──
+    maak_analyse_sheet(wb_lm, ctx["assigned_map"], ctx["extra_assignments"], studenten_lm)
+
+    # ── Herwerk Wisselplanning ──
+    maak_wisselplanning_sheet(wb_lm, ctx["assigned_map"])
+
+    # ── PP optie 2 blijft as-is (PV-pauzetijden veranderen niet) ──
+
     return wb_lm
+
+
 
 
 # ------------------------------------------------------------
