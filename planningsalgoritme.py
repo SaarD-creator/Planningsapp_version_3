@@ -6007,6 +6007,8 @@ for col in pauze_cols_pp2:
         # ---------------------------------------------------
         # PRIORITEIT 1:
         # studenten die op deze rij al een lange pauze hebben
+        # Voor minderjarige lange werkers (>6u): zoek na het
+        # LAATSTE halfuur (niet het eerste).
         # ---------------------------------------------------
         rij_lange_pauze_namen = pp2_get_long_break_owners_on_row(
             ws_pp2,
@@ -6026,12 +6028,31 @@ for col in pauze_cols_pp2:
             ):
                 continue
 
+            # Bepaal min_col_exclusive: voor minderjarige lange werkers
+            # (>6u) ankeren we aan het LAATSTE halfuur op deze rij,
+            # voor alle anderen aan het eerste.
+            is_minor_long_worker = (
+                pp2_is_minderjarig(kandidaat)
+                and student_totalen.get(kandidaat, 0) > 6
+            )
+
+            if is_minor_long_worker:
+                ankercol = pp2_get_last_long_break_end_col_any_row(
+                    naam=kandidaat,
+                    ws_sheet=ws_pp2,
+                    pv_rows=pv_rows_pp2,
+                    pauze_cols=pauze_cols_pp2
+                )
+            else:
+                ankercol = None
+
             cols = pp2_find_needed_short_cols_for_student_on_row(
                 naam=kandidaat,
                 pv_row=pv_row,
                 ws_sheet=ws_pp2,
                 pauze_cols=pauze_cols_pp2,
-                open_spots_set=pp2_open_spots
+                open_spots_set=pp2_open_spots,
+                min_col_exclusive=ankercol
             )
 
             if not cols:
@@ -6072,6 +6093,10 @@ for col in pauze_cols_pp2:
 
             if toegewezen_naam in pp2_students_before_end_pending:
                 pp2_students_before_end_pending.remove(toegewezen_naam)
+
+
+
+
 # ---------------------------------------
 # 2) Daarna: lange pauzevlinders zelf
 #    - alleen die nog korte kwartieren nodig hebben
