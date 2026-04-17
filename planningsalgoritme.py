@@ -7672,18 +7672,6 @@ def lm5_pv_names():
     return [str(pv["naam"]).strip() for pv in selected]
 
 def lm5_extract_capacity_actions():
-    """
-    Leest een prioriteitenlijst voor dynamische capaciteitsacties.
-    Ondersteunt:
-    - disable: alleen attr1 ingevuld
-    - merge 2: attr1 + attr2
-    - merge 3: attr1 + attr2 + attr3
-
-    Verwacht per rij:
-    col 82 = attr1
-    col 83 = attr2
-    col 84 = attr3   # nieuw
-    """
     result = []
 
     for rij in range(2, 12):
@@ -7800,116 +7788,133 @@ def lm5_present_attraction_students_on_hour(ctx, uur):
 def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions):
     counts = {}
     active = set()
+    debug_actions = []
 
-    # 1. basis: enkel losse attracties
     for attr in attracties_te_plannen:
         if " + " in str(attr):
             continue
 
-        attr_norm = normalize_attr(attr)
-
-        if uur in dichte_uren_per_attr.get(attr_norm, set()):
+        if uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
             counts[attr] = 0
-            continue
-
-        if aantallen_raw.get(attr, 0) >= 1:
-            counts[attr] = 1
-            active.add(attr)
         else:
-            counts[attr] = 0
+            if aantallen_raw.get(attr, 0) >= 1:
+                counts[attr] = 1
+                active.add(attr)
+            else:
+                counts[attr] = 0
 
-    # 2. vaste uur-samenvoegingen uit Excel behouden
     groepen = []
     for groep in uur_samenvoegingen.get(uur, []):
         g = [str(x).strip() for x in groep if x and str(x).strip()]
         if len(g) < 2:
             continue
 
-        sameng = " + ".join(g)
         groepen.append(g)
-
+        sameng = " + ".join(g)
         counts[sameng] = 1
         active.add(sameng)
 
         for onderdeel in g:
             counts[onderdeel] = 0
-            active.discard(onderdeel)
+            if onderdeel in active:
+                active.remove(onderdeel)
 
     def min_spots():
         return sum(1 for a in active if counts.get(a, 0) >= 1)
 
-    def is_single_active(attr):
-        return attr in active and " + " not in str(attr)
+    debug_actions.append(
+        f"Uur {uur}: START | available={available_attraction_students} | min_spots={min_spots()} | active_start={sorted(active)}"
+    )
 
-    def can_merge_group(g):
-        # alle onderdelen moeten losse actieve attracties zijn
-        if len(g) < 2:
-            return False
-        return all(is_single_active(a) for a in g)
-
-    def apply_merge(g):
-        sameng = " + ".join(g)
-
-        for onderdeel in g:
-            counts[onderdeel] = 0
-            active.discard(onderdeel)
-
-        counts[sameng] = 1
-        active.add(sameng)
-
-        if g not in groepen:
-            groepen.append(g)
-
-    def can_disable(attr):
-        return is_single_active(attr)
-
-    def apply_disable(attr):
-        counts[attr] = 0
-        active.discard(attr)
-
-    # 3. capaciteitsacties uitvoeren zolang nodig
     for entry in capacity_actions:
-        if min_spots() <= available_attraction_students:
+        huidige_min_spots = min_spots()
+
+        if huidige_min_spots <= available_attraction_students:
+            debug_actions.append(
+                f"Uur {uur}: STOP acties | min_spots={huidige_min_spots} <= available={available_attraction_students}"
+            )
             break
 
         if entry["type"] == "merge":
             g = [str(x).strip() for x in entry["groep"] if x and str(x).strip()]
-            if can_merge_group(g):
-                apply_merge(g)
+            sameng = " + ".join(g)
+
+            if all(a in active for a in g):
+                for onderdeel in g:
+                    counts[onderdeel] = 0
+                    if onderdeel in active:
+                        active.remove(onderdeel)
+
+                counts[sameng] = 1
+                active.add(sameng)
+                groepen.append(g)
+
+                debug_actions.append(
+                    f"Uur {uur}: MERGE OK | groep={g} | new_active={sorted(active)} | min_spots={min_spots()}"
+                )
+            else:
+                debug_actions.append(
+                    f"Uur {uur}: MERGE FAIL | groep={g} | needed_active={g} | current_active={sorted(active)}"
+                )
 
         elif entry["type"] == "disable":
             attr = str(entry["attr"]).strip()
-            if can_disable(attr):
-                apply_disable(attr)
 
-    # 4. tweede plaatsen PAS NADIEN
+            if attr in active:
+                counts[attr] = 0
+                active.remove(attr)
+
+                debug_actions.append(
+                    f"Uur {uur}: DISABLE OK | attr={attr} | new_active={sorted(active)} | min_spots={min_spots()}"
+                )
+            else:
+                debug_actions.append(
+                    f"Uur {uur}: DISABLE FAIL | attr={attr} | current_active={sorted(active)}"
+                )
+
     second_spot_blocked_lm = set()
     base_spots = min_spots()
     extra_spots = available_attraction_students - base_spots
+
+    debug_actions.append(
+        f"Uur {uur}: VOOR 2DE PLEKKEN | base_spots={base_spots} | extra_spots={extra_spots}"
+    )
 
     for attr in second_priority_order:
         if attr in active and aantallen_raw.get(attr, 0) == 2:
             if extra_spots > 0:
                 counts[attr] = 2
                 extra_spots -= 1
+                debug_actions.append(
+                    f"Uur {uur}: 2DE PLEK OPEN | attr={attr} | resterend_extra_spots={extra_spots}"
+                )
             else:
                 counts[attr] = 1
                 second_spot_blocked_lm.add(attr)
+                debug_actions.append(
+                    f"Uur {uur}: 2DE PLEK DICHT | attr={attr}"
+                )
 
     red_spots_lm = set()
+
     samengestelde_actief = set(" + ".join(g) for g in groepen)
     losse_in_samenvoeging = set(a for g in groepen for a in g)
 
     for attr in losse_in_samenvoeging:
         red_spots_lm.add(attr)
 
-    for sameng in samengevoegde_attracties:
-        if sameng not in samengestelde_actief:
-            red_spots_lm.add(sameng)
+    for samengestelde_attr in samengevoegde_attracties:
+        if samengestelde_attr not in samengestelde_actief:
+            red_spots_lm.add(samengestelde_attr)
 
     for attr in list(counts.keys()):
-        if " + " not in str(attr) and uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
-            red_spots_lm.add(attr)
+        if " + " not in str(attr):
+            if uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
+                red_spots_lm.add(attr)
+
+    debug_actions.append(
+        f"Uur {uur}: EINDE | active_end={sorted(active)} | counts={{{', '.join(f'{k}: {v}' for k, v in sorted(counts.items()))}}}"
+    )
 
     return {
         "counts": counts,
@@ -7917,9 +7922,8 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
         "groepen": groepen,
         "red_spots": red_spots_lm,
         "second_spot_blocked": second_spot_blocked_lm,
+        "debug_actions": debug_actions,
     }
-
-
 
 def lm5_build_target_slots_for_hour(attr_rows, hour_state):
     slots = []
@@ -8648,6 +8652,10 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
 
     capacity_actions = lm5_extract_capacity_actions()
 
+    st.write("=== LM5 DEBUG: capacity_actions ===")
+    for item in capacity_actions:
+        st.write(item)
+
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
         if uur < start_uur:
@@ -8660,7 +8668,13 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
             available_attraction_students=len(present_attraction_students),
             capacity_actions=capacity_actions
         )
+
         ctx["hour_states"][uur] = hour_state
+
+        st.write(f"=== LM5 DEBUG UUR {uur} ===")
+        st.write(f"present_attraction_students ({len(present_attraction_students)}): {sorted(present_attraction_students)}")
+        for lijn in hour_state.get("debug_actions", []):
+            st.write(lijn)
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
     for uur in sorted(open_uren):
@@ -8701,28 +8715,16 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         missing_slots_by_hour=missing_slots_by_hour
     )
 
-    # STAP 5: kettingwissels op blokken van 3/2/1
-    for _ in range(5):
-        changed = lm5_try_fill_missing_with_chain_swaps(
-            ctx=ctx,
-            released_students=released_students,
-            missing_slots_by_hour=missing_slots_by_hour,
-            start_uur=start_uur
-        )
-        if not changed:
-            break
-
-    # STAP 6: resterende gaten met blokvoorkeur 3/2/1
+    # STAP 5: nadien blokken aanvullen
     lm5_assign_future_blocks(ctx, start_uur)
 
-    # STAP 7: exact 1 keer per gewerkt uur
+    # STAP 6: exact 1 keer per gewerkt uur
     lm5_force_exactly_one_assignment_per_hour(ctx, start_uur)
 
-    # STAP 8: lege attractieplekken opvullen door Extra -> attractie
+    # STAP 7: extra's naar lege plekken
     lm5_try_fill_empty_slots_from_extras(ctx, start_uur)
 
     return ctx, base_maps
-
 # ------------------------------------------------------------
 # Output schrijven
 # ------------------------------------------------------------
