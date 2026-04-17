@@ -6583,7 +6583,7 @@ if bn15_vinkje_pp2 in [1, True, "WAAR", "X"]:
         waarde = ws.cell(input_rij, 67).value  # BO kolom = 67
 
         if waarde:
-            cel = ws_pp2.cell(row=14 + i, column=1, value=waarde)
+            cel = ws_pp2.cell(row=16 + i, column=1, value=waarde)
             cel.alignment = Alignment(horizontal="left", vertical="center")
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
