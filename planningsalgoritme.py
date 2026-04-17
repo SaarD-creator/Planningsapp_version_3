@@ -6579,7 +6579,10 @@ for col in pauze_cols_pp2:
 bn15_vinkje_pp2 = ws.cell(15, 66).value  # BN15 in Input
 
 if bn15_vinkje_pp2 in [1, True, "WAAR", "X"]:
-    start_rij_pp2 = ws_pp2.max_row + 3
+    # Laatste naamrij = hoogste pv_row uit pv_rows_pp2
+    # + 1 voor de lege rij eronder + 3 extra lege rijen
+    laatste_pv_naamrij = max(pv_row for _pv, pv_row in pv_rows_pp2)
+    start_rij_pp2 = laatste_pv_naamrij + 1 + 3
 
     for i, input_rij in enumerate(range(15, 31)):
         waarde = ws.cell(input_rij, 67).value  # BO kolom = 67
