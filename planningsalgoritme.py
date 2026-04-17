@@ -6579,23 +6579,12 @@ for col in pauze_cols_pp2:
 bn15_vinkje_pp2 = ws.cell(15, 66).value  # BN15 in Input
 
 if bn15_vinkje_pp2 in [1, True, "WAAR", "X"]:
-    # Wis eerst eventuele tekst die via de kopie van ws_pauze_basis
-    # al op lagere rijen belandde
-    laatste_pv_naamrij = max(pv_row for _pv, pv_row in pv_rows_pp2)
-    for wis_rij in range(laatste_pv_naamrij + 1, laatste_pv_naamrij + 25):
-        cel = ws_pp2.cell(row=wis_rij, column=1)
-        cel.value = None
-
-    # Drie lege rijen onder de laatste naamrij
-    start_rij_pp2 = laatste_pv_naamrij + 4
-
     for i, input_rij in enumerate(range(15, 31)):
         waarde = ws.cell(input_rij, 67).value  # BO kolom = 67
 
         if waarde:
-            cel = ws_pp2.cell(row=start_rij_pp2 + i, column=1, value=waarde)
+            cel = ws_pp2.cell(row=14 + i, column=1, value=waarde)
             cel.alignment = Alignment(horizontal="left", vertical="center")
-
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 # =============================
