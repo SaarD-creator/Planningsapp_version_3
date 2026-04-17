@@ -4234,10 +4234,6 @@ def pp2_student_heeft_al_lange_pauze_op_blok(naam, col1, col2, ws_sheet, pv_rows
     return False
 
 
-random.shuffle(pp2_students_before_end_pending)
-
-pp2_regular_short_breaks_placed = []
-
 # -----------------------------
 # Vind de pauzevlinder-rijen in PP optie 2
 # -----------------------------
