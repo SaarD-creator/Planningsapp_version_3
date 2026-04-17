@@ -4234,30 +4234,9 @@ def pp2_student_heeft_al_lange_pauze_op_blok(naam, col1, col2, ws_sheet, pv_rows
     return False
 
 
+random.shuffle(pp2_students_before_end_pending)
 
-def pp2_get_last_long_break_end_col_any_row(naam, ws_sheet, pv_rows, pauze_cols):
-    """
-    Geef de eindkolom terug van de LAATSTE lange pauze van deze student
-    over alle pauzevlinder-rijen heen.
-    """
-    eindcols = []
-
-    for _pv, pv_row in pv_rows:
-        for idx in range(len(pauze_cols) - 1):
-            col1 = pauze_cols[idx]
-            col2 = pauze_cols[idx + 1]
-
-            if (
-                ws_sheet.cell(pv_row, col1).value == naam
-                and ws_sheet.cell(pv_row, col2).value == naam
-            ):
-                eindcols.append(col2)
-
-    if not eindcols:
-        return None
-
-    return max(eindcols)
-
+pp2_regular_short_breaks_placed = []
 
 # -----------------------------
 # Vind de pauzevlinder-rijen in PP optie 2
@@ -5588,10 +5567,14 @@ def pp2_write_short_break_regular(ws_sheet, pv_row, col, naam):
 
 def pp2_get_long_break_owners_on_row(ws_sheet, pv_row, pauze_cols):
     """
-    Geeft alle studenten terug die op deze rij een lange pauze hebben.
+    Geeft alle studenten terug die op deze rij een lange pauze hebben,
+    gesorteerd op het ankerpunt voor hun korte pauze:
+    - minderjarige lange werkers (>6u): gesorteerd op hun LAATSTE halfuur
+    - alle anderen: gesorteerd op hun EERSTE halfuur (= volgorde van links naar rechts)
     """
-    owners = []
-    seen = set()
+    # Verzamel per student de eerste én laatste halfuur-eindkolom op deze rij
+    eerste_col = {}
+    laatste_col = {}
 
     for idx in range(len(pauze_cols) - 1):
         col1 = pauze_cols[idx]
@@ -5602,12 +5585,24 @@ def pp2_get_long_break_owners_on_row(ws_sheet, pv_row, pauze_cols):
 
         if val1 and val1 == val2:
             naam = str(val1).strip()
-            if naam not in seen:
-                owners.append(naam)
-                seen.add(naam)
+            if naam not in eerste_col:
+                eerste_col[naam] = col2
+            laatste_col[naam] = col2
 
+    owners = list(eerste_col.keys())
+
+    def sorteersleutel(naam):
+        is_minor_long_worker = (
+            pp2_is_minderjarig(naam)
+            and student_totalen.get(naam, 0) > 6
+        )
+        if is_minor_long_worker:
+            return laatste_col.get(naam, 0)
+        else:
+            return eerste_col.get(naam, 0)
+
+    owners.sort(key=sorteersleutel)
     return owners
-
 
 def pp2_student_has_long_break_in_row(naam, ws_sheet, pv_row, pauze_cols):
     """
