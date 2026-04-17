@@ -3898,35 +3898,28 @@ output.seek(0)  # Zorg dat lezen vanaf begin kan
 # DEEL 5: PP optie 2 + Feedback optie 2
 # ──────────────────────────────────────────────────────────────────────
 def maak_pp2_sheets(wb_arg, am_arg):
-    """
-    Bouw 'PP optie 2' en 'Feedback optie 2' op basis van wb_arg en am_arg.
-    Werkt zowel voor de normale planning als voor last-minute.
-    """
     global ws_planning, student_totalen
 
-    # Tijdelijk de globals omwisselen zodat alle hulpfuncties
-    # (vind_attractie_op_uur etc.) de juiste Planning-sheet lezen
-    _ws_planning_bak      = ws_planning
-    _student_totalen_bak  = student_totalen
+    # Globals tijdelijk omwisselen
+    _ws_planning_bak     = ws_planning
+    _student_totalen_bak = student_totalen
 
     ws_planning = wb_arg["Planning"]
 
-    # Herbereken student_totalen vanuit de nieuwe assigned_map
     student_totalen = defaultdict(int)
     for (_uur, _attr), namen in am_arg.items():
         for naam in namen:
             student_totalen[naam] += 1
 
-    try:
-        for sheet_name in ["PP optie 2", "Feedback optie 2"]:
-            if sheet_name in wb_arg.sheetnames:
-                wb_arg.remove(wb_arg[sheet_name])
+    for sheet_name in ["PP optie 2", "Feedback optie 2"]:
+        if sheet_name in wb_arg.sheetnames:
+            wb_arg.remove(wb_arg[sheet_name])
 
-        ws_pauze_basis = wb_arg["Pauzevlinders"]
-        ws_pp2 = wb_arg.copy_worksheet(ws_pauze_basis)
-        ws_pp2.title = "PP optie 2"
+    ws_pauze_basis = wb_arg["Pauzevlinders"]
+    ws_pp2 = wb_arg.copy_worksheet(ws_pauze_basis)
+    ws_pp2.title = "PP optie 2"
 
-        # ── HIER begint de rest van DEEL 5 (volledig geïndenteerd) ──
+    # ── hierna de rest van DEEL 5 geïndenteerd ──
 
     # -----------------------------
     # Helpers
@@ -6836,14 +6829,14 @@ def maak_pp2_sheets(wb_arg, am_arg):
                 bottom=Side(style="thin")
             )
 
-    finally:
-            # Globals herstellen
-            ws_planning     = _ws_planning_bak
-            student_totalen = _student_totalen_bak
+# Globals herstellen
+    ws_planning     = _ws_planning_bak
+    student_totalen = _student_totalen_bak
 
 
-# ── Oorspronkelijke aanroep (vervangt de vroegere losse code) ──
+# ── Oorspronkelijke aanroep ──
 maak_pp2_sheets(wb_out, assigned_map)
+
 
 # PART 6 6666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
 # PART 6 666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666
