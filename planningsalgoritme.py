@@ -34,9 +34,15 @@ if not uploaded_file:
     st.warning("Upload eerst het Excelbestand met de gegevens om verder te gaan.")
     st.stop()
 
-wb = load_workbook(BytesIO(uploaded_file.read()), data_only=True)
+file_bytes = uploaded_file.read()
 
+# Workbook met berekende waarden voor de gewone planning
+wb = load_workbook(BytesIO(file_bytes), data_only=True)
 ws = wb["Input"]
+
+# Extra workbook met ruwe celinhoud / formules
+wb_raw = load_workbook(BytesIO(file_bytes), data_only=False)
+ws_raw = wb_raw["Input"]
 
 # -----------------------------
 
@@ -7677,20 +7683,28 @@ def lm5_extract_capacity_actions():
     st.write("=== DEBUG lm5_extract_capacity_actions START ===")
 
     # CD = 82, CE = 83
-    # We lezen expliciet rij per rij vanaf CD2 / CE2
-    for rij in range(2, ws.max_row + 1):
-        raw_cd = ws.cell(rij, 82).value
-        raw_ce = ws.cell(rij, 83).value
+    for rij in range(2, ws_raw.max_row + 1):
+        raw_cd_formula = ws_raw.cell(rij, 82).value
+        raw_ce_formula = ws_raw.cell(rij, 83).value
 
-        st.write(f"Rij {rij} | CD={raw_cd} | CE={raw_ce}")
+        raw_cd_value = ws.cell(rij, 82).value
+        raw_ce_value = ws.cell(rij, 83).value
 
-        left = str(raw_cd).strip() if raw_cd is not None and str(raw_cd).strip() != "" else ""
-        right = str(raw_ce).strip() if raw_ce is not None and str(raw_ce).strip() != "" else ""
+        st.write(
+            f"Rij {rij} | "
+            f"CD_raw={raw_cd_formula} | CE_raw={raw_ce_formula} | "
+            f"CD_value={raw_cd_value} | CE_value={raw_ce_value}"
+        )
+
+        left_source = raw_cd_formula
+        right_source = raw_ce_formula
+
+        left = str(left_source).strip() if left_source is not None and str(left_source).strip() != "" else ""
+        right = str(right_source).strip() if right_source is not None and str(right_source).strip() != "" else ""
 
         if not left and not right:
             continue
 
-        # Alleen CD ingevuld = disable
         if left and not right:
             action = {
                 "type": "disable",
@@ -7700,7 +7714,6 @@ def lm5_extract_capacity_actions():
             result.append(action)
             st.write(f"  -> disable toegevoegd: {action}")
 
-        # CD + CE ingevuld = merge van exact 2 attracties
         elif left and right:
             action = {
                 "type": "merge",
@@ -7710,7 +7723,6 @@ def lm5_extract_capacity_actions():
             result.append(action)
             st.write(f"  -> merge toegevoegd: {action}")
 
-        # Alleen CE zonder CD negeren
         else:
             st.write(f"  -> overgeslagen: CE ingevuld zonder CD op rij {rij}")
 
@@ -7720,7 +7732,6 @@ def lm5_extract_capacity_actions():
         st.write(item)
 
     return result
-
 
 
 def lm5_all_single_attrs():
