@@ -4307,7 +4307,7 @@ if afgekapte_pv_uren and selected:
                 col_uur = parse_header_uur(ws_pp2.cell(1, col).value)
                 if col_uur in afgekapte_pv_uren:
                     pp2_closed_spots.add((naam_rij, col))
-                    ws_pp2.cell(naam_rij, col).value = ""
+                    ws_pp2.cell(naam_rij, col).value = "X"
                     ws_pp2.cell(naam_rij, col).fill = afgeknipt_fill_pp2
                     ws_pp2.cell(naam_rij, col).alignment = center_align
                     ws_pp2.cell(naam_rij, col).border = thin_border
