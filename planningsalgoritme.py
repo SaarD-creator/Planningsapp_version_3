@@ -5669,6 +5669,76 @@ def pp2_find_one_valid_col_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols
     return []
 
 
+# -----------------------------------
+# 1B) Speciale behandeling:
+#     minderjarigen die <= 6u werken én pas beginnen na 13u
+#     => korte pauze zo laat mogelijk, bij voorkeur op rij van lange pauze
+# -----------------------------------
+pp2_late_start_minors_handled = set()
+
+for naam in list(pp2_other_pending_short_breaks):
+    werk_uren = pp2_get_student_work_hours(naam)
+    if not werk_uren:
+        continue
+
+    is_minor = pp2_is_minderjarig(naam)
+    werkt_kort = student_totalen.get(naam, 0) <= 6
+    begint_laat = min(werk_uren) > 13
+
+    if not (is_minor and werkt_kort and begint_laat):
+        continue
+
+    # Zoek rij van de lange pauze van deze student
+    lange_pauze_rij = None
+    for _pv, pv_row in pv_rows_pp2:
+        for idx in range(len(pauze_cols_pp2) - 1):
+            col1 = pauze_cols_pp2[idx]
+            col2 = pauze_cols_pp2[idx + 1]
+            if (
+                ws_pp2.cell(pv_row, col1).value == naam
+                and ws_pp2.cell(pv_row, col2).value == naam
+            ):
+                lange_pauze_rij = pv_row
+                break
+        if lange_pauze_rij is not None:
+            break
+
+    # PV-rij volgorde: eerst rij van lange pauze, dan de rest
+    pv_volgorde = (
+        [(pv, pv_row) for pv, pv_row in pv_rows_pp2 if pv_row == lange_pauze_rij]
+        + [(pv, pv_row) for pv, pv_row in pv_rows_pp2 if pv_row != lange_pauze_rij]
+    )
+
+    geplaatst = False
+    for col in reversed(pauze_cols_pp2):
+        for pv, pv_row in pv_volgorde:
+            if (pv_row, col) in pp2_open_spots:
+                continue
+            if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+                continue
+            if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+                continue
+
+            pp2_place_short_break_cols_on_row(
+                naam=naam,
+                pv=pv,
+                pv_row=pv_row,
+                cols=[col]
+            )
+            pp2_late_start_minors_handled.add(naam)
+            geplaatst = True
+            break
+        if geplaatst:
+            break
+
+# Verwijder deze studenten uit de gewone pending lijst
+pp2_other_pending_short_breaks = [
+    naam for naam in pp2_other_pending_short_breaks
+    if naam not in pp2_late_start_minors_handled
+]
+
+
+
 def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols, open_spots_set, min_col_exclusive=None, zoek_zo_laat_mogelijk=False):
     """
     Zoek het korte kwartier dat deze student nog nodig heeft op deze specifieke rij.
