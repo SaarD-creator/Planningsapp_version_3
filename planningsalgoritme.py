@@ -2205,37 +2205,6 @@ for pv, pv_row in pv_rows:
             ws_pauze.cell(pv_row, col).fill = naam_leeg_fill
 
 
-# -----------------------------
-# Afgekapte uren laatste PV markeren als open spot in pauzeplanning
-# -----------------------------
-afgeknipt_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")  # lichtgrijs
-
-if afgekapte_pv_uren and selected:
-    laatste_pv = selected[-1]
-    # Zoek de naamrij van de laatste PV in ws_pauze
-    laatste_pv_row = None
-    for pv, pv_row in pv_rows:
-        if pv["naam"] == laatste_pv["naam"]:
-            laatste_pv_row = pv_row
-            break
-
-    if laatste_pv_row is not None:
-        for col in pauze_cols:
-            header = ws_pauze.cell(1, col).value
-            col_uur = parse_header_uur(header)
-            if col_uur in afgekapte_pv_uren:
-                # Naamrij: leegmaken en grijs kleuren
-                ws_pauze.cell(laatste_pv_row, col).value = None
-                ws_pauze.cell(laatste_pv_row, col).fill = afgeknipt_fill
-                ws_pauze.cell(laatste_pv_row, col).alignment = center_align
-                ws_pauze.cell(laatste_pv_row, col).border = thin_border
-                # Rij erboven (attractierij): ook leegmaken en grijs
-                ws_pauze.cell(laatste_pv_row - 1, col).value = None
-                ws_pauze.cell(laatste_pv_row - 1, col).fill = afgeknipt_fill
-                ws_pauze.cell(laatste_pv_row - 1, col).alignment = center_align
-                ws_pauze.cell(laatste_pv_row - 1, col).border = thin_border
-
-
 
 
 
@@ -4234,29 +4203,29 @@ def pp2_write_name(ws_sheet, row_name, col, naam):
     - bovenste vak: attractie waarop student dat moment staat
     - onderste vak: naam van student
     - korte pauze = paars
-    - lange pauze = groen
-    - Schrijft NIET als de cel een closed spot is
+    - lange pauze = groen (voor later bruikbaar)
     """
-    if (row_name, col) in pp2_closed_spots:
-        return
-
     lichtgroen_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
     lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
 
+    # bepaal uur van deze kolom
     header = ws_sheet.cell(1, col).value
     uur = parse_header_uur(header)
 
+    # attractie erboven invullen
     info_cel = ws_sheet.cell(row_name - 1, col)
     attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
     info_cel.value = attr if attr else ""
     info_cel.alignment = center_align
     info_cel.border = thin_border
 
+    # naam invullen
     cel = ws_sheet.cell(row_name, col)
     cel.value = naam
     cel.alignment = center_align
     cel.border = thin_border
 
+    # check of dit een lange of korte pauze is
     is_lange_pauze = False
     if col - 1 >= 2 and ws_sheet.cell(row_name, col - 1).value == naam:
         is_lange_pauze = True
@@ -4321,6 +4290,38 @@ pv_rows_pp2 = pp2_get_pv_rows(ws_pp2, selected)
 
 # Maak de grid leeg, maar behoud layout
 pp2_clear_pauze_grid(ws_pp2, pv_rows_pp2, pauze_cols_pp2)
+
+# -----------------------------
+# Closed spots PP optie 2
+# Afgekapte uren van laatste PV: worden hier gemarkeerd
+# zodat géén enkele pauzelogica er iets in plaatst
+# -----------------------------
+afgeknipt_fill_pp2 = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+pp2_closed_spots = set()  # set van (naam_rij, col)
+
+if afgekapte_pv_uren and selected:
+    laatste_pv = selected[-1]
+    for pv, naam_rij in pv_rows_pp2:
+        if pv["naam"] == laatste_pv["naam"]:
+            for col in pauze_cols_pp2:
+                col_uur = parse_header_uur(ws_pp2.cell(1, col).value)
+                if col_uur in afgekapte_pv_uren:
+                    pp2_closed_spots.add((naam_rij, col))
+                    ws_pp2.cell(naam_rij, col).value = "GESLOTEN"
+                    ws_pp2.cell(naam_rij, col).fill = afgeknipt_fill_pp2
+                    ws_pp2.cell(naam_rij, col).alignment = center_align
+                    ws_pp2.cell(naam_rij, col).border = thin_border
+                    ws_pp2.cell(naam_rij - 1, col).value = None
+                    ws_pp2.cell(naam_rij - 1, col).fill = afgeknipt_fill_pp2
+                    ws_pp2.cell(naam_rij - 1, col).alignment = center_align
+                    ws_pp2.cell(naam_rij - 1, col).border = thin_border
+            break
+
+def pp2_is_beschikbaar(ws_sheet, rij, col):
+    """Cel is beschikbaar als ze leeg is EN geen closed spot."""
+    if (rij, col) in pp2_closed_spots:
+        return False
+    return ws_sheet.cell(rij, col).value in [None, ""]
 
 
 
@@ -4421,9 +4422,9 @@ if pv_rows_pp2:
                 continue
 
             # cellen moeten leeg zijn op deze PV-rij
-            if ws_pp2.cell(pv_name_row, col1).value not in [None, ""]:
+            if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col1):
                 continue
-            if ws_pp2.cell(pv_name_row, col2).value not in [None, ""]:
+            if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col2):
                 continue
 
             # eerste geldige optie nemen
@@ -4470,7 +4471,7 @@ if pv_rows_pp2:
                     continue
 
                 # cel moet leeg zijn
-                if ws_pp2.cell(gebruik_rij, col).value not in [None, ""]:
+                if not pp2_is_beschikbaar(ws_pp2, gebruik_rij, col):
                     continue
 
                 # student mag op dit kwartier nog nergens staan
@@ -4535,7 +4536,7 @@ if pv_rows_pp2:
 
             geplaatst_eerste = False
             for pv, pv_name_row in pv_volgorde:
-                if ws_pp2.cell(pv_name_row, gekozen_col).value not in [None, ""]:
+                if not pp2_is_beschikbaar(ws_pp2, pv_name_row, gekozen_col):
                     continue
 
                 pp2_write_name(ws_pp2, pv_name_row, gekozen_col, naam)
@@ -4583,7 +4584,7 @@ if pv_rows_pp2:
             geplaatste_tweede = False
 
             for buur_col in buur_cols:
-                if ws_pp2.cell(pv_name_row, buur_col).value not in [None, ""]:
+                if not pp2_is_beschikbaar(ws_pp2, pv_name_row, buur_col):
                     continue
 
                 if not pp2_is_valid_short_break_for_student(naam, buur_col, ws_pp2):
@@ -5002,9 +5003,9 @@ pp2_blokken = pp2_halfuur_blokken(pauze_cols_pp2, ws_pp2)
 
 for col1, col2 in pp2_blokken:
     for pv, pv_name_row in pv_rows_pp2:
-        if ws_pp2.cell(pv_name_row, col1).value not in [None, ""]:
+        if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col1):
             continue
-        if ws_pp2.cell(pv_name_row, col2).value not in [None, ""]:
+        if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col2):
             continue
 
         toegewezen_naam = None
@@ -5353,33 +5354,6 @@ pp2_is_korte_dag = len(open_uren) <= 6
 
 pp2_open_spots = set()
 pp2_pv_short_breaks_placed = []
-
-
-# -----------------------------
-# Closed spots PP optie 2: afgekapte uren laatste PV
-# Vóór alle pauze-plaatsing zodat er nooit een pauze in terechtkomt
-# -----------------------------
-afgeknipt_fill_pp2 = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-pp2_closed_spots = set()
-
-if afgekapte_pv_uren and selected:
-    laatste_pv = selected[-1]
-    for pv, naam_rij in pv_rows_pp2:
-        if pv["naam"] == laatste_pv["naam"]:
-            for col in pauze_cols_pp2:
-                header = ws_pp2.cell(1, col).value
-                col_uur = parse_header_uur(header)
-                if col_uur in afgekapte_pv_uren:
-                    pp2_closed_spots.add((naam_rij, col))
-                    ws_pp2.cell(naam_rij, col).value = "GESLOTEN"
-                    ws_pp2.cell(naam_rij, col).fill = afgeknipt_fill_pp2
-                    ws_pp2.cell(naam_rij, col).alignment = center_align
-                    ws_pp2.cell(naam_rij, col).border = thin_border
-                    ws_pp2.cell(naam_rij - 1, col).value = None
-                    ws_pp2.cell(naam_rij - 1, col).fill = afgeknipt_fill_pp2
-                    ws_pp2.cell(naam_rij - 1, col).alignment = center_align
-                    ws_pp2.cell(naam_rij - 1, col).border = thin_border
-            break
 
 # -----------------------------
 # Hulploop: korte pauzes van pauzevlinders zelf invullen
@@ -5954,9 +5928,9 @@ for naam in pp2_minor_early_stoppers:
             if (pv_row, col1) in pp2_open_spots or (pv_row, col2) in pp2_open_spots:
                 continue
 
-            if ws_pp2.cell(pv_row, col1).value not in [None, ""]:
+            if not pp2_is_beschikbaar(ws_pp2, pv_row, col1):
                 continue
-            if ws_pp2.cell(pv_row, col2).value not in [None, ""]:
+            if not pp2_is_beschikbaar(ws_pp2, pv_row, col2):
                 continue
 
             if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_pp2):
@@ -6044,7 +6018,7 @@ for naam in pp2_minor_early_stoppers:
             if (pv_row, col) in pp2_open_spots:
                 continue
 
-            if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+            if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
                 continue
 
             if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
@@ -6127,7 +6101,7 @@ for col in pauze_cols_pp2:
         if (pv_row, col) in pp2_open_spots:
             continue
 
-        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+        if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
             continue
 
         toegewezen_naam = None
@@ -6497,7 +6471,7 @@ for naam in list(pp2_other_pending_short_breaks):
         for pv, pv_row in pv_volgorde:
             if (pv_row, col) in pp2_open_spots:
                 continue
-            if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+            if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
                 continue
             if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
                 continue
@@ -6539,7 +6513,7 @@ for col in pauze_cols_pp2:
             continue
 
         # vak moet leeg zijn
-        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+        if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
             continue
 
         toegewezen_naam = None
@@ -6623,7 +6597,7 @@ for col in pauze_cols_pp2:
             continue
 
         # vak moet leeg zijn
-        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+        if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
             continue
 
         toegewezen_naam = None
@@ -6695,7 +6669,7 @@ for col in pauze_cols_pp2:
             continue
 
         # vak moet leeg zijn
-        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+        if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
             continue
 
         toegewezen_naam = None
