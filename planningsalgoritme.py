@@ -464,6 +464,7 @@ import math
 
 aantal_pv = len(selected)
 aantal_pauze_uren = len(required_pauze_hours)
+afgekapte_pv_uren = set()  # nieuw: bijhouden welke uren afgekapt worden
 
 if aantal_pv > 0 and aantal_pauze_uren > 0:
     plaatsen_pauzeplanning = (aantal_pauze_uren * 4 - 1) * aantal_pv
@@ -489,6 +490,7 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
         for i in range(uren_te_verschuiven):
             uur = pv_pauze_uren[i]
             extra_assignments[uur].append(laatste_pv["naam"])
+            afgekapte_pv_uren.add(uur)  # nieuw: registreer dit uur als afgeknipt
 
 
 
@@ -1691,7 +1693,11 @@ for pv_idx, pvnaam in enumerate(pauzevlinder_namen_sorted, start=1):
     ws_out.cell(rij_out, 1).fill = white_fill
     ws_out.cell(rij_out, 1).border = thin_border
     for col_idx, uur in enumerate(sorted(open_uren), start=2):
-        naam = pvnaam if uur in required_pauze_hours else ""
+        # Laatste PV: toon niet bij de afgekapte uren
+        if pvnaam == selected[-1]["naam"] and uur in afgekapte_pv_uren:
+            naam = ""
+        else:
+            naam = pvnaam if uur in required_pauze_hours else ""
         ws_out.cell(rij_out, col_idx, naam).alignment = center_align
         ws_out.cell(rij_out, col_idx).border = thin_border
         if naam and naam in student_kleuren:
