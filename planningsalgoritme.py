@@ -1963,6 +1963,8 @@ def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg):
         start_rij = rij + 3
 
 
+maak_analyse_sheet(wb_out, assigned_map, extra_assignments, studenten)
+
 #DEEL 2
 #oooooooooooooooooooo
 #oooooooooooooooooooo
