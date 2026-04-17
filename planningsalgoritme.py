@@ -3899,13 +3899,9 @@ def finalize_workbook_with_extra_sheets(wb_out):
     
     
     
-    def rebuild_followup_sheets_and_save(wb_out):
-        output = BytesIO()
-        wb_out.save(output)
-        output.seek(0)  # Zorg dat lezen vanaf begin kan
-        return output
+    
 
-output = rebuild_followup_sheets_and_save(wb_out)
+output = finalize_workbook_with_extra_sheets(wb_out)
 
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
@@ -9148,6 +9144,12 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 
     return wb_lm
 
+
+def finalize_workbook_with_extra_sheets(wb_out):
+    output = BytesIO()
+    wb_out.save(output)
+    output.seek(0)
+    return output
 
 # ------------------------------------------------------------
 # UI
