@@ -4322,32 +4322,6 @@ pv_rows_pp2 = pp2_get_pv_rows(ws_pp2, selected)
 # Maak de grid leeg, maar behoud layout
 pp2_clear_pauze_grid(ws_pp2, pv_rows_pp2, pauze_cols_pp2)
 
-# -----------------------------
-# Closed spots PP optie 2: afgekapte uren laatste PV
-# -----------------------------
-afgeknipt_fill_pp2 = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
-pp2_closed_spots = set()  # set van (naam_rij, col)
-
-if afgekapte_pv_uren and selected:
-    laatste_pv = selected[-1]
-    for pv, naam_rij in pv_rows_pp2:
-        if pv["naam"] == laatste_pv["naam"]:
-            for col in pauze_cols_pp2:
-                header = ws_pp2.cell(1, col).value
-                col_uur = parse_header_uur(header)
-                if col_uur in afgekapte_pv_uren:
-                    pp2_closed_spots.add((naam_rij, col))
-                    # naamrij grijs
-                    ws_pp2.cell(naam_rij, col).value = None
-                    ws_pp2.cell(naam_rij, col).fill = afgeknipt_fill_pp2
-                    ws_pp2.cell(naam_rij, col).alignment = center_align
-                    ws_pp2.cell(naam_rij, col).border = thin_border
-                    # rij erboven grijs
-                    ws_pp2.cell(naam_rij - 1, col).value = None
-                    ws_pp2.cell(naam_rij - 1, col).fill = afgeknipt_fill_pp2
-                    ws_pp2.cell(naam_rij - 1, col).alignment = center_align
-                    ws_pp2.cell(naam_rij - 1, col).border = thin_border
-            break
 
 
 # -----------------------------
@@ -5379,6 +5353,33 @@ pp2_is_korte_dag = len(open_uren) <= 6
 
 pp2_open_spots = set()
 pp2_pv_short_breaks_placed = []
+
+
+# -----------------------------
+# Closed spots PP optie 2: afgekapte uren laatste PV
+# Vóór alle pauze-plaatsing zodat er nooit een pauze in terechtkomt
+# -----------------------------
+afgeknipt_fill_pp2 = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+pp2_closed_spots = set()
+
+if afgekapte_pv_uren and selected:
+    laatste_pv = selected[-1]
+    for pv, naam_rij in pv_rows_pp2:
+        if pv["naam"] == laatste_pv["naam"]:
+            for col in pauze_cols_pp2:
+                header = ws_pp2.cell(1, col).value
+                col_uur = parse_header_uur(header)
+                if col_uur in afgekapte_pv_uren:
+                    pp2_closed_spots.add((naam_rij, col))
+                    ws_pp2.cell(naam_rij, col).value = "GESLOTEN"
+                    ws_pp2.cell(naam_rij, col).fill = afgeknipt_fill_pp2
+                    ws_pp2.cell(naam_rij, col).alignment = center_align
+                    ws_pp2.cell(naam_rij, col).border = thin_border
+                    ws_pp2.cell(naam_rij - 1, col).value = None
+                    ws_pp2.cell(naam_rij - 1, col).fill = afgeknipt_fill_pp2
+                    ws_pp2.cell(naam_rij - 1, col).alignment = center_align
+                    ws_pp2.cell(naam_rij - 1, col).border = thin_border
+            break
 
 # -----------------------------
 # Hulploop: korte pauzes van pauzevlinders zelf invullen
