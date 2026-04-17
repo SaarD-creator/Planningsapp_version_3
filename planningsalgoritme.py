@@ -8898,8 +8898,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     # NIEUW: zorg dat nieuw samengestelde attracties ook echte rijen krijgen
     lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
 
-    # NIEUW: zorg dat extra-rijen bestaan als de planner extras heeft aangemaakt
-    lm5_extend_extra_rows_if_needed(base_maps, ctx)  # ← dit toevoegen
+  
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
     for uur in sorted(open_uren):
@@ -8959,6 +8958,8 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
 
     # STAP 8: lege attractieplekken opvullen door Extra -> attractie
     lm5_try_fill_empty_slots_from_extras(ctx, start_uur)
+
+    lm5_extend_extra_rows_if_needed(base_maps, ctx) 
 
     return ctx, base_maps
 
