@@ -273,7 +273,6 @@ def compute_pauze_hours(open_uren):
 
 required_pauze_hours=compute_pauze_hours(open_uren)
 
-
 for idx,pvnaam in enumerate(pauzevlinder_namen,start=1):
     for s in studenten:
         if s["naam"]==pvnaam:
@@ -285,60 +284,6 @@ for idx,pvnaam in enumerate(pauzevlinder_namen,start=1):
 # Maak 'selected' lijst van pauzevlinders (dicts met naam en attracties)
 selected = [s for s in studenten if s.get("is_pauzevlinder")]
 selected = sorted(selected, key=lambda s: naam_tie_break_key(s["naam"]))
-
-
-
-# -----------------------------
-# Overbodige pauzevlinderuren berekenen en verschuiven naar extra
-# -----------------------------
-
-# Stap 1: aantal plaatsen op de pauzeplanning
-aantal_pv = len(selected)
-aantal_pauze_uren = len(required_pauze_hours)
-
-if aantal_pv > 0 and aantal_pauze_uren > 0:
-    plaatsen_pauzeplanning = (aantal_pauze_uren * 4 - 1) * aantal_pv
-
-    # Stap 2: aantal pauzes in kwartieren (uit Excel: BP2 en BQ2)
-    try:
-        lange_pauzes = int(ws["BP2"].value) if ws["BP2"].value else 0
-    except:
-        lange_pauzes = 0
-    try:
-        korte_pauzes = int(ws["BQ2"].value) if ws["BQ2"].value else 0
-    except:
-        korte_pauzes = 0
-
-    pauze_kwartieren = 2 * lange_pauzes + korte_pauzes
-
-    # Stap 3: open spots
-    open_spots = plaatsen_pauzeplanning - pauze_kwartieren
-
-    # Stap 4: overbodige uren (naar beneden afgerond)
-    import math
-    overbodige_uren = math.floor((open_spots - aantal_pv * 3) / 4)
-    overbodige_uren = max(0, overbodige_uren)  # nooit negatief
-
-    # Stap 5: verschuif de laatste pauzevlinder zijn uren
-    # De laatste pauzevlinder is de laatste in de gesorteerde 'selected' lijst
-    if overbodige_uren > 0 and selected:
-        laatste_pv = selected[-1]
-
-        # Uren die deze pauzevlinder momenteel HEEFT als pauzevlinderuren
-        # (de required_pauze_hours die hij beschikbaar was)
-        # Na regel 281 zijn ze al verwijderd uit uren_beschikbaar,
-        # maar required_pauze_hours zelf staat nog vast.
-        pv_pauze_uren = sorted(required_pauze_hours, reverse=True)  # begin bij het laatste uur
-
-        uren_te_verschuiven = min(overbodige_uren, len(pv_pauze_uren))
-
-        for i in range(uren_te_verschuiven):
-            uur_te_verschuiven = pv_pauze_uren[i]
-            # Voeg dit uur terug toe aan uren_beschikbaar van de laatste PV
-            if uur_te_verschuiven not in laatste_pv["uren_beschikbaar"]:
-                laatste_pv["uren_beschikbaar"].append(uur_te_verschuiven)
-                laatste_pv["uren_beschikbaar"] = sorted(laatste_pv["uren_beschikbaar"])
-
 
 # -----------------------------
 # Attracties & aantallen (raw)
@@ -510,6 +455,42 @@ attracties_te_plannen.sort(key=lambda a: kritieke_score(a, studenten_workend))
 assigned_map = defaultdict(list)  # (uur, attr) -> list of student-names
 per_hour_assigned_counts = {uur: {a: 0 for a in attracties_te_plannen} for uur in open_uren}
 extra_assignments = defaultdict(list)
+
+
+# -----------------------------
+# Overbodige pauzevlinderuren → laatste PV naar extra
+# -----------------------------
+import math
+
+aantal_pv = len(selected)
+aantal_pauze_uren = len(required_pauze_hours)
+
+if aantal_pv > 0 and aantal_pauze_uren > 0:
+    plaatsen_pauzeplanning = (aantal_pauze_uren * 4 - 1) * aantal_pv
+
+    try:
+        lange_pauzes = int(ws["BP2"].value) if ws["BP2"].value else 0
+    except:
+        lange_pauzes = 0
+    try:
+        korte_pauzes = int(ws["BQ2"].value) if ws["BQ2"].value else 0
+    except:
+        korte_pauzes = 0
+
+    pauze_kwartieren = 2 * lange_pauzes + korte_pauzes
+    open_spots = plaatsen_pauzeplanning - pauze_kwartieren
+    overbodige_uren = max(0, math.floor((open_spots - aantal_pv * 3) / 4))
+
+    if overbodige_uren > 0:
+        laatste_pv = selected[-1]
+        pv_pauze_uren = sorted(required_pauze_hours, reverse=True)
+        uren_te_verschuiven = min(overbodige_uren, len(pv_pauze_uren))
+
+        for i in range(uren_te_verschuiven):
+            uur = pv_pauze_uren[i]
+            extra_assignments[uur].append(laatste_pv["naam"])
+
+
 
 MAX_CONSEC = 4
 MAX_PER_STUDENT_ATTR = 6
