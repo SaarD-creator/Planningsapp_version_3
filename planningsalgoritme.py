@@ -3898,8 +3898,13 @@ if bn15_vinkje in [1, True, "WAAR", "X"]:
 
 
 
-wb_out.save(output)
-output.seek(0)  # Zorg dat lezen vanaf begin kan
+def rebuild_followup_sheets_and_save(wb_out):
+    output = BytesIO()
+    wb_out.save(output)
+    output.seek(0)  # Zorg dat lezen vanaf begin kan
+    return output
+
+output = rebuild_followup_sheets_and_save(wb_out)
 
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
@@ -9180,7 +9185,7 @@ with st.expander("Last-minute afwezigen", expanded=False):
                     start_uur=start_uur_lm5
                 )
 
-                lm5_result = lm5_write_lastminute_workbook(
+                wb_lastminute_lm5 = lm5_write_lastminute_workbook(
                     base_bytes=base_bytes_lm5,
                     ctx=ctx_lm5,
                     base_maps=base_maps_lm5_build,
@@ -9188,20 +9193,18 @@ with st.expander("Last-minute afwezigen", expanded=False):
                     absentees=gekozen_afwezigen_lm5
                 )
 
-                # Robuust: werkt zowel als de writer een Workbook teruggeeft
-                # als wanneer hij al bytes teruggeeft
-                if isinstance(lm5_result, (bytes, bytearray)):
-                    lm5_file_bytes = bytes(lm5_result)
-                else:
-                    lm5_output = BytesIO()
-                    lm5_result.save(lm5_output)
-                    lm5_output.seek(0)
-                    lm5_file_bytes = lm5_output.getvalue()
+                # BELANGRIJK:
+                # Vanaf hier behandelen we de last-minute workbook
+                # exact zoals de gewone planning-workbook.
+                wb_out = wb_lastminute_lm5
+
+                # Zelfde save-flow als gewone planning
+                output_lm5 = rebuild_followup_sheets_and_save(wb_out)
 
                 st.success("Last-minute planning gemaakt.")
                 st.download_button(
                     "Download last-minute planning",
-                    data=lm5_file_bytes,
+                    data=output_lm5.getvalue(),
                     file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                     key="lm5_download_button"
                 )
