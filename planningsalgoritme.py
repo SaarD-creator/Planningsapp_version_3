@@ -1299,8 +1299,8 @@ def try_swap_specific_block(student, attr, block_hours):
 
 def try_swap_last_or_first_block(student, attr):
     """
-    Probeer eerst het laatste blok op deze attractie te wisselen.
-    Lukt dat niet, probeer dan het eerste blok.
+    Probeer het laatste of eerste blok op deze attractie te wisselen.
+    Als een run langer is dan 3, pak dan de laatste 3 of laatste 2 uur eruit.
     Alleen relevant als student >4 uur op deze attractie staat.
     """
     uren_op_attr = get_hours_on_attr(student, attr)
@@ -1312,25 +1312,37 @@ def try_swap_last_or_first_block(student, attr):
         return False
 
     laatste_run = runs[-1]
-    eerste_run = runs[0]
+    eerste_run  = runs[0]
 
-    # Eerst laatste blok proberen
-    if len(laatste_run) in [2, 3]:
-        if try_swap_specific_block(student, attr, laatste_run):
+    def kandidaat_blokken(run):
+        """Geef blokken van 2 of 3 uur terug vanuit deze run (einde eerst)."""
+        blokken = []
+        if len(run) >= 3:
+            blokken.append(run[-3:])  # laatste 3
+        if len(run) >= 2:
+            blokken.append(run[-2:])  # laatste 2
+        if len(run) >= 3:
+            blokken.append(run[:3])   # eerste 3
+        if len(run) >= 2:
+            blokken.append(run[:2])   # eerste 2
+        return blokken
+
+    # Probeer eerst blokken uit de laatste run
+    for blok in kandidaat_blokken(laatste_run):
+        if try_swap_specific_block(student, attr, blok):
             return True
 
-    # Daarna eerste blok proberen
-    if len(eerste_run) in [2, 3]:
-        # niet dubbel proberen als er maar 1 run is en die identiek is
-        if eerste_run != laatste_run:
-            if try_swap_specific_block(student, attr, eerste_run):
+    # Dan blokken uit de eerste run (als die anders is)
+    if eerste_run != laatste_run:
+        for blok in kandidaat_blokken(eerste_run):
+            if try_swap_specific_block(student, attr, blok):
                 return True
 
     return False
 
 
 # Iteratief toepassen tot er niets meer verandert
-max_block_swap_passes = 5
+max_block_swap_passes = 7
 for _ in range(max_block_swap_passes):
     wijziging = False
 
