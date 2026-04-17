@@ -1,4 +1,4 @@
-# andere pauzes voor minderjarigen, maar die kloppen mogelijks niet lol (ook lange pauzes van pauzevlinders zijn beter)
+# pauzes kloppen!! 1h15 min pauze voor minderjarige lange werkers
 # nieuw werkblad analyse
 # zelfde versie als 3.5 maar pauzevlinders zijn ook volgens volgorde uit gekozen nummertje
 #betere verdeling 3 uur blokken, maar te veel 6 uur bij zelfde attractie & 1+3 logica voor 9u30 ipv 3+1 & 2+2 logica voor 4 uur opt einde
@@ -3840,18 +3840,7 @@ if bn15_vinkje in [1, True, "WAAR", "X"]:
             cel.alignment = Alignment(horizontal="left", vertical="center")
 # -------------------------------------
 
-# --- ZELFDE LOGICA VOOR PP OPTIE 2 ---
-if bn15_vinkje in [1, True, "WAAR", "X"]:
-    for i, input_rij in enumerate(range(15, 31)):
-        waarde = ws_input_data.cell(row=input_rij, column=67).value
 
-        if waarde:
-            target_rij = 12 + i
-            cel = ws_pp2.cell(row=target_rij, column=1, value=waarde)
-            cel.fill = witte_fill
-            cel.border = thin_border
-            cel.alignment = Alignment(horizontal="left", vertical="center")
-# -------------------------------------
 
 wb_out.save(output)
 output.seek(0)  # Zorg dat lezen vanaf begin kan
@@ -6583,19 +6572,8 @@ for col in pauze_cols_pp2:
                 if toegewezen_naam in pp2_endworkers_without_long_break:
                     pp2_endworkers_without_long_break.remove(toegewezen_naam)
 
-# -----------------------------
-# BN15 vinkje: tekst uit BO15:BO30 tonen op PP optie 2
-# Drie rijen onder de laatste rij van de pauzeplanning
-# -----------------------------
-bn15_vinkje_pp2 = ws.cell(15, 66).value  # BN15 in Input
 
-if bn15_vinkje_pp2 in [1, True, "WAAR", "X"]:
-    for i, input_rij in enumerate(range(15, 31)):
-        waarde = ws.cell(input_rij, 67).value  # BO kolom = 67
 
-        if waarde:
-            cel = ws_pp2.cell(row=16 + i, column=1, value=waarde)
-            cel.alignment = Alignment(horizontal="left", vertical="center")
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
 # =============================
