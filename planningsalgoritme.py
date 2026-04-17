@@ -8874,7 +8874,7 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
 
     nieuwe_attr_rows = []
 
-    current_row = insert_after
+    current_row = insert_after + 1
 
     for attr in sorted(dynamische_attrs.keys(), key=lambda x: str(x).lower()):
         nodig = dynamische_attrs[attr]
