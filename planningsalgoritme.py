@@ -5268,8 +5268,8 @@ def pp2_find_short_break_cols_for_pv(naam, pv_row, ws_sheet, pauze_cols, open_sp
 
 
 # 1) Is dit een korte dag?
-#    Korte dag = niemand heeft in stap 2 een lange pauze nodig
-pp2_is_korte_dag = (len(pp2_lange_werkers_lijst()) == 0)
+#    Korte dag = openingsuren zijn 6 uur of minder
+pp2_is_korte_dag = len(open_uren) <= 6
 
 pp2_open_spots = set()
 pp2_pv_short_breaks_placed = []
