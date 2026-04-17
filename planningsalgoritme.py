@@ -4234,29 +4234,29 @@ def pp2_write_name(ws_sheet, row_name, col, naam):
     - bovenste vak: attractie waarop student dat moment staat
     - onderste vak: naam van student
     - korte pauze = paars
-    - lange pauze = groen (voor later bruikbaar)
+    - lange pauze = groen
+    - Schrijft NIET als de cel een closed spot is
     """
+    if (row_name, col) in pp2_closed_spots:
+        return
+
     lichtgroen_fill = PatternFill(start_color="D9EAD3", end_color="D9EAD3", fill_type="solid")
     lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
 
-    # bepaal uur van deze kolom
     header = ws_sheet.cell(1, col).value
     uur = parse_header_uur(header)
 
-    # attractie erboven invullen
     info_cel = ws_sheet.cell(row_name - 1, col)
     attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
     info_cel.value = attr if attr else ""
     info_cel.alignment = center_align
     info_cel.border = thin_border
 
-    # naam invullen
     cel = ws_sheet.cell(row_name, col)
     cel.value = naam
     cel.alignment = center_align
     cel.border = thin_border
 
-    # check of dit een lange of korte pauze is
     is_lange_pauze = False
     if col - 1 >= 2 and ws_sheet.cell(row_name, col - 1).value == naam:
         is_lange_pauze = True
@@ -4321,6 +4321,33 @@ pv_rows_pp2 = pp2_get_pv_rows(ws_pp2, selected)
 
 # Maak de grid leeg, maar behoud layout
 pp2_clear_pauze_grid(ws_pp2, pv_rows_pp2, pauze_cols_pp2)
+
+# -----------------------------
+# Closed spots PP optie 2: afgekapte uren laatste PV
+# -----------------------------
+afgeknipt_fill_pp2 = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")
+pp2_closed_spots = set()  # set van (naam_rij, col)
+
+if afgekapte_pv_uren and selected:
+    laatste_pv = selected[-1]
+    for pv, naam_rij in pv_rows_pp2:
+        if pv["naam"] == laatste_pv["naam"]:
+            for col in pauze_cols_pp2:
+                header = ws_pp2.cell(1, col).value
+                col_uur = parse_header_uur(header)
+                if col_uur in afgekapte_pv_uren:
+                    pp2_closed_spots.add((naam_rij, col))
+                    # naamrij grijs
+                    ws_pp2.cell(naam_rij, col).value = None
+                    ws_pp2.cell(naam_rij, col).fill = afgeknipt_fill_pp2
+                    ws_pp2.cell(naam_rij, col).alignment = center_align
+                    ws_pp2.cell(naam_rij, col).border = thin_border
+                    # rij erboven grijs
+                    ws_pp2.cell(naam_rij - 1, col).value = None
+                    ws_pp2.cell(naam_rij - 1, col).fill = afgeknipt_fill_pp2
+                    ws_pp2.cell(naam_rij - 1, col).alignment = center_align
+                    ws_pp2.cell(naam_rij - 1, col).border = thin_border
+            break
 
 
 # -----------------------------
