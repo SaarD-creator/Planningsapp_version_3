@@ -7671,20 +7671,47 @@ def lm5_present_students_on_hour(base_maps, uur, absentees_set):
 def lm5_pv_names():
     return [str(pv["naam"]).strip() for pv in selected]
 
-def lm5_extract_combined_priority():
+def lm5_extract_capacity_actions():
+    """
+    Leest een prioriteitenlijst voor dynamische capaciteitsacties.
+    Ondersteunt:
+    - disable: alleen attr1 ingevuld
+    - merge 2: attr1 + attr2
+    - merge 3: attr1 + attr2 + attr3
+
+    Verwacht per rij:
+    col 82 = attr1
+    col 83 = attr2
+    col 84 = attr3   # nieuw
+    """
     result = []
+
     for rij in range(2, 12):
-        val1 = ws.cell(rij, 82).value
-        val2 = ws.cell(rij, 83).value
-        if not val1:
+        vals = []
+        for col in [82, 83, 84]:
+            v = ws.cell(rij, col).value
+            if v and str(v).strip():
+                vals.append(str(v).strip())
+
+        if not vals:
             continue
-        a1 = str(val1).strip()
-        if val2:
-            a2 = str(val2).strip()
-            result.append({"type": "merge", "groep": [a1, a2]})
+
+        if len(vals) == 1:
+            result.append({
+                "type": "disable",
+                "attr": vals[0],
+                "priority": rij
+            })
         else:
-            result.append({"type": "disable", "attr": a1})
+            result.append({
+                "type": "merge",
+                "groep": vals,
+                "priority": rij
+            })
+
     return result
+
+
 
 def lm5_all_single_attrs():
     return [a for a in attracties_te_plannen if " + " not in str(a)]
@@ -7770,59 +7797,94 @@ def lm5_present_attraction_students_on_hour(ctx, uur):
 # ------------------------------------------------------------
 # Uurstaat herberekenen
 # ------------------------------------------------------------
-def lm5_rebuild_hour_state(uur, available_attraction_students, combined_priority):
+def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions):
     counts = {}
     active = set()
 
+    # 1. basis: enkel losse attracties
     for attr in attracties_te_plannen:
         if " + " in str(attr):
             continue
-        if uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
-            counts[attr] = 0
-        else:
-            if aantallen_raw.get(attr, 0) >= 1:
-                counts[attr] = 1
-                active.add(attr)
-            else:
-                counts[attr] = 0
 
+        attr_norm = normalize_attr(attr)
+
+        if uur in dichte_uren_per_attr.get(attr_norm, set()):
+            counts[attr] = 0
+            continue
+
+        if aantallen_raw.get(attr, 0) >= 1:
+            counts[attr] = 1
+            active.add(attr)
+        else:
+            counts[attr] = 0
+
+    # 2. vaste uur-samenvoegingen uit Excel behouden
     groepen = []
     for groep in uur_samenvoegingen.get(uur, []):
-        g = [str(x).strip() for x in groep]
-        groepen.append(g)
+        g = [str(x).strip() for x in groep if x and str(x).strip()]
+        if len(g) < 2:
+            continue
+
         sameng = " + ".join(g)
+        groepen.append(g)
+
         counts[sameng] = 1
         active.add(sameng)
+
         for onderdeel in g:
             counts[onderdeel] = 0
-            if onderdeel in active:
-                active.remove(onderdeel)
+            active.discard(onderdeel)
 
     def min_spots():
         return sum(1 for a in active if counts.get(a, 0) >= 1)
 
-    for entry in combined_priority:
+    def is_single_active(attr):
+        return attr in active and " + " not in str(attr)
+
+    def can_merge_group(g):
+        # alle onderdelen moeten losse actieve attracties zijn
+        if len(g) < 2:
+            return False
+        return all(is_single_active(a) for a in g)
+
+    def apply_merge(g):
+        sameng = " + ".join(g)
+
+        for onderdeel in g:
+            counts[onderdeel] = 0
+            active.discard(onderdeel)
+
+        counts[sameng] = 1
+        active.add(sameng)
+
+        if g not in groepen:
+            groepen.append(g)
+
+    def can_disable(attr):
+        return is_single_active(attr)
+
+    def apply_disable(attr):
+        counts[attr] = 0
+        active.discard(attr)
+
+    # 3. capaciteitsacties uitvoeren zolang nodig
+    for entry in capacity_actions:
         if min_spots() <= available_attraction_students:
             break
-        if entry["type"] == "merge":
-            g = entry["groep"]
-            sameng = " + ".join(g)
-            if all(a in active for a in g):
-                for onderdeel in g:
-                    counts[onderdeel] = 0
-                    active.remove(onderdeel)
-                counts[sameng] = 1
-                active.add(sameng)
-                if g not in groepen:
-                    groepen.append(g)
-        elif entry["type"] == "disable":
-            attr = entry["attr"]
-            if attr in active:
-                counts[attr] = 0
-                active.remove(attr)
 
+        if entry["type"] == "merge":
+            g = [str(x).strip() for x in entry["groep"] if x and str(x).strip()]
+            if can_merge_group(g):
+                apply_merge(g)
+
+        elif entry["type"] == "disable":
+            attr = str(entry["attr"]).strip()
+            if can_disable(attr):
+                apply_disable(attr)
+
+    # 4. tweede plaatsen PAS NADIEN
     second_spot_blocked_lm = set()
-    base_spots = sum(1 for a in active if counts.get(a, 0) >= 1)
+    base_spots = min_spots()
     extra_spots = available_attraction_students - base_spots
 
     for attr in second_priority_order:
@@ -7850,11 +7912,11 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, combined_priority
             red_spots_lm.add(attr)
 
     return {
-        "active": active,
         "counts": counts,
+        "active": active,
+        "groepen": groepen,
         "red_spots": red_spots_lm,
         "second_spot_blocked": second_spot_blocked_lm,
-        "groepen": groepen
     }
 
 
@@ -8584,7 +8646,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     ctx = lm5_init_context(base_maps, absentees, start_uur)
     lm5_seed_hours_before_start(ctx, start_uur)
 
-    combined_priority = lm5_extract_combined_priority()
+    capacity_actions = lm5_extract_capacity_actions()
 
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
@@ -8596,7 +8658,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         hour_state = lm5_rebuild_hour_state(
             uur=uur,
             available_attraction_students=len(present_attraction_students),
-            combined_priority=combined_priority
+            capacity_actions=capacity_actions
         )
         ctx["hour_states"][uur] = hour_state
 
