@@ -7507,6 +7507,7 @@ st.download_button(
 
 
 #DEELLL 8 OFZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
+#DEELLL 8 OFZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 # ============================================================
 # LAST-MINUTE AFWEZIGEN V5
 # VOLLEDIGE VERVANGING van alle vorige last-minute patches
@@ -7670,31 +7671,23 @@ def lm5_present_students_on_hour(base_maps, uur, absentees_set):
 def lm5_pv_names():
     return [str(pv["naam"]).strip() for pv in selected]
 
-def lm5_extract_merge_priority():
-    def read_groups(r1, r2):
-        groepen = []
-        for rij in range(r1, r2 + 1):
-            groep = []
-            for col in range(45, 48):  # AS:AU
-                val = ws.cell(rij, col).value
-                if val:
-                    groep.append(str(val).strip())
-            if len(groep) >= 2:
-                groepen.append(groep)
-        return groepen
-
-    groepen = read_groups(14, 16)
-    if groepen:
-        return groepen
-    return read_groups(14, 21)
-
-def lm5_extract_disable_priority():
-    out = []
-    for rij in range(24, 30):  # AS24:AS29
-        val = ws.cell(rij, 45).value
-        if val:
-            out.append(str(val).strip())
-    return out
+def lm5_extract_action_priority():
+    """
+    Lees tabel CD2:CE11 (kolommen 82-83, rijen 2-11).
+    Elke rij bevat ofwel:
+    - 1 attractie (CD gevuld, CE leeg) → uitschakelen: ('disable', attr)
+    - 2 attracties (CD én CE gevuld)   → samenvoegen:  ('merge', [attr1, attr2])
+    Rij 2 heeft de hoogste prioriteit, rij 11 de laagste.
+    """
+    actions = []
+    for rij in range(2, 12):  # rijen 2 t/m 11
+        val_cd = ws.cell(rij, 82).value  # kolom CD
+        val_ce = ws.cell(rij, 83).value  # kolom CE
+        if val_cd and val_ce:
+            actions.append(('merge', [str(val_cd).strip(), str(val_ce).strip()]))
+        elif val_cd:
+            actions.append(('disable', str(val_cd).strip()))
+    return actions
 
 def lm5_all_single_attrs():
     return [a for a in attracties_te_plannen if " + " not in str(a)]
@@ -7780,7 +7773,7 @@ def lm5_present_attraction_students_on_hour(ctx, uur):
 # ------------------------------------------------------------
 # Uurstaat herberekenen
 # ------------------------------------------------------------
-def lm5_rebuild_hour_state(uur, available_attraction_students, merge_priority, disable_priority):
+def lm5_rebuild_hour_state(uur, available_attraction_students, action_priority):
     counts = {}
     active = set()
 
@@ -7814,40 +7807,33 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, merge_priority, d
     def min_spots():
         return sum(1 for a in active if counts.get(a, 0) >= 1)
 
-    # extra samenvoegen indien nog tekort, max 3
-    extra_merges_used = 0
-    for groep in merge_priority:
+    # acties uitvoeren in volgorde van prioriteit (CD2:CE11)
+    # een actie wordt overgeslagen als de betrokken attractie(s) al uitgeschakeld of samengevoegd zijn
+    for action in action_priority:
         if min_spots() <= available_attraction_students:
             break
-        if extra_merges_used >= 3:
-            break
 
-        g = [str(x).strip() for x in groep]
-        sameng = " + ".join(g)
+        if action[0] == 'merge':
+            g = [str(x).strip() for x in action[1]]
+            sameng = " + ".join(g)
+            # Sla over als een van de onderdelen al niet meer actief is (al samengevoegd of uitgeschakeld)
+            if all(counts.get(x, 0) >= 1 for x in g):
+                for onderdeel in g:
+                    counts[onderdeel] = 0
+                    if onderdeel in active:
+                        active.remove(onderdeel)
+                counts[sameng] = 1
+                active.add(sameng)
+                if g not in groepen:
+                    groepen.append(g)
 
-        if all(counts.get(x, 0) >= 1 for x in g):
-            for onderdeel in g:
-                counts[onderdeel] = 0
-                if onderdeel in active:
-                    active.remove(onderdeel)
-
-            counts[sameng] = 1
-            active.add(sameng)
-
-            if g not in groepen:
-                groepen.append(g)
-
-            extra_merges_used += 1
-
-    # daarna uitschakelen indien nog tekort
-    for attr in disable_priority:
-        if min_spots() <= available_attraction_students:
-            break
-        attr = str(attr).strip()
-        if counts.get(attr, 0) >= 1:
-            counts[attr] = 0
-            if attr in active:
-                active.remove(attr)
+        elif action[0] == 'disable':
+            attr = str(action[1]).strip()
+            # Sla over als de attractie al uitgeschakeld of samengevoegd is
+            if counts.get(attr, 0) >= 1:
+                counts[attr] = 0
+                if attr in active:
+                    active.remove(attr)
 
     # second spots opnieuw berekenen zoals in hoofdschema
     second_spot_blocked_lm = set()
@@ -8612,8 +8598,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     ctx = lm5_init_context(base_maps, absentees, start_uur)
     lm5_seed_hours_before_start(ctx, start_uur)
 
-    merge_priority = lm5_extract_merge_priority()
-    disable_priority = lm5_extract_disable_priority()
+    action_priority = lm5_extract_action_priority()
 
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
@@ -8625,8 +8610,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         hour_state = lm5_rebuild_hour_state(
             uur=uur,
             available_attraction_students=len(present_attraction_students),
-            merge_priority=merge_priority,
-            disable_priority=disable_priority
+            action_priority=action_priority
         )
         ctx["hour_states"][uur] = hour_state
 
@@ -8879,5 +8863,6 @@ with st.expander("Last-minute afwezigen", expanded=False):
 
             except Exception as e:
                 st.error(f"Fout in last-minute planner: {e}")
+
 
 
