@@ -5896,6 +5896,7 @@ for naam in pp2_minor_early_stoppers:
 # 0B) Daarna: exact diezelfde minderjarige
 #     vroege stoppers hun KORTE pauze
 #     => zo laat mogelijk (rechts naar links)
+#     => bij voorkeur op dezelfde rij als het laatste halfuur
 # ---------------------------------------
 for naam in pp2_minor_early_stoppers:
     resterend = pp2_resterende_korte_kwartieren(
@@ -5909,7 +5910,9 @@ for naam in pp2_minor_early_stoppers:
     if resterend <= 0:
         continue
 
+    # Zoek de rij én eindkolom van het LAATSTE halfuur van deze student
     laatste_lange_eindcol = None
+    laatste_lange_rij = None
 
     for _pv, pv_row in pv_rows_pp2:
         for idx in range(len(pauze_cols_pp2) - 1):
@@ -5922,17 +5925,24 @@ for naam in pp2_minor_early_stoppers:
             ):
                 if laatste_lange_eindcol is None or col2 > laatste_lange_eindcol:
                     laatste_lange_eindcol = col2
+                    laatste_lange_rij = pv_row
 
     if laatste_lange_eindcol is None:
         continue
 
     gekozen = None
 
+    # Bouw PV-rij volgorde: eerst de rij van het laatste halfuur, dan de rest
+    pv_volgorde = (
+        [(pv, pv_row) for pv, pv_row in pv_rows_pp2 if pv_row == laatste_lange_rij]
+        + [(pv, pv_row) for pv, pv_row in pv_rows_pp2 if pv_row != laatste_lange_rij]
+    )
+
     for col in reversed(pauze_cols_pp2):
         if col <= laatste_lange_eindcol:
             continue
 
-        for pv, pv_row in pv_rows_pp2:
+        for pv, pv_row in pv_volgorde:
             if (pv_row, col) in pp2_open_spots:
                 continue
 
@@ -6008,7 +6018,7 @@ for col in pauze_cols_pp2:
         # PRIORITEIT 1:
         # studenten die op deze rij al een lange pauze hebben
         # Voor minderjarige lange werkers (>6u): zoek na het
-        # LAATSTE halfuur (niet het eerste).
+        # LAATSTE halfuur op DEZE rij (niet over alle rijen).
         # ---------------------------------------------------
         rij_lange_pauze_namen = pp2_get_long_break_owners_on_row(
             ws_pp2,
@@ -6028,21 +6038,22 @@ for col in pauze_cols_pp2:
             ):
                 continue
 
-            # Bepaal min_col_exclusive: voor minderjarige lange werkers
-            # (>6u) ankeren we aan het LAATSTE halfuur op deze rij,
-            # voor alle anderen aan het eerste.
             is_minor_long_worker = (
                 pp2_is_minderjarig(kandidaat)
                 and student_totalen.get(kandidaat, 0) > 6
             )
 
             if is_minor_long_worker:
-                ankercol = pp2_get_last_long_break_end_col_any_row(
-                    naam=kandidaat,
-                    ws_sheet=ws_pp2,
-                    pv_rows=pv_rows_pp2,
-                    pauze_cols=pauze_cols_pp2
-                )
+                # Zoek eindkolom van het LAATSTE halfuur op DEZE specifieke rij
+                ankercol = None
+                for idx in range(len(pauze_cols_pp2) - 1):
+                    col1 = pauze_cols_pp2[idx]
+                    col2 = pauze_cols_pp2[idx + 1]
+                    if (
+                        ws_pp2.cell(pv_row, col1).value == kandidaat
+                        and ws_pp2.cell(pv_row, col2).value == kandidaat
+                    ):
+                        ankercol = col2
             else:
                 ankercol = None
 
@@ -6093,7 +6104,6 @@ for col in pauze_cols_pp2:
 
             if toegewezen_naam in pp2_students_before_end_pending:
                 pp2_students_before_end_pending.remove(toegewezen_naam)
-
 
 
 
