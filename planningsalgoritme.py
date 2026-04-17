@@ -3840,7 +3840,18 @@ if bn15_vinkje in [1, True, "WAAR", "X"]:
             cel.alignment = Alignment(horizontal="left", vertical="center")
 # -------------------------------------
 
+# --- ZELFDE LOGICA VOOR PP OPTIE 2 ---
+if bn15_vinkje in [1, True, "WAAR", "X"]:
+    for i, input_rij in enumerate(range(15, 31)):
+        waarde = ws_input_data.cell(row=input_rij, column=67).value
 
+        if waarde:
+            target_rij = 12 + i
+            cel = ws_pp2.cell(row=target_rij, column=1, value=waarde)
+            cel.fill = witte_fill
+            cel.border = thin_border
+            cel.alignment = Alignment(horizontal="left", vertical="center")
+# -------------------------------------
 
 wb_out.save(output)
 output.seek(0)  # Zorg dat lezen vanaf begin kan
