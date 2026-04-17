@@ -8835,6 +8835,42 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
     # Schrijf terug naar base_maps
     base_maps["attr_rows"] = attr_rows
 
+
+def lm5_extend_extra_rows_if_needed(base_maps, ctx):
+    """
+    Als ctx meer extra-studenten heeft dan er extra-rijen bestaan,
+    voeg dan de ontbrekende 'Extra N'-rijen toe aan base_maps.
+    """
+    extra_rows = list(base_maps.get("extra_rows", []))
+
+    # Hoeveel extra-plekken zijn er maximaal nodig op één uur?
+    max_nodig = 0
+    for uur, namen in ctx["extra_assignments"].items():
+        max_nodig = max(max_nodig, len(namen))
+
+    extra_tekort = max_nodig - len(extra_rows)
+    if extra_tekort <= 0:
+        return
+
+    # Bepaal na welke rij de nieuwe extra-rijen komen:
+    # 1 lege rij na de laagste bestaande rij in het sheet
+    attr_rows  = list(base_maps.get("attr_rows", []))
+    pv_rows    = list(base_maps.get("pv_rows", []))
+    alle_rijen = [row for row, _ in attr_rows + pv_rows + extra_rows]
+    insert_after = max(alle_rijen) if alle_rijen else 1
+
+    # +2: 1 lege rij spatie, dan de eerste nieuwe extra-rij
+    current_row = insert_after + 2
+
+    for i in range(extra_tekort):
+        nieuw_idx = len(extra_rows) + i + 1
+        label = f"Extra {nieuw_idx}"
+        extra_rows.append((current_row, label))
+        current_row += 1
+
+    base_maps["extra_rows"] = extra_rows
+
+
                                      
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
@@ -8861,6 +8897,9 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
 
     # NIEUW: zorg dat nieuw samengestelde attracties ook echte rijen krijgen
     lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
+
+    # NIEUW: zorg dat extra-rijen bestaan als de planner extras heeft aangemaakt
+    lm5_extend_extra_rows_if_needed(base_maps, ctx)  # ← dit toevoegen
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
     for uur in sorted(open_uren):
@@ -8946,16 +8985,16 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     wb_lm = load_workbook(BytesIO(base_bytes))
     ws_plan = wb_lm["Planning"]
 
-    gray_fill = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
+    gray_fill  = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
     white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
     uur_to_col = base_maps["uur_to_col"]
-    attr_rows = list(base_maps["attr_rows"])
-    pv_rows = base_maps["pv_rows"]
+    attr_rows  = list(base_maps["attr_rows"])
+    pv_rows    = base_maps["pv_rows"]
     extra_rows = base_maps["extra_rows"]
 
     center_align = Alignment(horizontal="center", vertical="center")
-    thin_border = Border(
+    thin_border  = Border(
         left=Side(style="thin"),
         right=Side(style="thin"),
         top=Side(style="thin"),
@@ -8966,22 +9005,40 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     for row, rijlabel in attr_rows:
         huidige_waarde = ws_plan.cell(row, 1).value
         if huidige_waarde is None or str(huidige_waarde).strip() == "":
-            ws_plan.cell(row, 1).value = rijlabel
-            ws_plan.cell(row, 1).font = Font(bold=True)
-            ws_plan.cell(row, 1).fill = white_fill
+            ws_plan.cell(row, 1).value     = rijlabel
+            ws_plan.cell(row, 1).font      = Font(bold=True)
+            ws_plan.cell(row, 1).fill      = white_fill
             ws_plan.cell(row, 1).alignment = center_align
-            ws_plan.cell(row, 1).border = thin_border
+            ws_plan.cell(row, 1).border    = thin_border
 
-        # ook meteen opmaak op de uurkolommen zetten
         for uur in sorted(open_uren):
             if uur not in uur_to_col:
                 continue
-            col = uur_to_col[uur]
+            col  = uur_to_col[uur]
             cell = ws_plan.cell(row, col)
             cell.alignment = center_align
-            cell.border = thin_border
+            cell.border    = thin_border
             if cell.fill.fill_type is None:
                 cell.fill = white_fill
+
+    # Zorg dat ook nieuwe extra-rijen in kolom A staan
+    for row, rijlabel in extra_rows:
+        huidige_waarde = ws_plan.cell(row, 1).value
+        if huidige_waarde is None or str(huidige_waarde).strip() == "":
+            ws_plan.cell(row, 1).value     = rijlabel
+            ws_plan.cell(row, 1).font      = Font(bold=True)
+            ws_plan.cell(row, 1).fill      = white_fill
+            ws_plan.cell(row, 1).alignment = center_align
+            ws_plan.cell(row, 1).border    = thin_border
+
+            for uur in sorted(open_uren):
+                if uur not in uur_to_col:
+                    continue
+                col  = uur_to_col[uur]
+                cell = ws_plan.cell(row, col)
+                cell.alignment = center_align
+                cell.border    = thin_border
+                cell.fill      = white_fill
 
     for uur in sorted(open_uren):
         if uur < start_uur:
@@ -8989,16 +9046,15 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
         if uur not in uur_to_col:
             continue
 
-        col = uur_to_col[uur]
+        col    = uur_to_col[uur]
         hstate = ctx["hour_states"][uur]
 
-        # attractierijen
+        # Attractierijen
         for row, rijlabel in attr_rows:
-            cell = ws_plan.cell(row, col)
-            attr, pos = lm5_split_display_label(rijlabel)
-
-            allowed = hstate["counts"].get(attr, 0)
-            inactive = False
+            cell       = ws_plan.cell(row, col)
+            attr, pos  = lm5_split_display_label(rijlabel)
+            allowed    = hstate["counts"].get(attr, 0)
+            inactive   = False
 
             if attr in hstate["red_spots"]:
                 inactive = True
@@ -9008,11 +9064,11 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
                 inactive = True
 
             namen = list(ctx["assigned_map"].get((uur, attr), []))
-            naam = namen[pos - 1] if pos - 1 < len(namen) else ""
+            naam  = namen[pos - 1] if pos - 1 < len(namen) else ""
 
-            cell.value = naam
+            cell.value     = naam
             cell.alignment = center_align
-            cell.border = thin_border
+            cell.border    = thin_border
 
             if inactive:
                 cell.fill = gray_fill
@@ -9028,13 +9084,13 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
         # PV-rijen
         pv_assignment_now = lm5_active_pv_assignment_for_hour(ctx, uur)
         for idx, (row, _label) in enumerate(pv_rows, start=1):
-            cell = ws_plan.cell(row, col)
+            cell   = ws_plan.cell(row, col)
             pvnaam = str(selected[idx - 1]["naam"]).strip() if idx <= len(selected) else ""
-            naam = pv_assignment_now.get(pvnaam, "")
+            naam   = pv_assignment_now.get(pvnaam, "")
 
-            cell.value = naam
+            cell.value     = naam
             cell.alignment = center_align
-            cell.border = thin_border
+            cell.border    = thin_border
 
             if naam and naam in student_kleuren:
                 cell.fill = PatternFill(
@@ -9051,9 +9107,9 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             cell = ws_plan.cell(row, col)
             naam = extras_now[idx] if idx < len(extras_now) else ""
 
-            cell.value = naam
+            cell.value     = naam
             cell.alignment = center_align
-            cell.border = thin_border
+            cell.border    = thin_border
 
             if naam and naam in student_kleuren:
                 cell.fill = PatternFill(
@@ -9064,8 +9120,7 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             else:
                 cell.fill = white_fill
 
-   
-    # ── Reconstruct assigned_hours per student vanuit ctx ──
+    # Reconstruct assigned_hours per student vanuit ctx
     import copy as _copy
     _hours_per_student = defaultdict(list)
     for (uur, attr), namen in ctx["assigned_map"].items():
@@ -9076,20 +9131,16 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     for s in studenten_lm:
         s["assigned_hours"] = _hours_per_student.get(str(s["naam"]).strip(), [])
 
-    # ── Herwerk Analyse ──
+    # Herwerk Analyse
     maak_analyse_sheet(wb_lm, ctx["assigned_map"], ctx["extra_assignments"], studenten_lm)
 
-    # ── Herwerk Wisselplanning ──
+    # Herwerk Wisselplanning
     maak_wisselplanning_sheet(wb_lm, ctx["assigned_map"])
 
-    # ── Herwerk PP optie 2 + Feedback optie 2 ──
+    # Herwerk PP optie 2 + Feedback optie 2
     maak_pp2_sheets(wb_lm, ctx["assigned_map"])
 
-    # ── PP optie 2 blijft as-is (PV-pauzetijden veranderen niet) ──
-
     return wb_lm
-
-
 
 
 # ------------------------------------------------------------
