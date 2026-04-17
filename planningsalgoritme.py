@@ -7649,24 +7649,10 @@ def lm5_pv_names():
 def lm5_extract_capacity_actions():
     result = []
 
-    st.write("=== DEBUG lm5_extract_capacity_actions START ===")
-
     # CD = 82, CE = 83
     for rij in range(2, ws_raw.max_row + 1):
-        raw_cd_formula = ws_raw.cell(rij, 82).value
-        raw_ce_formula = ws_raw.cell(rij, 83).value
-
-        raw_cd_value = ws.cell(rij, 82).value
-        raw_ce_value = ws.cell(rij, 83).value
-
-        st.write(
-            f"Rij {rij} | "
-            f"CD_raw={raw_cd_formula} | CE_raw={raw_ce_formula} | "
-            f"CD_value={raw_cd_value} | CE_value={raw_ce_value}"
-        )
-
-        left_source = raw_cd_formula
-        right_source = raw_ce_formula
+        left_source = ws_raw.cell(rij, 82).value
+        right_source = ws_raw.cell(rij, 83).value
 
         left = str(left_source).strip() if left_source is not None and str(left_source).strip() != "" else ""
         right = str(right_source).strip() if right_source is not None and str(right_source).strip() != "" else ""
@@ -7675,33 +7661,12 @@ def lm5_extract_capacity_actions():
             continue
 
         if left and not right:
-            action = {
-                "type": "disable",
-                "attr": left,
-                "source_row": rij
-            }
-            result.append(action)
-            st.write(f"  -> disable toegevoegd: {action}")
+            result.append({"type": "disable", "attr": left, "source_row": rij})
 
         elif left and right:
-            action = {
-                "type": "merge",
-                "groep": [left, right],
-                "source_row": rij
-            }
-            result.append(action)
-            st.write(f"  -> merge toegevoegd: {action}")
-
-        else:
-            st.write(f"  -> overgeslagen: CE ingevuld zonder CD op rij {rij}")
-
-    st.write("=== DEBUG lm5_extract_capacity_actions EINDE ===")
-    st.write(f"Totaal aantal capacity actions: {len(result)}")
-    for item in result:
-        st.write(item)
+            result.append({"type": "merge", "groep": [left, right], "source_row": rij})
 
     return result
-
 
 def lm5_all_single_attrs():
     return [a for a in attracties_te_plannen if " + " not in str(a)]
@@ -8878,12 +8843,6 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
 
     capacity_actions = lm5_extract_capacity_actions()
 
-    st.write("=== LM5 DEBUG: capacity_actions ===")
-    if not capacity_actions:
-        st.write("GEEN capacity_actions gevonden")
-    else:
-        for item in capacity_actions:
-            st.write(item)
 
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
@@ -8899,11 +8858,6 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         )
 
         ctx["hour_states"][uur] = hour_state
-
-        st.write(f"=== LM5 DEBUG UUR {uur} ===")
-        st.write(f"present_attraction_students ({len(present_attraction_students)}): {sorted(present_attraction_students)}")
-        for lijn in hour_state.get("debug_actions", []):
-            st.write(lijn)
 
     # NIEUW: zorg dat nieuw samengestelde attracties ook echte rijen krijgen
     lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
@@ -9110,18 +9064,7 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             else:
                 cell.fill = white_fill
 
-    # Info/check-blad
-    if "Last-minute info" in wb_lm.sheetnames:
-        del wb_lm["Last-minute info"]
-    ws_info = wb_lm.create_sheet("Last-minute info")
-
-    ws_info["A1"] = "Startuur"
-    ws_info["B1"] = start_uur
-
-    ws_info["A3"] = "Afwezigen"
-    for i, naam in enumerate(absentees, start=4):
-        ws_info.cell(i, 1).value = str(naam).strip()
-
+   
     # ── Reconstruct assigned_hours per student vanuit ctx ──
     import copy as _copy
     _hours_per_student = defaultdict(list)
