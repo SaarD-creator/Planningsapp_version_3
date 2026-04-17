@@ -274,6 +274,20 @@ def compute_pauze_hours(open_uren):
 required_pauze_hours=compute_pauze_hours(open_uren)
 
 
+for idx,pvnaam in enumerate(pauzevlinder_namen,start=1):
+    for s in studenten:
+        if s["naam"]==pvnaam:
+            s["is_pauzevlinder"]=True
+            s["pv_number"]=idx
+            s["uren_beschikbaar"]=[u for u in s["uren_beschikbaar"] if u not in required_pauze_hours]
+            break
+
+# Maak 'selected' lijst van pauzevlinders (dicts met naam en attracties)
+selected = [s for s in studenten if s.get("is_pauzevlinder")]
+selected = sorted(selected, key=lambda s: naam_tie_break_key(s["naam"]))
+
+
+
 # -----------------------------
 # Overbodige pauzevlinderuren berekenen en verschuiven naar extra
 # -----------------------------
@@ -325,17 +339,6 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
                 laatste_pv["uren_beschikbaar"].append(uur_te_verschuiven)
                 laatste_pv["uren_beschikbaar"] = sorted(laatste_pv["uren_beschikbaar"])
 
-for idx,pvnaam in enumerate(pauzevlinder_namen,start=1):
-    for s in studenten:
-        if s["naam"]==pvnaam:
-            s["is_pauzevlinder"]=True
-            s["pv_number"]=idx
-            s["uren_beschikbaar"]=[u for u in s["uren_beschikbaar"] if u not in required_pauze_hours]
-            break
-
-# Maak 'selected' lijst van pauzevlinders (dicts met naam en attracties)
-selected = [s for s in studenten if s.get("is_pauzevlinder")]
-selected = sorted(selected, key=lambda s: naam_tie_break_key(s["naam"]))
 
 # -----------------------------
 # Attracties & aantallen (raw)
