@@ -693,10 +693,6 @@ def _try_place_block_on_attr(student, block_hours, attr):
     if len(totaal_uren) > 6:
         return False
 
-    # Check max 4 aaneengesloten uren op dezelfde attractie
-    alle_uren_attr = sorted(totaal_uren)
-    if max_consecutive_hours(alle_uren_attr) > 4:
-        return False
 
     # Plaatsen
     for h in block_hours:
