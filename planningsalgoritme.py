@@ -3928,6 +3928,42 @@ for sheet_name in ["PP optie 2", "Feedback optie 2"]:
 # Basis referenties
 # -----------------------------
 ws_planning = wb_out["Planning"]
+
+def get_student_work_hours(naam):
+    """Welke uren werkt deze student echt (zoals te zien in werkblad 'Planning')?"""
+    uren = set()
+    for col in range(2, ws_planning.max_column + 1):
+        header = ws_planning.cell(1, col).value
+        uur = parse_header_uur(header)
+        if uur is None:
+            continue
+        for row in range(2, ws_planning.max_row + 1):
+            if ws_planning.cell(row, col).value == naam:
+                uren.add(uur)
+                break
+    return sorted(uren)
+
+
+def vind_attractie_op_uur(naam, uur):
+    """Geef attractienaam (exact zoals in Planning-kolom A) waar student staat op dit uur; None als niet gevonden."""
+    for col in range(2, ws_planning.max_column + 1):
+        header = ws_planning.cell(1, col).value
+        col_uur = parse_header_uur(header)
+        if col_uur != uur:
+            continue
+        for row in range(2, ws_planning.max_row + 1):
+            if ws_planning.cell(row, col).value == naam:
+                return ws_planning.cell(row, 1).value
+    return None
+
+
+def pv_kan_attr(pv, attr):
+    """Check of pv attr kan (met normalisatie, zodat 'X 2' telt als 'X')."""
+    base = normalize_attr(attr)
+    if base == "extra":
+        return True
+    return base in pv_cap_set.get(pv["naam"], set())
+
 ws_pauze_basis = wb_out["Pauzevlinders"]
 
 # -----------------------------
