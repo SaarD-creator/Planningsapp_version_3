@@ -8817,15 +8817,15 @@ def lm5_seed_hours_before_start(ctx, start_uur):
 
 def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
     attr_rows = list(base_maps["attr_rows"])
+    pv_rows = list(base_maps.get("pv_rows", []))
+    extra_rows = list(base_maps.get("extra_rows", []))
 
     bestaande_attr_pos = set()
-    max_row = 0
-
     for row, rijlabel in attr_rows:
         attr, pos = lm5_split_display_label(rijlabel)
         bestaande_attr_pos.add((attr, pos))
-        max_row = max(max_row, row)
 
+    # Verzamel alle dynamische samengestelde attracties die effectief voorkomen
     dynamische_attrs = {}
 
     for uur in sorted(open_uren):
@@ -8860,6 +8860,22 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
 
             dynamische_attrs[attr] = max(dynamische_attrs.get(attr, 0), max_pos)
 
+    if not dynamische_attrs:
+        return
+
+    # Bepaal waar de nieuwe rijen moeten komen:
+    # liefst ONDER de extra-rijen, anders onder de pauzevlinderrijen,
+    # anders onder de bestaande attractierijen.
+    alle_bestaande_rijen = [row for row, _ in attr_rows] + [row for row, _ in pv_rows] + [row for row, _ in extra_rows]
+    if alle_bestaande_rijen:
+        insert_after = max(alle_bestaande_rijen)
+    else:
+        insert_after = 1
+
+    nieuwe_attr_rows = []
+
+    current_row = insert_after
+
     for attr in sorted(dynamische_attrs.keys(), key=lambda x: str(x).lower()):
         nodig = dynamische_attrs[attr]
 
@@ -8867,17 +8883,23 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
             if (attr, pos) in bestaande_attr_pos:
                 continue
 
-            max_row += 1
+            current_row += 1
 
             if nodig > 1:
                 rijlabel = f"{attr} {pos}"
             else:
                 rijlabel = attr
 
-            attr_rows.append((max_row, rijlabel))
+            nieuwe_attr_rows.append((current_row, rijlabel))
             bestaande_attr_pos.add((attr, pos))
 
+    # Voeg de nieuwe rijen toe aan attr_rows
+    attr_rows.extend(nieuwe_attr_rows)
+
+    # Sorteer op fysieke rij
     attr_rows.sort(key=lambda x: x[0])
+
+    # Schrijf terug naar base_maps
     base_maps["attr_rows"] = attr_rows
 
                                      
@@ -8992,9 +9014,38 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
     uur_to_col = base_maps["uur_to_col"]
-    attr_rows = base_maps["attr_rows"]
+    attr_rows = list(base_maps["attr_rows"])
     pv_rows = base_maps["pv_rows"]
     extra_rows = base_maps["extra_rows"]
+
+    center_align = Alignment(horizontal="center", vertical="center")
+    thin_border = Border(
+        left=Side(style="thin"),
+        right=Side(style="thin"),
+        top=Side(style="thin"),
+        bottom=Side(style="thin")
+    )
+
+    # Zorg dat alle dynamische attractierijen echt bestaan in kolom A
+    for row, rijlabel in attr_rows:
+        huidige_waarde = ws_plan.cell(row, 1).value
+        if huidige_waarde is None or str(huidige_waarde).strip() == "":
+            ws_plan.cell(row, 1).value = rijlabel
+            ws_plan.cell(row, 1).font = Font(bold=True)
+            ws_plan.cell(row, 1).fill = white_fill
+            ws_plan.cell(row, 1).alignment = center_align
+            ws_plan.cell(row, 1).border = thin_border
+
+        # ook meteen opmaak op de uurkolommen zetten
+        for uur in sorted(open_uren):
+            if uur not in uur_to_col:
+                continue
+            col = uur_to_col[uur]
+            cell = ws_plan.cell(row, col)
+            cell.alignment = center_align
+            cell.border = thin_border
+            if cell.fill.fill_type is None:
+                cell.fill = white_fill
 
     for uur in sorted(open_uren):
         if uur < start_uur:
@@ -9012,6 +9063,7 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 
             allowed = hstate["counts"].get(attr, 0)
             inactive = False
+
             if attr in hstate["red_spots"]:
                 inactive = True
             if attr in hstate["second_spot_blocked"] and pos == 2:
@@ -9029,7 +9081,11 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             if inactive:
                 cell.fill = gray_fill
             elif naam and naam in student_kleuren:
-                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
+                cell.fill = PatternFill(
+                    start_color=student_kleuren[naam],
+                    end_color=student_kleuren[naam],
+                    fill_type="solid"
+                )
             else:
                 cell.fill = white_fill
 
@@ -9045,7 +9101,11 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             cell.border = thin_border
 
             if naam and naam in student_kleuren:
-                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
+                cell.fill = PatternFill(
+                    start_color=student_kleuren[naam],
+                    end_color=student_kleuren[naam],
+                    fill_type="solid"
+                )
             else:
                 cell.fill = white_fill
 
@@ -9060,55 +9120,28 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             cell.border = thin_border
 
             if naam and naam in student_kleuren:
-                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
+                cell.fill = PatternFill(
+                    start_color=student_kleuren[naam],
+                    end_color=student_kleuren[naam],
+                    fill_type="solid"
+                )
             else:
                 cell.fill = white_fill
 
     # Info/check-blad
     if "Last-minute info" in wb_lm.sheetnames:
-        wb_lm.remove(wb_lm["Last-minute info"])
+        del wb_lm["Last-minute info"]
     ws_info = wb_lm.create_sheet("Last-minute info")
 
-    ws_info["A1"] = "Afwezigen"
-    for i, naam in enumerate(absentees, start=2):
-        ws_info.cell(i, 1).value = naam
+    ws_info["A1"] = "Startuur"
+    ws_info["B1"] = start_uur
 
-    ws_info["C1"] = "Herplanning vanaf"
-    ws_info["C2"] = f"{start_uur}:00"
-
-    ws_info["E1"] = "PV-vervangers"
-    r = 2
-    for pvnaam, vervanger in ctx["pv_replacements"].items():
-        ws_info.cell(r, 5).value = pvnaam
-        ws_info.cell(r, 6).value = vervanger
-        r += 1
-
-    ws_info["H1"] = "Controle"
-    ws_info["H2"] = "Student"
-    ws_info["I2"] = "Uur"
-    ws_info["J2"] = "Aantal keer"
-
-    rr = 3
-    for uur in sorted(open_uren):
-        if uur < start_uur or uur not in uur_to_col:
-            continue
-
-        col = uur_to_col[uur]
-        count_per_student = Counter()
-
-        for row, _label in attr_rows + pv_rows + extra_rows:
-            naam = ws_plan.cell(row, col).value
-            if naam and str(naam).strip():
-                count_per_student[str(naam).strip()] += 1
-
-        present_students = lm5_present_students_on_hour(base_maps, uur, ctx["abs_set"])
-        for naam in present_students:
-            ws_info.cell(rr, 8).value = naam
-            ws_info.cell(rr, 9).value = uur
-            ws_info.cell(rr, 10).value = count_per_student.get(naam, 0)
-            rr += 1
+    ws_info["A3"] = "Afwezigen"
+    for i, naam in enumerate(absentees, start=4):
+        ws_info.cell(i, 1).value = str(naam).strip()
 
     return wb_lm
+
 
 # ------------------------------------------------------------
 # UI
