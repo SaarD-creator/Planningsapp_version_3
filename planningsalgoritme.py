@@ -3832,8 +3832,8 @@ if bn15_vinkje in [1, True, "WAAR", "X"]:
         waarde = ws_input_data.cell(row=input_rij, column=67).value
         
         if waarde:
-            # Schrijf de waarde naar kolom A van de pauzeplanning, beginnend bij rij 12
-            target_rij = 12 + i
+            # Schrijf de waarde naar kolom A van de pauzeplanning, beginnend bij rij 14
+            target_rij = 14 + i
             cel = ws_pauze_sheet.cell(row=target_rij, column=1, value=waarde)
             cel.fill = witte_fill
             cel.border = thin_border
