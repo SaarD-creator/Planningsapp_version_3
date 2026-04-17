@@ -5991,7 +5991,28 @@ pp2_students_before_end_pending = [
     ) > 0
 ]
 
-random.shuffle(pp2_students_before_end_pending)
+def pp2_get_last_long_break_end_col_for_sort(naam):
+    """
+    Geeft de eindkolom van het LAATSTE halfuur van deze student terug,
+    over alle PV-rijen heen. Studenten zonder lange pauze krijgen -1,
+    zodat ze vooraan komen in de sortering.
+    """
+    eindcol = -1
+    for _pv, pv_row in pv_rows_pp2:
+        for idx in range(len(pauze_cols_pp2) - 1):
+            col1 = pauze_cols_pp2[idx]
+            col2 = pauze_cols_pp2[idx + 1]
+            if (
+                ws_pp2.cell(pv_row, col1).value == naam
+                and ws_pp2.cell(pv_row, col2).value == naam
+            ):
+                if col2 > eindcol:
+                    eindcol = col2
+    return eindcol
+
+pp2_students_before_end_pending.sort(
+    key=lambda naam: pp2_get_last_long_break_end_col_for_sort(naam)
+)
 
 pp2_regular_short_breaks_placed = []
 
