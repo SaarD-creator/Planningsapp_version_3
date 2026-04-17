@@ -5669,15 +5669,12 @@ def pp2_find_one_valid_col_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols
     return []
 
 
-def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols, open_spots_set, min_col_exclusive=None):
+def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_cols, open_spots_set, min_col_exclusive=None, zoek_zo_laat_mogelijk=False):
     """
     Zoek het korte kwartier dat deze student nog nodig heeft op deze specifieke rij.
 
-    Nieuwe regel:
-    - niemand krijgt nog 2 korte kwartieren
-    - vanaf 4 uur werk heeft een student maximaal 1 kort kwartier nodig
-    - optioneel kan je pas zoeken NA een bepaalde kolom
-      (handig voor studenten die al een lange pauze op deze rij hadden)
+    - min_col_exclusive: zoek pas NA deze kolom
+    - zoek_zo_laat_mogelijk: zoek van rechts naar links (voor minderjarige lange werkers)
     """
     resterend = pp2_resterende_korte_kwartieren(
         naam=naam,
@@ -5690,7 +5687,9 @@ def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_
     if resterend <= 0:
         return []
 
-    for col in pauze_cols:
+    kandidaat_cols = list(reversed(pauze_cols)) if zoek_zo_laat_mogelijk else list(pauze_cols)
+
+    for col in kandidaat_cols:
         if min_col_exclusive is not None and col <= min_col_exclusive:
             continue
 
@@ -5706,6 +5705,7 @@ def pp2_find_needed_short_cols_for_student_on_row(naam, pv_row, ws_sheet, pauze_
         return [col]
 
     return []
+
 
 
 def pp2_place_short_break_cols_on_row(naam, pv, pv_row, cols):
@@ -6009,91 +6009,114 @@ pp2_regular_short_breaks_placed = []
 
 
 
-# Sorteer pending op ankerpunt voor korte pauze:
-# - minderjarige lange werkers (>6u): laatste halfuur als anker
-# - alle anderen: eerste halfuur als anker (of -1 als geen lange pauze)
-def pp2_anker_col_voor_korte_pauze(naam):
-    is_minor_long_worker = (
-        pp2_is_minderjarig(naam)
-        and student_totalen.get(naam, 0) > 6
-    )
-    eerste = None
-    laatste = None
-    for _pv, pv_row in pv_rows_pp2:
-        for idx in range(len(pauze_cols_pp2) - 1):
-            col1 = pauze_cols_pp2[idx]
-            col2 = pauze_cols_pp2[idx + 1]
-            if (
-                ws_pp2.cell(pv_row, col1).value == naam
-                and ws_pp2.cell(pv_row, col2).value == naam
-            ):
-                if eerste is None:
-                    eerste = col2
-                laatste = col2
-    if is_minor_long_worker:
-        return laatste if laatste is not None else -1
-    else:
-        return eerste if eerste is not None else -1
-
-pp2_students_before_end_pending.sort(
-    key=lambda naam: pp2_anker_col_voor_korte_pauze(naam)
-)
-
-# Itereer over kandidaten in volgorde, zoek per kandidaat een lege plek
-for naam in list(pp2_students_before_end_pending):
-    is_minor_long_worker = (
-        pp2_is_minderjarig(naam)
-        and student_totalen.get(naam, 0) > 6
-    )
-
-    # Bepaal ankercol voor min_col_exclusive
-    ankercol = None
-    if is_minor_long_worker:
-        for _pv, pv_row in pv_rows_pp2:
-            for idx in range(len(pauze_cols_pp2) - 1):
-                col1 = pauze_cols_pp2[idx]
-                col2 = pauze_cols_pp2[idx + 1]
-                if (
-                    ws_pp2.cell(pv_row, col1).value == naam
-                    and ws_pp2.cell(pv_row, col2).value == naam
-                ):
-                    ankercol = col2
-
-    # Bepaal voorkeurs-PV-rijen: eerst rij met lange pauze, dan de rest
-    pv_met_lange_pauze = [
-        (pv, pv_row) for pv, pv_row in pv_rows_pp2
-        if pp2_student_has_long_break_in_row(naam, ws_pp2, pv_row, pauze_cols_pp2)
-    ]
-    pv_zonder_lange_pauze = [
-        (pv, pv_row) for pv, pv_row in pv_rows_pp2
-        if not pp2_student_has_long_break_in_row(naam, ws_pp2, pv_row, pauze_cols_pp2)
-    ]
-    pv_volgorde = pv_met_lange_pauze + pv_zonder_lange_pauze
-
-    geplaatst = False
-    for pv, pv_row in pv_volgorde:
-        cols = pp2_find_needed_short_cols_for_student_on_row(
-            naam=naam,
-            pv_row=pv_row,
-            ws_sheet=ws_pp2,
-            pauze_cols=pauze_cols_pp2,
-            open_spots_set=pp2_open_spots,
-            min_col_exclusive=ankercol
-        )
-
-        if not cols:
-            continue
-
-        pp2_place_short_break_cols_on_row(
-            naam=naam,
-            pv=pv,
-            pv_row=pv_row,
-            cols=cols
-        )
-        pp2_students_before_end_pending.remove(naam)
-        geplaatst = True
+for col in pauze_cols_pp2:
+    if not pp2_students_before_end_pending:
         break
 
+    for pv, pv_row in pv_rows_pp2:
+        if not pp2_students_before_end_pending:
+            break
+
+        if (pv_row, col) in pp2_open_spots:
+            continue
+
+        if ws_pp2.cell(pv_row, col).value not in [None, ""]:
+            continue
+
+        toegewezen_naam = None
+        toegewezen_cols = []
+
+        # ---------------------------------------------------
+        # PRIORITEIT 1:
+        # studenten die op deze rij al een lange pauze hebben
+        # Voor minderjarige lange werkers (>6u): zoek na het
+        # LAATSTE halfuur op DEZE rij (niet over alle rijen).
+        # ---------------------------------------------------
+        rij_lange_pauze_namen = pp2_get_long_break_owners_on_row(
+            ws_pp2,
+            pv_row,
+            pauze_cols_pp2
+        )
+
+        for kandidaat in rij_lange_pauze_namen:
+            if kandidaat not in pp2_students_before_end_pending:
+                continue
+
+            if not pp2_student_has_long_break_in_row(
+                kandidaat,
+                ws_pp2,
+                pv_row,
+                pauze_cols_pp2
+            ):
+                continue
+
+            is_minor_long_worker = (
+                pp2_is_minderjarig(kandidaat)
+                and student_totalen.get(kandidaat, 0) > 6
+            )
+
+            if is_minor_long_worker:
+                # Zoek eindkolom van het LAATSTE halfuur op DEZE specifieke rij
+                ankercol = None
+                for idx in range(len(pauze_cols_pp2) - 1):
+                    col1 = pauze_cols_pp2[idx]
+                    col2 = pauze_cols_pp2[idx + 1]
+                    if (
+                        ws_pp2.cell(pv_row, col1).value == kandidaat
+                        and ws_pp2.cell(pv_row, col2).value == kandidaat
+                    ):
+                        ankercol = col2
+            else:
+                ankercol = None
+
+            cols = pp2_find_needed_short_cols_for_student_on_row(
+                naam=kandidaat,
+                pv_row=pv_row,
+                ws_sheet=ws_pp2,
+                pauze_cols=pauze_cols_pp2,
+                open_spots_set=pp2_open_spots,
+                min_col_exclusive=ankercol,
+                zoek_zo_laat_mogelijk=is_minor_long_worker
+            )
+
+            if not cols:
+                continue
+
+            toegewezen_naam = kandidaat
+            toegewezen_cols = cols
+            break
+
+        # ---------------------------------------------------
+        # PRIORITEIT 2:
+        # anders eerste geldige kandidaat uit de vaste lijst
+        # ---------------------------------------------------
+        if toegewezen_naam is None:
+            for kandidaat in pp2_students_before_end_pending:
+                cols = pp2_find_needed_short_cols_for_student_on_row(
+                    naam=kandidaat,
+                    pv_row=pv_row,
+                    ws_sheet=ws_pp2,
+                    pauze_cols=pauze_cols_pp2,
+                    open_spots_set=pp2_open_spots
+                )
+
+                if not cols:
+                    continue
+
+                toegewezen_naam = kandidaat
+                toegewezen_cols = cols
+                break
+
+        if toegewezen_naam and toegewezen_cols:
+            pp2_place_short_break_cols_on_row(
+                naam=toegewezen_naam,
+                pv=pv,
+                pv_row=pv_row,
+                cols=toegewezen_cols
+            )
+
+            if toegewezen_naam in pp2_students_before_end_pending:
+                pp2_students_before_end_pending.remove(toegewezen_naam)
 
 # ---------------------------------------
 # 2) Daarna: lange pauzevlinders zelf
