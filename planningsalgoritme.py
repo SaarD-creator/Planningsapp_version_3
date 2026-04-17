@@ -5119,12 +5119,12 @@ def pp2_heeft_al_voldoende_korte_pauze(naam, ws_sheet, pv_rows, pauze_cols, lang
 def pp2_korte_pauze_nodig_namen():
     """
     Iedereen met minstens 4 uur werk heeft recht op 1 kort kwartier,
-    BEHALVE minderjarige vroege stoppers.
+    BEHALVE:
+    - minderjarige vroege stoppers (die krijgen hun pauzes al in stap 1)
+    - gewone vroege stoppers die al een pauze gekregen hebben in stap 1
+      (herkenbaar: al een kort kwartier in het rooster, resterende = 0)
 
-    Minderjarige vroege stoppers:
-    - minderjarig
-    - minstens 4u gewerkt
-    - laatste werkuur <= 15
+    Vroege stopper = laatste werkuur <= 15 en minstens 4u gewerkt.
     """
     namen = []
 
@@ -5132,14 +5132,27 @@ def pp2_korte_pauze_nodig_namen():
         naam = s["naam"]
         werk_uren = pp2_get_student_work_hours(naam)
 
-        is_minor_early_stopper = (
-            pp2_is_minderjarig(naam)
-            and len(werk_uren) >= 4
-            and werk_uren
+        if not werk_uren:
+            continue
+
+        is_vroege_stopper = (
+            len(werk_uren) >= 4
             and max(werk_uren) <= 15
         )
 
+        is_minor_early_stopper = pp2_is_minderjarig(naam) and is_vroege_stopper
+
         if is_minor_early_stopper:
+            continue
+
+        # Gewone vroege stopper die al een pauze heeft via stap 1: ook uitsluiten
+        if is_vroege_stopper and pp2_resterende_korte_kwartieren(
+            naam=naam,
+            ws_sheet=ws_pp2,
+            pv_rows=pv_rows_pp2,
+            pauze_cols=pauze_cols_pp2,
+            lange_pauze_ontvangers=pp2_lange_pauze_ontvangers
+        ) == 0:
             continue
 
         if pp2_benodigde_korte_kwartieren(naam) > 0:
