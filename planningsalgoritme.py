@@ -3882,6 +3882,11 @@ ws_pp2.title = "PP optie 2"
 # -----------------------------
 # Helpers
 # -----------------------------
+
+def pp2_is_minderjarig(naam):
+    return "-18" in str(naam)
+
+
 def pp2_parse_kwartier_header(header):
     """
     Zet '12u', '12u15', '12u30', '12u45' om naar minuten sinds 00:00.
@@ -4987,9 +4992,6 @@ for naam in pp2_step2_minderjarigen:
 lichtpaars_fill = PatternFill(start_color="E6DAF7", end_color="E6DAF7", fill_type="solid")
 naam_leeg_fill_pp2 = PatternFill(start_color="CCE5FF", end_color="CCE5FF", fill_type="solid")
 
-
-def pp2_is_minderjarig(naam):
-    return "-18" in str(naam)
 
 
 def pp2_benodigde_korte_kwartieren(naam):
