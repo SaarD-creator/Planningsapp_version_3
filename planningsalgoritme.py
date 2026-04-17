@@ -527,11 +527,16 @@ for vp in vaste_plaatsingen:
 def student_tie_break_key(student):
     return naam_tie_break_key(student["naam"])
 
+def is_werkende_pauzevlinder(s):
+    """Geeft 1 als de student een pauzevlinder is die nog wél werkt, anders 0."""
+    if s["is_pauzevlinder"] and any(u in open_uren for u in s["uren_beschikbaar"]):
+        return 1
+    return 0
+
 studenten_sorted = sorted(
     studenten_workend,
-    key=lambda s: (s["aantal_attracties"], student_tie_break_key(s))
+    key=lambda s: (is_werkende_pauzevlinder(s), s["aantal_attracties"], student_tie_break_key(s))
 )
-
 
 # -----------------------------
 # Voorbereiden: expand naar posities per uur
