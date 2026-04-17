@@ -7674,28 +7674,62 @@ def lm5_pv_names():
 def lm5_extract_capacity_actions():
     result = []
 
+    st.write("=== DEBUG lm5_extract_capacity_actions START ===")
+
     for rij in range(2, 12):
+        raw82 = ws.cell(rij, 82).value
+        raw83 = ws.cell(rij, 83).value
+        raw84 = ws.cell(rij, 84).value
+
+        st.write(f"Rij {rij} | col82={raw82} | col83={raw83} | col84={raw84}")
+
         vals = []
-        for col in [82, 83, 84]:
-            v = ws.cell(rij, col).value
-            if v and str(v).strip():
+        for v in [raw82, raw83, raw84]:
+            if v is not None and str(v).strip() != "":
                 vals.append(str(v).strip())
 
         if not vals:
             continue
 
         if len(vals) == 1:
-            result.append({
+            action = {
                 "type": "disable",
                 "attr": vals[0],
                 "priority": rij
-            })
+            }
+            result.append(action)
+            st.write(f"  -> disable toegevoegd: {action}")
         else:
-            result.append({
+            action = {
                 "type": "merge",
                 "groep": vals,
                 "priority": rij
-            })
+            }
+            result.append(action)
+            st.write(f"  -> merge toegevoegd: {action}")
+
+    if not result:
+        st.write("GEEN acties gevonden in kolommen 82-84, fallback naar uur_samenvoegingen")
+
+        reeds_toegevoegd = set()
+
+        for uur in sorted(uur_samenvoegingen.keys()):
+            for groep in uur_samenvoegingen[uur]:
+                g = tuple(str(x).strip() for x in groep if x and str(x).strip())
+                if len(g) >= 2 and g not in reeds_toegevoegd:
+                    action = {
+                        "type": "merge",
+                        "groep": list(g),
+                        "priority": 1000 + len(result)
+                    }
+                    result.append(action)
+                    reeds_toegevoegd.add(g)
+                    st.write(f"  -> fallback merge toegevoegd vanuit uur_samenvoegingen: {action}")
+
+    st.write("=== DEBUG lm5_extract_capacity_actions EINDE ===")
+    st.write(f"Totaal aantal capacity actions: {len(result)}")
+    for item in result:
+        st.write(item)
 
     return result
 
@@ -8653,8 +8687,11 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     capacity_actions = lm5_extract_capacity_actions()
 
     st.write("=== LM5 DEBUG: capacity_actions ===")
-    for item in capacity_actions:
-        st.write(item)
+    if not capacity_actions:
+        st.write("GEEN capacity_actions gevonden")
+    else:
+        for item in capacity_actions:
+            st.write(item)
 
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
@@ -8715,16 +8752,30 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         missing_slots_by_hour=missing_slots_by_hour
     )
 
-    # STAP 5: nadien blokken aanvullen
+    # STAP 5: kettingwissels op blokken van 3/2/1
+    for _ in range(5):
+        changed = lm5_try_fill_missing_with_chain_swaps(
+            ctx=ctx,
+            released_students=released_students,
+            missing_slots_by_hour=missing_slots_by_hour,
+            start_uur=start_uur
+        )
+        if not changed:
+            break
+
+    # STAP 6: resterende gaten met blokvoorkeur 3/2/1
     lm5_assign_future_blocks(ctx, start_uur)
 
-    # STAP 6: exact 1 keer per gewerkt uur
+    # STAP 7: exact 1 keer per gewerkt uur
     lm5_force_exactly_one_assignment_per_hour(ctx, start_uur)
 
-    # STAP 7: extra's naar lege plekken
+    # STAP 8: lege attractieplekken opvullen door Extra -> attractie
     lm5_try_fill_empty_slots_from_extras(ctx, start_uur)
 
     return ctx, base_maps
+
+
+
 # ------------------------------------------------------------
 # Output schrijven
 # ------------------------------------------------------------
