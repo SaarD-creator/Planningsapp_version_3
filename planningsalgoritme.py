@@ -1,3 +1,4 @@
+# last minute afwezigen ziet er al goed uit! Alleen: als attracties samengevoegd worden, verschijnt die attractie nog niet op de planning
 # uitschakelen pauzevlinderuren werkt!
 # volgorde verdeling met pauzevlinders laatst!
 # pauzes kloppen!! 1h15 min pauze voor minderjarige lange werkers --> alleen nog niet top op korte dagen (mogelijks gefixt)
@@ -8823,10 +8824,10 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
     for row, rijlabel in attr_rows:
         attr, pos = lm5_split_display_label(rijlabel)
         bestaande_attr_pos.add((attr, pos))
-        if row > max_row:
-            max_row = row
+        max_row = max(max_row, row)
 
     dynamische_attrs = {}
+
     for uur in sorted(open_uren):
         if uur < start_uur:
             continue
@@ -8879,7 +8880,7 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
     attr_rows.sort(key=lambda x: x[0])
     base_maps["attr_rows"] = attr_rows
 
-
+                                     
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
@@ -8914,7 +8915,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         for lijn in hour_state.get("debug_actions", []):
             st.write(lijn)
 
-    # NIEUW: dynamische merge-rijen toevoegen aan attr_rows
+    # NIEUW: zorg dat nieuw samengestelde attracties ook echte rijen krijgen
     lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
@@ -8979,6 +8980,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     return ctx, base_maps
 
 
+
 # ------------------------------------------------------------
 # Output schrijven
 # ------------------------------------------------------------
@@ -8990,112 +8992,10 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
 
     uur_to_col = base_maps["uur_to_col"]
-    attr_rows = list(base_maps["attr_rows"])
+    attr_rows = base_maps["attr_rows"]
     pv_rows = base_maps["pv_rows"]
     extra_rows = base_maps["extra_rows"]
 
-    center_align = Alignment(horizontal="center", vertical="center")
-    thin_border = Border(
-        left=Side(style="thin"),
-        right=Side(style="thin"),
-        top=Side(style="thin"),
-        bottom=Side(style="thin")
-    )
-
-    # ------------------------------------------------------------
-    # NIEUW: dynamische attractierijen toevoegen voor nieuwe merges
-    # ------------------------------------------------------------
-    bestaande_labels = set(rijlabel for _row, rijlabel in attr_rows)
-    bestaande_attr_pos = set()
-
-    for _row, rijlabel in attr_rows:
-        attr, pos = lm5_split_display_label(rijlabel)
-        bestaande_attr_pos.add((attr, pos))
-
-    # Verzamel alle attracties die in de hour_states effectief voorkomen
-    dynamische_attrs = set()
-    benodigde_posities = {}
-
-    for uur in sorted(open_uren):
-        if uur < start_uur:
-            continue
-        if uur not in ctx["hour_states"]:
-            continue
-
-        hstate = ctx["hour_states"][uur]
-
-        for attr in hstate["active"]:
-            dynamische_attrs.add(attr)
-
-            max_pos = hstate["counts"].get(attr, 0)
-            if attr in hstate["second_spot_blocked"]:
-                max_pos = min(max_pos, 1)
-
-            # Zorg minstens voor 1 positie als de attractie actief is
-            max_pos = max(1, max_pos)
-            benodigde_posities[attr] = max(benodigde_posities.get(attr, 0), max_pos)
-
-        # Veiligheidsnet: ook als iets enkel in counts zit maar niet mooi in active
-        for attr, count in hstate["counts"].items():
-            if count >= 1:
-                dynamische_attrs.add(attr)
-                max_pos = count
-                if attr in hstate["second_spot_blocked"]:
-                    max_pos = min(max_pos, 1)
-                max_pos = max(1, max_pos)
-                benodigde_posities[attr] = max(benodigde_posities.get(attr, 0), max_pos)
-
-    # Voeg ontbrekende attractierijen onderaan toe
-    last_used_row = ws_plan.max_row
-
-    # Eerst gewone attracties, dan samengestelde onderaan
-    dynamische_attrs_sorted = sorted(
-        dynamische_attrs,
-        key=lambda a: (0 if " + " not in str(a) else 1, str(a).lower())
-    )
-
-    for attr in dynamische_attrs_sorted:
-        nodig = benodigde_posities.get(attr, 1)
-
-        for pos in range(1, nodig + 1):
-            if (attr, pos) in bestaande_attr_pos:
-                continue
-
-            last_used_row += 1
-
-            if nodig > 1:
-                rijlabel = f"{attr} {pos}"
-                display_name = f"{attr} {pos}"
-            else:
-                rijlabel = attr
-                display_name = attr
-
-            ws_plan.cell(last_used_row, 1).value = display_name
-            ws_plan.cell(last_used_row, 1).font = Font(bold=True)
-            ws_plan.cell(last_used_row, 1).fill = white_fill
-            ws_plan.cell(last_used_row, 1).alignment = center_align
-            ws_plan.cell(last_used_row, 1).border = thin_border
-
-            # Basis-opmaak ook meteen op alle uurkolommen
-            for uur in sorted(open_uren):
-                if uur not in uur_to_col:
-                    continue
-                col = uur_to_col[uur]
-                cell = ws_plan.cell(last_used_row, col)
-                cell.alignment = center_align
-                cell.border = thin_border
-                cell.fill = white_fill
-
-            attr_rows.append((last_used_row, rijlabel))
-            bestaande_labels.add(rijlabel)
-            bestaande_attr_pos.add((attr, pos))
-
-    # Handig: hou attr_rows mooi op volgorde van rij
-    attr_rows.sort(key=lambda x: x[0])
-
-    # ------------------------------------------------------------
-    # Gewone output schrijven
-    # ------------------------------------------------------------
     for uur in sorted(open_uren):
         if uur < start_uur:
             continue
@@ -9112,7 +9012,6 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 
             allowed = hstate["counts"].get(attr, 0)
             inactive = False
-
             if attr in hstate["red_spots"]:
                 inactive = True
             if attr in hstate["second_spot_blocked"] and pos == 2:
@@ -9130,11 +9029,7 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             if inactive:
                 cell.fill = gray_fill
             elif naam and naam in student_kleuren:
-                cell.fill = PatternFill(
-                    start_color=student_kleuren[naam],
-                    end_color=student_kleuren[naam],
-                    fill_type="solid"
-                )
+                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
             else:
                 cell.fill = white_fill
 
@@ -9150,11 +9045,7 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             cell.border = thin_border
 
             if naam and naam in student_kleuren:
-                cell.fill = PatternFill(
-                    start_color=student_kleuren[naam],
-                    end_color=student_kleuren[naam],
-                    fill_type="solid"
-                )
+                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
             else:
                 cell.fill = white_fill
 
@@ -9169,91 +9060,118 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             cell.border = thin_border
 
             if naam and naam in student_kleuren:
-                cell.fill = PatternFill(
-                    start_color=student_kleuren[naam],
-                    end_color=student_kleuren[naam],
-                    fill_type="solid"
-                )
+                cell.fill = PatternFill(start_color=student_kleuren[naam], end_color=student_kleuren[naam], fill_type="solid")
             else:
                 cell.fill = white_fill
 
     # Info/check-blad
     if "Last-minute info" in wb_lm.sheetnames:
-        del wb_lm["Last-minute info"]
+        wb_lm.remove(wb_lm["Last-minute info"])
     ws_info = wb_lm.create_sheet("Last-minute info")
 
-    ws_info["A1"] = "Startuur"
-    ws_info["B1"] = start_uur
+    ws_info["A1"] = "Afwezigen"
+    for i, naam in enumerate(absentees, start=2):
+        ws_info.cell(i, 1).value = naam
 
-    ws_info["A3"] = "Afwezigen"
-    for i, naam in enumerate(absentees, start=4):
-        ws_info.cell(i, 1).value = str(naam).strip()
+    ws_info["C1"] = "Herplanning vanaf"
+    ws_info["C2"] = f"{start_uur}:00"
 
-    out = BytesIO()
-    wb_lm.save(out)
-    out.seek(0)
-    return out.getvalue()
-# ============================================================
-# LAST-MINUTE PLANNER UI
-# ============================================================
-st.subheader("Last-minute afwezigen")
+    ws_info["E1"] = "PV-vervangers"
+    r = 2
+    for pvnaam, vervanger in ctx["pv_replacements"].items():
+        ws_info.cell(r, 5).value = pvnaam
+        ws_info.cell(r, 6).value = vervanger
+        r += 1
 
-alle_student_namen_lm5 = sorted([str(s["naam"]).strip() for s in studenten if s.get("naam")])
+    ws_info["H1"] = "Controle"
+    ws_info["H2"] = "Student"
+    ws_info["I2"] = "Uur"
+    ws_info["J2"] = "Aantal keer"
 
-gekozen_afwezigen_lm5 = st.multiselect(
-    "Kies 1 tot 5 afwezige studenten",
-    options=alle_student_namen_lm5,
-    max_selections=5,
-    key="lm5_absentees"
-)
+    rr = 3
+    for uur in sorted(open_uren):
+        if uur < start_uur or uur not in uur_to_col:
+            continue
 
-beschikbare_starturen_lm5 = sorted(open_uren)
+        col = uur_to_col[uur]
+        count_per_student = Counter()
 
-start_uur_lm5 = st.selectbox(
-    "Vanaf welk uur moet de nieuwe planning starten?",
-    options=beschikbare_starturen_lm5,
-    format_func=lambda u: f"{u}:00",
-    key="lm5_start_hour"
-)
+        for row, _label in attr_rows + pv_rows + extra_rows:
+            naam = ws_plan.cell(row, col).value
+            if naam and str(naam).strip():
+                count_per_student[str(naam).strip()] += 1
 
-if st.button("Maak last-minute planning", key="lm5_button"):
-    try:
-        if len(gekozen_afwezigen_lm5) == 0:
-            st.error("Kies minstens 1 afwezige student.")
-            st.stop()
+        present_students = lm5_present_students_on_hour(base_maps, uur, ctx["abs_set"])
+        for naam in present_students:
+            ws_info.cell(rr, 8).value = naam
+            ws_info.cell(rr, 9).value = uur
+            ws_info.cell(rr, 10).value = count_per_student.get(naam, 0)
+            rr += 1
 
-        if len(gekozen_afwezigen_lm5) > 5:
-            st.error("Kies maximaal 5 afwezige studenten.")
-            st.stop()
+    return wb_lm
 
-        # Gebruik exact dezelfde geüploade Excel als basis
-        base_bytes_lm5 = file_bytes
+# ------------------------------------------------------------
+# UI
+# ------------------------------------------------------------
+st.markdown("### Last-minute afwezigen")
 
-        # Bouw de volledige last-minute context op
-        ctx_lm5, base_maps_lm5_build = lm5_build_lastminute_context(
-            base_bytes=base_bytes_lm5,
-            absentees=gekozen_afwezigen_lm5,
-            start_uur=start_uur_lm5
-        )
+base_bytes_lm5 = output.getvalue()
+base_maps_lm5 = lm5_extract_base_maps(base_bytes_lm5)
+werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
 
-        # Schrijf meteen het nieuwe Excelbestand weg als bytes
-        lm5_file_bytes = lm5_write_lastminute_workbook(
-            base_bytes=base_bytes_lm5,
-            ctx=ctx_lm5,
-            base_maps=base_maps_lm5_build,
-            start_uur=start_uur_lm5,
-            absentees=gekozen_afwezigen_lm5
-        )
+with st.expander("Last-minute afwezigen", expanded=False):
+    gekozen_afwezigen_lm5 = st.multiselect(
+        "Kies 1 tot 5 afwezige studenten",
+        options=werkende_studenten_vandaag_lm5,
+        default=[],
+        key="lm5_absentees"
+    )
 
-        st.success("Last-minute planning gemaakt.")
+    start_uur_lm5 = st.selectbox(
+        "Vanaf welk uur moet de nieuwe planning starten?",
+        options=sorted(open_uren),
+        format_func=lambda u: f"{u}:00",
+        key="lm5_start_hour"
+    )
 
-        st.download_button(
-            "Download last-minute planning",
-            data=lm5_file_bytes,
-            file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="lm5_download_button"
-        )
+    if st.button("Maak last-minute planning", key="lm5_make_button"):
+        if not gekozen_afwezigen_lm5:
+            st.warning("Kies eerst minstens 1 afwezige student.")
+        elif len(gekozen_afwezigen_lm5) > 5:
+            st.warning("Je mag maximaal 5 studenten kiezen.")
+        else:
+            try:
+                ctx_lm5, base_maps_lm5_build = lm5_build_lastminute_context(
+                    base_bytes=base_bytes_lm5,
+                    absentees=gekozen_afwezigen_lm5,
+                    start_uur=start_uur_lm5
+                )
 
-    except Exception as e:
-        st.error(f"Fout in last-minute planner: {e}")
+                lm5_result = lm5_write_lastminute_workbook(
+                    base_bytes=base_bytes_lm5,
+                    ctx=ctx_lm5,
+                    base_maps=base_maps_lm5_build,
+                    start_uur=start_uur_lm5,
+                    absentees=gekozen_afwezigen_lm5
+                )
+
+                # Robuust: werkt zowel als de writer een Workbook teruggeeft
+                # als wanneer hij al bytes teruggeeft
+                if isinstance(lm5_result, (bytes, bytearray)):
+                    lm5_file_bytes = bytes(lm5_result)
+                else:
+                    lm5_output = BytesIO()
+                    lm5_result.save(lm5_output)
+                    lm5_output.seek(0)
+                    lm5_file_bytes = lm5_output.getvalue()
+
+                st.success("Last-minute planning gemaakt.")
+                st.download_button(
+                    "Download last-minute planning",
+                    data=lm5_file_bytes,
+                    file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                    key="lm5_download_button"
+                )
+
+            except Exception as e:
+                st.error(f"Fout in last-minute planner: {e}")
