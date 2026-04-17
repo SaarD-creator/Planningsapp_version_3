@@ -1,3 +1,4 @@
+# uitschakelen pauzevlinderuren werkt!
 # volgorde verdeling met pauzevlinders laatst!
 # pauzes kloppen!! 1h15 min pauze voor minderjarige lange werkers --> alleen nog niet top op korte dagen (mogelijks gefixt)
 # nieuw werkblad analyse
@@ -7507,7 +7508,6 @@ st.download_button(
 
 
 #DEELLL 8 OFZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
-#DEELLL 8 OFZOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOOO
 # ============================================================
 # LAST-MINUTE AFWEZIGEN V5
 # VOLLEDIGE VERVANGING van alle vorige last-minute patches
@@ -7671,23 +7671,20 @@ def lm5_present_students_on_hour(base_maps, uur, absentees_set):
 def lm5_pv_names():
     return [str(pv["naam"]).strip() for pv in selected]
 
-def lm5_extract_action_priority():
-    """
-    Lees tabel CD2:CE11 (kolommen 82-83, rijen 2-11).
-    Elke rij bevat ofwel:
-    - 1 attractie (CD gevuld, CE leeg) → uitschakelen: ('disable', attr)
-    - 2 attracties (CD én CE gevuld)   → samenvoegen:  ('merge', [attr1, attr2])
-    Rij 2 heeft de hoogste prioriteit, rij 11 de laagste.
-    """
-    actions = []
-    for rij in range(2, 12):  # rijen 2 t/m 11
-        val_cd = ws.cell(rij, 82).value  # kolom CD
-        val_ce = ws.cell(rij, 83).value  # kolom CE
-        if val_cd and val_ce:
-            actions.append(('merge', [str(val_cd).strip(), str(val_ce).strip()]))
-        elif val_cd:
-            actions.append(('disable', str(val_cd).strip()))
-    return actions
+def lm5_extract_combined_priority():
+    result = []
+    for rij in range(2, 12):
+        val1 = ws.cell(rij, 82).value
+        val2 = ws.cell(rij, 83).value
+        if not val1:
+            continue
+        a1 = str(val1).strip()
+        if val2:
+            a2 = str(val2).strip()
+            result.append({"type": "merge", "groep": [a1, a2]})
+        else:
+            result.append({"type": "disable", "attr": a1})
+    return result
 
 def lm5_all_single_attrs():
     return [a for a in attracties_te_plannen if " + " not in str(a)]
@@ -7773,15 +7770,13 @@ def lm5_present_attraction_students_on_hour(ctx, uur):
 # ------------------------------------------------------------
 # Uurstaat herberekenen
 # ------------------------------------------------------------
-def lm5_rebuild_hour_state(uur, available_attraction_students, action_priority):
+def lm5_rebuild_hour_state(uur, available_attraction_students, combined_priority):
     counts = {}
     active = set()
 
-    # start met losse attracties die open zijn
     for attr in attracties_te_plannen:
         if " + " in str(attr):
             continue
-
         if uur in dichte_uren_per_attr.get(normalize_attr(attr), set()):
             counts[attr] = 0
         else:
@@ -7791,7 +7786,6 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, action_priority):
             else:
                 counts[attr] = 0
 
-    # originele samenvoegingen van dit uur toepassen
     groepen = []
     for groep in uur_samenvoegingen.get(uur, []):
         g = [str(x).strip() for x in groep]
@@ -7807,35 +7801,26 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, action_priority):
     def min_spots():
         return sum(1 for a in active if counts.get(a, 0) >= 1)
 
-    # acties uitvoeren in volgorde van prioriteit (CD2:CE11)
-    # een actie wordt overgeslagen als de betrokken attractie(s) al uitgeschakeld of samengevoegd zijn
-    for action in action_priority:
+    for entry in combined_priority:
         if min_spots() <= available_attraction_students:
             break
-
-        if action[0] == 'merge':
-            g = [str(x).strip() for x in action[1]]
+        if entry["type"] == "merge":
+            g = entry["groep"]
             sameng = " + ".join(g)
-            # Sla over als een van de onderdelen al niet meer actief is (al samengevoegd of uitgeschakeld)
-            if all(counts.get(x, 0) >= 1 for x in g):
+            if all(a in active for a in g):
                 for onderdeel in g:
                     counts[onderdeel] = 0
-                    if onderdeel in active:
-                        active.remove(onderdeel)
+                    active.remove(onderdeel)
                 counts[sameng] = 1
                 active.add(sameng)
                 if g not in groepen:
                     groepen.append(g)
-
-        elif action[0] == 'disable':
-            attr = str(action[1]).strip()
-            # Sla over als de attractie al uitgeschakeld of samengevoegd is
-            if counts.get(attr, 0) >= 1:
+        elif entry["type"] == "disable":
+            attr = entry["attr"]
+            if attr in active:
                 counts[attr] = 0
-                if attr in active:
-                    active.remove(attr)
+                active.remove(attr)
 
-    # second spots opnieuw berekenen zoals in hoofdschema
     second_spot_blocked_lm = set()
     base_spots = sum(1 for a in active if counts.get(a, 0) >= 1)
     extra_spots = available_attraction_students - base_spots
@@ -7849,7 +7834,6 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, action_priority):
                 counts[attr] = 1
                 second_spot_blocked_lm.add(attr)
 
-    # red spots opnieuw opbouwen
     red_spots_lm = set()
     samengestelde_actief = set(" + ".join(g) for g in groepen)
     losse_in_samenvoeging = set(a for g in groepen for a in g)
@@ -7872,6 +7856,8 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, action_priority):
         "second_spot_blocked": second_spot_blocked_lm,
         "groepen": groepen
     }
+
+
 
 def lm5_build_target_slots_for_hour(attr_rows, hour_state):
     slots = []
@@ -8598,7 +8584,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     ctx = lm5_init_context(base_maps, absentees, start_uur)
     lm5_seed_hours_before_start(ctx, start_uur)
 
-    action_priority = lm5_extract_action_priority()
+    combined_priority = lm5_extract_combined_priority()
 
     # STAP 1: per uur echte capaciteit herberekenen
     for uur in sorted(open_uren):
@@ -8610,7 +8596,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         hour_state = lm5_rebuild_hour_state(
             uur=uur,
             available_attraction_students=len(present_attraction_students),
-            action_priority=action_priority
+            combined_priority=combined_priority
         )
         ctx["hour_states"][uur] = hour_state
 
@@ -8863,6 +8849,3 @@ with st.expander("Last-minute afwezigen", expanded=False):
 
             except Exception as e:
                 st.error(f"Fout in last-minute planner: {e}")
-
-
-
