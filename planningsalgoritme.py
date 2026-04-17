@@ -6572,7 +6572,21 @@ for col in pauze_cols_pp2:
                 if toegewezen_naam in pp2_endworkers_without_long_break:
                     pp2_endworkers_without_long_break.remove(toegewezen_naam)
 
+# -----------------------------
+# BN15 vinkje: tekst uit BO15:BO30 tonen op PP optie 2
+# Drie rijen onder de laatste rij van de pauzeplanning
+# -----------------------------
+bn15_vinkje_pp2 = ws.cell(15, 66).value  # BN15 in Input
 
+if bn15_vinkje_pp2 in [1, True, "WAAR", "X"]:
+    start_rij_pp2 = ws_pp2.max_row + 3
+
+    for i, input_rij in enumerate(range(15, 31)):
+        waarde = ws.cell(input_rij, 67).value  # BO kolom = 67
+
+        if waarde:
+            cel = ws_pp2.cell(row=start_rij_pp2 + i, column=1, value=waarde)
+            cel.alignment = Alignment(horizontal="left", vertical="center")
 
 
 #FEEDBACKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKK
