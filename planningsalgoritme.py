@@ -8724,6 +8724,78 @@ def lm5_try_fill_empty_slots_from_extras(ctx, start_uur):
 # ------------------------------------------------------------
 # Complete build
 # ------------------------------------------------------------
+def lm5_build_target_slots_for_hour(attr_rows, hour_state):
+    slots = []
+    inactive_rows = set()
+
+    for _row, rijlabel in attr_rows:
+        attr, pos = lm5_split_display_label(rijlabel)
+        allowed = hour_state["counts"].get(attr, 0)
+
+        if attr in hour_state["red_spots"]:
+            allowed = 0
+
+        if attr in hour_state["second_spot_blocked"] and pos == 2:
+            allowed = 0
+
+        if allowed >= pos:
+            slots.append((attr, pos, rijlabel))
+        else:
+            inactive_rows.add(rijlabel)
+
+    return slots, inactive_rows
+
+
+# ------------------------------------------------------------
+# Context
+# ------------------------------------------------------------
+def lm5_init_context(base_maps, absentees, start_uur):
+    abs_set = {str(x).strip() for x in absentees}
+    absent_pv = [n for n in abs_set if n in set(lm5_pv_names())]
+
+    pv_replacements = lm5_pick_pv_replacements(
+        absent_pv_names=absent_pv,
+        start_uur=start_uur,
+        base_maps=base_maps,
+        absentees_set=abs_set
+    )
+
+    student_states = {}
+    for s in studenten:
+        student_states[str(s["naam"]).strip()] = lm5_copy_student_state(s)
+
+    return {
+        "base_maps": base_maps,
+        "abs_set": abs_set,
+        "absent_pv": absent_pv,
+        "pv_replacements": pv_replacements,
+        "student_states": student_states,
+        "assigned_map": defaultdict(list),
+        "extra_assignments": defaultdict(list),
+        "per_hour_assigned_counts": {uur: defaultdict(int) for uur in open_uren},
+        "hour_states": {},
+        "changes_count": defaultdict(int),
+        "prev_attr": {},
+    }
+
+
+def lm5_seed_hours_before_start(ctx, start_uur):
+    for (naam, uur), attr in ctx["base_maps"]["student_hour_attr"].items():
+        if uur >= start_uur:
+            continue
+        if naam in ctx["abs_set"]:
+            continue
+
+        ctx["assigned_map"][(uur, attr)].append(naam)
+        ctx["per_hour_assigned_counts"][uur][attr] += 1
+        ctx["student_states"][naam]["assigned_hours"].append(uur)
+        ctx["student_states"][naam]["assigned_attracties"].add(attr)
+        ctx["prev_attr"][naam] = attr
+
+
+# ------------------------------------------------------------
+# Complete build
+# ------------------------------------------------------------
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
