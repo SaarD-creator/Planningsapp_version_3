@@ -2205,6 +2205,37 @@ for pv, pv_row in pv_rows:
             ws_pauze.cell(pv_row, col).fill = naam_leeg_fill
 
 
+# -----------------------------
+# Afgekapte uren laatste PV markeren als open spot in pauzeplanning
+# -----------------------------
+afgeknipt_fill = PatternFill(start_color="D9D9D9", end_color="D9D9D9", fill_type="solid")  # lichtgrijs
+
+if afgekapte_pv_uren and selected:
+    laatste_pv = selected[-1]
+    # Zoek de naamrij van de laatste PV in ws_pauze
+    laatste_pv_row = None
+    for pv, pv_row in pv_rows:
+        if pv["naam"] == laatste_pv["naam"]:
+            laatste_pv_row = pv_row
+            break
+
+    if laatste_pv_row is not None:
+        for col in pauze_cols:
+            header = ws_pauze.cell(1, col).value
+            col_uur = parse_header_uur(header)
+            if col_uur in afgekapte_pv_uren:
+                # Naamrij: leegmaken en grijs kleuren
+                ws_pauze.cell(laatste_pv_row, col).value = None
+                ws_pauze.cell(laatste_pv_row, col).fill = afgeknipt_fill
+                ws_pauze.cell(laatste_pv_row, col).alignment = center_align
+                ws_pauze.cell(laatste_pv_row, col).border = thin_border
+                # Rij erboven (attractierij): ook leegmaken en grijs
+                ws_pauze.cell(laatste_pv_row - 1, col).value = None
+                ws_pauze.cell(laatste_pv_row - 1, col).fill = afgeknipt_fill
+                ws_pauze.cell(laatste_pv_row - 1, col).alignment = center_align
+                ws_pauze.cell(laatste_pv_row - 1, col).border = thin_border
+
+
 
 
 
