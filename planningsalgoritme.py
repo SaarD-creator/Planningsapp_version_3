@@ -7824,6 +7824,9 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
     active = set()
     debug_actions = []
 
+    # -----------------------------
+    # Basis actieve attracties opbouwen
+    # -----------------------------
     for attr in attracties_te_plannen:
         if " + " in str(attr):
             continue
@@ -7837,6 +7840,9 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
             else:
                 counts[attr] = 0
 
+    # -----------------------------
+    # Vaste samenvoegingen van dit uur toepassen
+    # -----------------------------
     groepen = []
     for groep in uur_samenvoegingen.get(uur, []):
         g = [str(x).strip() for x in groep if x and str(x).strip()]
@@ -7856,24 +7862,56 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
     def min_spots():
         return sum(1 for a in active if counts.get(a, 0) >= 1)
 
+    def groep_is_al_actief(g):
+        sameng = " + ".join(g)
+        return sameng in active and all(counts.get(x, 0) == 0 for x in g)
+
+    def merge_zou_reductie_geven(g):
+        # Alleen nuttig als alle losse onderdelen actief zijn
+        # Dan levert merge exact 1 of meer plekken winst op:
+        # bv 2 losse -> 1 samengestelde => -1 plek
+        return all(a in active for a in g)
+
+    def disable_zou_reductie_geven(attr):
+        return attr in active and counts.get(attr, 0) >= 1
+
     debug_actions.append(
         f"Uur {uur}: START | available={available_attraction_students} | min_spots={min_spots()} | active_start={sorted(active)}"
     )
 
-    for entry in capacity_actions:
-        huidige_min_spots = min_spots()
+    # -----------------------------
+    # Slimme capaciteitsacties:
+    # blijf doorzoeken tot tekort weg is of geen echte reductie meer mogelijk is
+    # -----------------------------
+    changed = True
+    while min_spots() > available_attraction_students and changed:
+        changed = False
 
-        if huidige_min_spots <= available_attraction_students:
-            debug_actions.append(
-                f"Uur {uur}: STOP acties | min_spots={huidige_min_spots} <= available={available_attraction_students}"
-            )
-            break
+        for entry in capacity_actions:
+            before = min_spots()
 
-        if entry["type"] == "merge":
-            g = [str(x).strip() for x in entry["groep"] if x and str(x).strip()]
-            sameng = " + ".join(g)
+            if before <= available_attraction_students:
+                debug_actions.append(
+                    f"Uur {uur}: STOP acties | min_spots={before} <= available={available_attraction_students}"
+                )
+                break
 
-            if all(a in active for a in g):
+            if entry["type"] == "merge":
+                g = [str(x).strip() for x in entry["groep"] if x and str(x).strip()]
+                sameng = " + ".join(g)
+
+                if groep_is_al_actief(g):
+                    debug_actions.append(
+                        f"Uur {uur}: MERGE SKIP | groep={g} | reden=al_actief"
+                    )
+                    continue
+
+                if not merge_zou_reductie_geven(g):
+                    debug_actions.append(
+                        f"Uur {uur}: MERGE SKIP | groep={g} | reden=geen_reductie_mogelijk | current_active={sorted(active)}"
+                    )
+                    continue
+
                 for onderdeel in g:
                     counts[onderdeel] = 0
                     if onderdeel in active:
@@ -7881,31 +7919,55 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
 
                 counts[sameng] = 1
                 active.add(sameng)
-                groepen.append(g)
 
-                debug_actions.append(
-                    f"Uur {uur}: MERGE OK | groep={g} | new_active={sorted(active)} | min_spots={min_spots()}"
-                )
-            else:
-                debug_actions.append(
-                    f"Uur {uur}: MERGE FAIL | groep={g} | needed_active={g} | current_active={sorted(active)}"
-                )
+                if g not in groepen:
+                    groepen.append(g)
 
-        elif entry["type"] == "disable":
-            attr = str(entry["attr"]).strip()
+                after = min_spots()
 
-            if attr in active:
+                if after < before:
+                    changed = True
+                    debug_actions.append(
+                        f"Uur {uur}: MERGE OK | groep={g} | min_spots {before}->{after} | new_active={sorted(active)}"
+                    )
+                else:
+                    debug_actions.append(
+                        f"Uur {uur}: MERGE GEEN EFFECT | groep={g} | min_spots bleef {after}"
+                    )
+
+            elif entry["type"] == "disable":
+                attr = str(entry["attr"]).strip()
+
+                if not disable_zou_reductie_geven(attr):
+                    debug_actions.append(
+                        f"Uur {uur}: DISABLE SKIP | attr={attr} | reden=niet_actief_of_geen_reductie"
+                    )
+                    continue
+
                 counts[attr] = 0
-                active.remove(attr)
+                if attr in active:
+                    active.remove(attr)
 
-                debug_actions.append(
-                    f"Uur {uur}: DISABLE OK | attr={attr} | new_active={sorted(active)} | min_spots={min_spots()}"
-                )
-            else:
-                debug_actions.append(
-                    f"Uur {uur}: DISABLE FAIL | attr={attr} | current_active={sorted(active)}"
-                )
+                after = min_spots()
 
+                if after < before:
+                    changed = True
+                    debug_actions.append(
+                        f"Uur {uur}: DISABLE OK | attr={attr} | min_spots {before}->{after} | new_active={sorted(active)}"
+                    )
+                else:
+                    debug_actions.append(
+                        f"Uur {uur}: DISABLE GEEN EFFECT | attr={attr} | min_spots bleef {after}"
+                    )
+
+        if min_spots() > available_attraction_students and not changed:
+            debug_actions.append(
+                f"Uur {uur}: GEEN VERDERE REDUCTIE MOGELIJK | min_spots={min_spots()} | available={available_attraction_students}"
+            )
+
+    # -----------------------------
+    # Tweede plaatsen pas nadien
+    # -----------------------------
     second_spot_blocked_lm = set()
     base_spots = min_spots()
     extra_spots = available_attraction_students - base_spots
@@ -7929,6 +7991,9 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
                     f"Uur {uur}: 2DE PLEK DICHT | attr={attr}"
                 )
 
+    # -----------------------------
+    # Red spots heropbouwen
+    # -----------------------------
     red_spots_lm = set()
 
     samengestelde_actief = set(" + ".join(g) for g in groepen)
@@ -7958,26 +8023,6 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
         "second_spot_blocked": second_spot_blocked_lm,
         "debug_actions": debug_actions,
     }
-
-def lm5_build_target_slots_for_hour(attr_rows, hour_state):
-    slots = []
-    inactive_rows = set()
-
-    for _row, rijlabel in attr_rows:
-        attr, pos = lm5_split_display_label(rijlabel)
-        allowed = hour_state["counts"].get(attr, 0)
-
-        if attr in hour_state["red_spots"]:
-            allowed = 0
-        if attr in hour_state["second_spot_blocked"] and pos == 2:
-            allowed = 0
-
-        if allowed >= pos:
-            slots.append((attr, pos, rijlabel))
-        else:
-            inactive_rows.add(rijlabel)
-
-    return slots, inactive_rows
 
 # ------------------------------------------------------------
 # Context
