@@ -8813,6 +8813,73 @@ def lm5_seed_hours_before_start(ctx, start_uur):
 # ------------------------------------------------------------
 # Complete build
 # ------------------------------------------------------------
+
+def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
+    attr_rows = list(base_maps["attr_rows"])
+
+    bestaande_attr_pos = set()
+    max_row = 0
+
+    for row, rijlabel in attr_rows:
+        attr, pos = lm5_split_display_label(rijlabel)
+        bestaande_attr_pos.add((attr, pos))
+        if row > max_row:
+            max_row = row
+
+    dynamische_attrs = {}
+    for uur in sorted(open_uren):
+        if uur < start_uur:
+            continue
+        if uur not in ctx["hour_states"]:
+            continue
+
+        hstate = ctx["hour_states"][uur]
+
+        for attr in hstate["active"]:
+            if " + " not in str(attr):
+                continue
+
+            max_pos = hstate["counts"].get(attr, 0)
+            if attr in hstate["second_spot_blocked"]:
+                max_pos = min(max_pos, 1)
+            max_pos = max(1, max_pos)
+
+            dynamische_attrs[attr] = max(dynamische_attrs.get(attr, 0), max_pos)
+
+        for attr, count in hstate["counts"].items():
+            if " + " not in str(attr):
+                continue
+            if count < 1:
+                continue
+
+            max_pos = count
+            if attr in hstate["second_spot_blocked"]:
+                max_pos = min(max_pos, 1)
+            max_pos = max(1, max_pos)
+
+            dynamische_attrs[attr] = max(dynamische_attrs.get(attr, 0), max_pos)
+
+    for attr in sorted(dynamische_attrs.keys(), key=lambda x: str(x).lower()):
+        nodig = dynamische_attrs[attr]
+
+        for pos in range(1, nodig + 1):
+            if (attr, pos) in bestaande_attr_pos:
+                continue
+
+            max_row += 1
+
+            if nodig > 1:
+                rijlabel = f"{attr} {pos}"
+            else:
+                rijlabel = attr
+
+            attr_rows.append((max_row, rijlabel))
+            bestaande_attr_pos.add((attr, pos))
+
+    attr_rows.sort(key=lambda x: x[0])
+    base_maps["attr_rows"] = attr_rows
+
+
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
@@ -8846,6 +8913,9 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         st.write(f"present_attraction_students ({len(present_attraction_students)}): {sorted(present_attraction_students)}")
         for lijn in hour_state.get("debug_actions", []):
             st.write(lijn)
+
+    # NIEUW: dynamische merge-rijen toevoegen aan attr_rows
+    lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
     for uur in sorted(open_uren):
@@ -8907,7 +8977,6 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     lm5_try_fill_empty_slots_from_extras(ctx, start_uur)
 
     return ctx, base_maps
-
 
 
 # ------------------------------------------------------------
@@ -9124,62 +9193,67 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     wb_lm.save(out)
     out.seek(0)
     return out.getvalue()
-# ------------------------------------------------------------
-# UI
-# ------------------------------------------------------------
-st.markdown("### Last-minute afwezigen")
+# ============================================================
+# LAST-MINUTE PLANNER UI
+# ============================================================
+st.subheader("Last-minute afwezigen")
 
-base_bytes_lm5 = output.getvalue()
-base_maps_lm5 = lm5_extract_base_maps(base_bytes_lm5)
-werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
+alle_student_namen_lm5 = sorted([str(s["naam"]).strip() for s in studenten if s.get("naam")])
 
-with st.expander("Last-minute afwezigen", expanded=False):
-    gekozen_afwezigen_lm5 = st.multiselect(
-        "Kies 1 tot 5 afwezige studenten",
-        options=werkende_studenten_vandaag_lm5,
-        default=[],
-        key="lm5_absentees"
-    )
+gekozen_afwezigen_lm5 = st.multiselect(
+    "Kies 1 tot 5 afwezige studenten",
+    options=alle_student_namen_lm5,
+    max_selections=5,
+    key="lm5_absentees"
+)
 
-    start_uur_lm5 = st.selectbox(
-        "Vanaf welk uur moet de nieuwe planning starten?",
-        options=sorted(open_uren),
-        format_func=lambda u: f"{u}:00",
-        key="lm5_start_hour"
-    )
+beschikbare_starturen_lm5 = sorted(open_uren)
 
-    if st.button("Maak last-minute planning", key="lm5_make_button"):
-        if not gekozen_afwezigen_lm5:
-            st.warning("Kies eerst minstens 1 afwezige student.")
-        elif len(gekozen_afwezigen_lm5) > 5:
-            st.warning("Je mag maximaal 5 studenten kiezen.")
-        else:
-            try:
-                ctx_lm5, base_maps_lm5_build = lm5_build_lastminute_context(
-                    base_bytes=base_bytes_lm5,
-                    absentees=gekozen_afwezigen_lm5,
-                    start_uur=start_uur_lm5
-                )
+start_uur_lm5 = st.selectbox(
+    "Vanaf welk uur moet de nieuwe planning starten?",
+    options=beschikbare_starturen_lm5,
+    format_func=lambda u: f"{u}:00",
+    key="lm5_start_hour"
+)
 
-                wb_lastminute_lm5 = lm5_write_lastminute_workbook(
-                    base_bytes=base_bytes_lm5,
-                    ctx=ctx_lm5,
-                    base_maps=base_maps_lm5_build,
-                    start_uur=start_uur_lm5,
-                    absentees=gekozen_afwezigen_lm5
-                )
+if st.button("Maak last-minute planning", key="lm5_button"):
+    try:
+        if len(gekozen_afwezigen_lm5) == 0:
+            st.error("Kies minstens 1 afwezige student.")
+            st.stop()
 
-                lm5_output = BytesIO()
-                wb_lastminute_lm5.save(lm5_output)
-                lm5_output.seek(0)
+        if len(gekozen_afwezigen_lm5) > 5:
+            st.error("Kies maximaal 5 afwezige studenten.")
+            st.stop()
 
-                st.success("Last-minute planning gemaakt.")
-                st.download_button(
-                    "Download last-minute planning",
-                    data=lm5_output.getvalue(),
-                    file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    key="lm5_download_button"
-                )
+        # Gebruik exact dezelfde geüploade Excel als basis
+        base_bytes_lm5 = file_bytes
 
-            except Exception as e:
-                st.error(f"Fout in last-minute planner: {e}")
+        # Bouw de volledige last-minute context op
+        ctx_lm5, base_maps_lm5_build = lm5_build_lastminute_context(
+            base_bytes=base_bytes_lm5,
+            absentees=gekozen_afwezigen_lm5,
+            start_uur=start_uur_lm5
+        )
+
+        # Schrijf meteen het nieuwe Excelbestand weg als bytes
+        lm5_file_bytes = lm5_write_lastminute_workbook(
+            base_bytes=base_bytes_lm5,
+            ctx=ctx_lm5,
+            base_maps=base_maps_lm5_build,
+            start_uur=start_uur_lm5,
+            absentees=gekozen_afwezigen_lm5
+        )
+
+        st.success("Last-minute planning gemaakt.")
+
+        st.download_button(
+            "Download last-minute planning",
+            data=lm5_file_bytes,
+            file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="lm5_download_button"
+        )
+
+    except Exception as e:
+        st.error(f"Fout in last-minute planner: {e}")
