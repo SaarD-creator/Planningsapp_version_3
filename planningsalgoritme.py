@@ -1,4 +1,4 @@
-# last minute afwezigen ziet er al goed uit! Nieuwe wisselplanning en pauzeplanning werken nog niet
+# last minute afwezigen ziet er al goed uit! Enkel probleem met pauzes pauzevlinders +vervangpauzevlinders
 # uitschakelen pauzevlinderuren werkt!
 # volgorde verdeling met pauzevlinders laatst!
 # pauzes kloppen!! 1h15 min pauze voor minderjarige lange werkers --> alleen nog niet top op korte dagen (mogelijks gefixt)
@@ -2441,7 +2441,7 @@ def plaats_student(student, harde_mode=False):
             if not attr1 or not attr2:
                 continue
             for (pv, pv_row, _) in slot_order:
-                if not pv_kan_attr(pv, attr1) and not is_student_extra(naam) and not is_pauzevlinder(naam):
+                if not pv_kan_attr(pv, attr1) and not is_student_extra(naam):
                     continue
                 cel1 = ws_pauze.cell(pv_row, col1)
                 cel2 = ws_pauze.cell(pv_row, col2)
@@ -3085,7 +3085,7 @@ def _place_short_pause_for(naam):
                 continue
             if ws_pauze.cell(pv_row, col).value not in [None, ""]:
                 continue
-            if not pv_kan_attr(pv, attr) and not is_student_extra(naam) and not is_pauzevlinder(naam):
+            if not pv_kan_attr(pv, attr) and not is_student_extra(naam):
                 continue
             rows.append((pv, pv_row))
         if not rows:
@@ -3140,7 +3140,7 @@ def _place_short_pause_for(naam):
                 continue
             if ws_pauze.cell(pv_row, col).value not in [None, ""]:
                 continue
-            if not pv_kan_attr(pv, attr) and not is_student_extra(naam) and not is_pauzevlinder(naam):
+            if not pv_kan_attr(pv, attr) and not is_student_extra(naam):
                 continue
             pairs.append((pv, pv_row, col))
     if not pairs:
@@ -3982,8 +3982,10 @@ def maak_pp2_sheets(wb_arg, am_arg):
         return rows
     
     def pp2_get_student_work_hours(naam):
-        """
+    """
         Leest echte werkuren uit het werkblad Planning.
+        Voor pauzevlinders: voeg ook required_pauze_hours toe,
+        want zij zijn actief tijdens die uren maar staan niet in ws_planning.
         """
         uren = set()
         for col in range(2, ws_planning.max_column + 1):
@@ -3995,7 +3997,16 @@ def maak_pp2_sheets(wb_arg, am_arg):
                 if ws_planning.cell(row, col).value == naam:
                     uren.add(uur)
                     break
+        # Pauzevlinders verschijnen niet in ws_planning tijdens pauzevlinderuren,
+        # maar zijn dan wél actief. Voeg die uren alsnog toe zodat de pauzelogica
+        # geldige slots voor hen kan vinden.
+        s = next((x for x in studenten if x["naam"] == naam), None)
+        if s and s.get("is_pauzevlinder"):
+            for uur in required_pauze_hours:
+                if uur in s.get("uren_beschikbaar", []):
+                    uren.add(uur)
         return sorted(uren)
+
     
     def pp2_is_first_or_last_work_hour(naam, kwartier_col, ws_sheet):
         """
