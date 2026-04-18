@@ -3141,7 +3141,7 @@ def _place_short_pause_for(naam):
             if ws_pauze.cell(pv_row, col).value not in [None, ""]:
                 continue
             if not pv_kan_attr(pv, attr) and not is_student_extra(naam) and not is_pauzevlinder(naam):
-            continue
+                continue
             pairs.append((pv, pv_row, col))
     if not pairs:
         return False
