@@ -3916,10 +3916,16 @@ def maak_pp2_sheets(wb_arg, am_arg):
 
     ws_planning = wb_arg["Planning"]
 
+    s# Bouw student_totalen vanuit de Planning-sheet van wb_arg,
+    # net zoals de globale versie dat doet vanuit ws_out.
+    # Dit is belangrijk voor pauzevlinders: hun pauzevlinderuren
+    # staan NIET in assigned_map, maar wél in de Planning-sheet.
     student_totalen = defaultdict(int)
-    for (_uur, _attr), namen in am_arg.items():
-        for naam in namen:
-            student_totalen[naam] += 1
+    _ws_plan_tmp = wb_arg["Planning"]
+    for row in _ws_plan_tmp.iter_rows(min_row=2, values_only=True):
+        for naam in row[1:]:
+            if naam and str(naam).strip() != "":
+                student_totalen[naam] += 1
 
     for sheet_name in ["PP optie 2", "Feedback optie 2"]:
         if sheet_name in wb_arg.sheetnames:
@@ -3984,8 +3990,6 @@ def maak_pp2_sheets(wb_arg, am_arg):
     def pp2_get_student_work_hours(naam):
         """
         Leest echte werkuren uit het werkblad Planning.
-        Voor pauzevlinders: voeg ook required_pauze_hours toe,
-        want zij zijn actief tijdens die uren maar staan niet in ws_planning.
         """
         uren = set()
         for col in range(2, ws_planning.max_column + 1):
@@ -3997,16 +4001,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
                 if ws_planning.cell(row, col).value == naam:
                     uren.add(uur)
                     break
-        # Pauzevlinders verschijnen niet in ws_planning tijdens pauzevlinderuren,
-        # maar zijn dan wél actief. Voeg die uren alsnog toe zodat de pauzelogica
-        # geldige slots voor hen kan vinden.
-        s = next((x for x in studenten if x["naam"] == naam), None)
-        if s and s.get("is_pauzevlinder"):
-            for uur in required_pauze_hours:
-                if uur in s.get("uren_beschikbaar", []):
-                    uren.add(uur)
         return sorted(uren)
-
     
     def pp2_is_first_or_last_work_hour(naam, kwartier_col, ws_sheet):
         """
