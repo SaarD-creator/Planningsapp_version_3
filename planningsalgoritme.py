@@ -9246,6 +9246,15 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
         bottom=Side(style="thin")
     )
 
+    # Vervang PV-namen in het Pauzevlinders-sheet als er een vervanger gekozen werd
+    if "Pauzevlinders" in wb_lm.sheetnames and ctx.get("pv_replacements"):
+        ws_pauze_lm = wb_lm["Pauzevlinders"]
+        for pvnaam, vervanger in ctx["pv_replacements"].items():
+            for r in range(2, ws_pauze_lm.max_row + 1):
+                if str(ws_pauze_lm.cell(r, 1).value or "").strip() == pvnaam:
+                    ws_pauze_lm.cell(r, 1).value = vervanger
+                    break
+
     # Zorg dat alle dynamische attractierijen echt bestaan in kolom A
     for row, rijlabel in attr_rows:
         huidige_waarde = ws_plan.cell(row, 1).value
