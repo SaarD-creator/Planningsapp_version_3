@@ -8081,8 +8081,6 @@ def lm5_can_place_student_on_attr(ctx, student, attr, uren):
 
     if len(totaal) > 6:
         return False
-    if max_consecutive_hours(totaal) > 4:
-        return False
 
     return True
 
