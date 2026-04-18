@@ -9382,25 +9382,43 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     # Herwerk Wisselplanning
     maak_wisselplanning_sheet(wb_lm, ctx["assigned_map"])
 
-    # Herwerk PP optie 2 + Feedback optie 2
-    # Belangrijk: dit moet gebeuren VOOR de naamswijziging hieronder,
-    # want maak_pp2_sheets zoekt op de originele PV-naam in kolom A
+    # Herwerk PP optie 2:
+    # Vervang eerst kolom A in Pauzevlinders én tijdelijk selected,
+    # zodat maak_pp2_sheets de vervanger als echte PV behandelt
+    # (juiste werkuren, eigen pauze op eigen rij).
+    selected_bak = [dict(pv) for pv in selected]
+    if ctx.get("pv_replacements"):
+        ws_pauze_lm = wb_lm["Pauzevlinders"]
+        for i, pv in enumerate(selected):
+            pvnaam    = str(pv["naam"]).strip()
+            vervanger = ctx["pv_replacements"].get(pvnaam)
+            if not vervanger:
+                continue
+            vervanger_student = next(
+                (s for s in studenten if str(s["naam"]).strip() == vervanger), None
+            )
+            if not vervanger_student:
+                continue
+            # Kolom A in Pauzevlinders bijwerken
+            for r in range(2, ws_pauze_lm.max_row + 1):
+                if str(ws_pauze_lm.cell(r, 1).value or "").strip() == pvnaam:
+                    ws_pauze_lm.cell(r, 1).value = vervanger
+                    break
+            # selected tijdelijk aanpassen zodat maak_pp2_sheets
+            # de vervanger als PV herkent en diens werkuren gebruikt
+            selected[i] = dict(vervanger_student)
+            selected[i]["is_pauzevlinder"] = True
+            selected[i]["pv_number"]       = pv.get("pv_number", i + 1)
+
     maak_pp2_sheets(wb_lm, ctx["assigned_map"])
 
-    # PV-namen updaten in Pauzevlinders én PP optie 2 — pas NA maak_pp2_sheets,
-    # zodat pp2_get_pv_rows nog de originele namen kan vinden
-    if ctx.get("pv_replacements"):
-        for sheet_naam in ["Pauzevlinders", "PP optie 2"]:
-            if sheet_naam not in wb_lm.sheetnames:
-                continue
-            ws_target = wb_lm[sheet_naam]
-            for pvnaam, vervanger in ctx["pv_replacements"].items():
-                for r in range(2, ws_target.max_row + 1):
-                    if str(ws_target.cell(r, 1).value or "").strip() == pvnaam:
-                        ws_target.cell(r, 1).value = vervanger
-                        break
+    # selected herstellen
+    for i in range(len(selected)):
+        if i < len(selected_bak):
+            selected[i] = selected_bak[i]
 
     return wb_lm
+    
     
 # ------------------------------------------------------------
 # UI
