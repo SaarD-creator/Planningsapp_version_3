@@ -8878,7 +8878,242 @@ def lm5_extend_extra_rows_if_needed(base_maps, ctx):
     base_maps["extra_rows"] = extra_rows
 
 
-                                     
+# ------------------------------------------------------------
+# Post-processing: 5/6-uursblokken wisselen (last-minute versie)
+# ------------------------------------------------------------
+def lm5_postprocess_long_blocks(ctx, start_uur):
+    """
+    Equivalent van de hoofdplanning-postprocessing, maar voor de ctx-structuur.
+    Werkt alleen op uren >= start_uur (uren daarvoor zijn ingezaaid en vast).
+    """
+
+    am = ctx["assigned_map"]
+
+    # --- Hulpfuncties die werken op ctx ---
+
+    def lm5_pp_get_attr_on_hour(naam, uur):
+        for (u, a), namen in am.items():
+            if u == uur and naam in namen:
+                return a
+        return None
+
+    def lm5_pp_get_hours_on_attr(naam, attr):
+        return sorted(u for (u, a), namen in am.items() if a == attr and naam in namen)
+
+    def lm5_pp_get_runs_on_attr(naam, attr):
+        return contiguous_runs(lm5_pp_get_hours_on_attr(naam, attr))
+
+    def lm5_pp_count_attr_switches(naam):
+        uur_attr = sorted(
+            (u, lm5_pp_get_attr_on_hour(naam, u))
+            for u in sorted(set(ctx["student_states"][naam]["assigned_hours"]))
+            if lm5_pp_get_attr_on_hour(naam, u)
+        )
+        if not uur_attr:
+            return 0
+        switches = 0
+        prev = uur_attr[0][1]
+        for _, a in uur_attr[1:]:
+            if a != prev:
+                switches += 1
+            prev = a
+        return switches
+
+    def lm5_pp_count_problem_attrs(naam):
+        return sum(
+            1 for (_, a), namen in am.items()
+            if naam in namen and len(lm5_pp_get_hours_on_attr(naam, a)) > 4
+        )
+
+    def lm5_pp_total_overflow(naam):
+        seen = set()
+        overflow = 0
+        for (_, a), namen in am.items():
+            if naam in namen and a not in seen:
+                seen.add(a)
+                uren = len(lm5_pp_get_hours_on_attr(naam, a))
+                if uren > 4:
+                    overflow += uren - 4
+        return overflow
+
+    def lm5_pp_remove(naam, uur, attr):
+        key = (uur, attr)
+        if naam in am.get(key, []):
+            am[key].remove(naam)
+        s = ctx["student_states"][naam]
+        if uur in s["assigned_hours"]:
+            s["assigned_hours"].remove(uur)
+
+    def lm5_pp_add(naam, uur, attr):
+        am[(uur, attr)].append(naam)
+        ctx["student_states"][naam]["assigned_hours"].append(uur)
+        ctx["student_states"][naam]["assigned_attracties"].add(attr)
+
+    def lm5_pp_rebuild_attrs(naam):
+        s = ctx["student_states"][naam]
+        s["assigned_attracties"] = {
+            lm5_pp_get_attr_on_hour(naam, u)
+            for u in set(s["assigned_hours"])
+            if lm5_pp_get_attr_on_hour(naam, u)
+        }
+
+    def lm5_pp_is_valid(naam, attr, uren):
+        """Student mag attr op al die uren doen, en uren >= start_uur."""
+        if not all(u >= start_uur for u in uren):
+            return False
+        s = ctx["student_states"].get(naam)
+        if not s or not lm5_student_can_attr(s, attr):
+            return False
+        for u in uren:
+            hstate = ctx["hour_states"].get(u, {})
+            if attr not in hstate.get("active", set()):
+                return False
+        return True
+
+    def lm5_pp_respects_rules(naam, attr):
+        uren = lm5_pp_get_hours_on_attr(naam, attr)
+        if len(uren) > 6:
+            return False
+        if max_consecutive_hours(uren) > 4:
+            return False
+        return True
+
+    def lm5_pp_is_swap_target(naam, attr, block_hours):
+        """Staat naam op exact al die uren op attr?"""
+        return all(naam in am.get((u, attr), []) for u in block_hours)
+
+    def lm5_pp_try_swap_block(naam_a, attr_a, block_hours, all_names):
+        if len(block_hours) not in [2, 3]:
+            return False
+
+        orig_sw_a  = lm5_pp_count_attr_switches(naam_a)
+        orig_pr_a  = lm5_pp_count_problem_attrs(naam_a)
+        orig_ov_a  = lm5_pp_total_overflow(naam_a)
+        eerste_uur = block_hours[0]
+
+        for naam_b in all_names:
+            if naam_b == naam_a:
+                continue
+
+            attr_b = lm5_pp_get_attr_on_hour(naam_b, eerste_uur)
+            if not attr_b or attr_b == attr_a:
+                continue
+            if not lm5_pp_is_swap_target(naam_b, attr_b, block_hours):
+                continue
+            if not lm5_pp_is_valid(naam_a, attr_b, block_hours):
+                continue
+            if not lm5_pp_is_valid(naam_b, attr_a, block_hours):
+                continue
+
+            orig_sw_b = lm5_pp_count_attr_switches(naam_b)
+            orig_pr_b = lm5_pp_count_problem_attrs(naam_b)
+            orig_ov_b = lm5_pp_total_overflow(naam_b)
+
+            # Wissel uitvoeren
+            for u in block_hours:
+                lm5_pp_remove(naam_a, u, attr_a)
+                lm5_pp_remove(naam_b, u, attr_b)
+            for u in block_hours:
+                lm5_pp_add(naam_a, u, attr_b)
+                lm5_pp_add(naam_b, u, attr_a)
+            lm5_pp_rebuild_attrs(naam_a)
+            lm5_pp_rebuild_attrs(naam_b)
+
+            valid = all(
+                lm5_pp_respects_rules(n, a)
+                for n, a in [(naam_a, attr_a), (naam_a, attr_b),
+                             (naam_b, attr_a), (naam_b, attr_b)]
+            )
+
+            extra_sw = (
+                (lm5_pp_count_attr_switches(naam_a) - orig_sw_a) +
+                (lm5_pp_count_attr_switches(naam_b) - orig_sw_b)
+            )
+            if extra_sw > 1:
+                valid = False
+
+            new_pr = lm5_pp_count_problem_attrs(naam_a) + lm5_pp_count_problem_attrs(naam_b)
+            new_ov = lm5_pp_total_overflow(naam_a)      + lm5_pp_total_overflow(naam_b)
+            orig_pr = orig_pr_a + orig_pr_b
+            orig_ov = orig_ov_a + orig_ov_b
+
+            if new_pr > orig_pr:
+                valid = False
+            if new_pr == orig_pr and new_ov >= orig_ov:
+                valid = False
+
+            if valid:
+                return True
+
+            # Rollback
+            for u in block_hours:
+                lm5_pp_remove(naam_a, u, attr_b)
+                lm5_pp_remove(naam_b, u, attr_a)
+            for u in block_hours:
+                lm5_pp_add(naam_a, u, attr_a)
+                lm5_pp_add(naam_b, u, attr_b)
+            lm5_pp_rebuild_attrs(naam_a)
+            lm5_pp_rebuild_attrs(naam_b)
+
+        return False
+
+    def lm5_pp_try_swap_long_attr(naam, attr, all_names):
+        if len(lm5_pp_get_hours_on_attr(naam, attr)) <= 4:
+            return False
+
+        runs = lm5_pp_get_runs_on_attr(naam, attr)
+        if not runs:
+            return False
+
+        def kandidaat_blokken(run):
+            blokken = []
+            if len(run) >= 3:
+                blokken.append(run[-3:])
+            if len(run) >= 2:
+                blokken.append(run[-2:])
+            if len(run) >= 3:
+                blokken.append(run[:3])
+            if len(run) >= 2:
+                blokken.append(run[:2])
+            return blokken
+
+        laatste_run = runs[-1]
+        eerste_run  = runs[0]
+
+        for blok in kandidaat_blokken(laatste_run):
+            if lm5_pp_try_swap_block(naam, attr, blok, all_names):
+                return True
+        if eerste_run != laatste_run:
+            for blok in kandidaat_blokken(eerste_run):
+                if lm5_pp_try_swap_block(naam, attr, blok, all_names):
+                    return True
+        return False
+
+    # --- Hoofdlus ---
+    all_names = [
+        naam for naam, s in ctx["student_states"].items()
+        if any(u >= start_uur for u in s["assigned_hours"])
+        and not s.get("is_pauzevlinder")
+    ]
+
+    for _ in range(7):
+        wijziging = False
+        for naam in all_names:
+            s = ctx["student_states"][naam]
+            probleem_attrs = sorted(
+                {a for a in s["assigned_attracties"]
+                 if len(lm5_pp_get_hours_on_attr(naam, a)) > 4},
+                key=lambda a: -len(lm5_pp_get_hours_on_attr(naam, a))
+            )
+            for attr in probleem_attrs:
+                if lm5_pp_try_swap_long_attr(naam, attr, all_names):
+                    wijziging = True
+                    break
+        if not wijziging:
+            break
+
+
+
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
@@ -8966,10 +9201,12 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     # STAP 8: lege attractieplekken opvullen door Extra -> attractie
     lm5_try_fill_empty_slots_from_extras(ctx, start_uur)
 
-    lm5_extend_extra_rows_if_needed(base_maps, ctx) 
+    # STAP 9: post-processing 5/6-uursblokken wegwisselen
+    lm5_postprocess_long_blocks(ctx, start_uur)
+
+    lm5_extend_extra_rows_if_needed(base_maps, ctx)
 
     return ctx, base_maps
-
 
 
 # ------------------------------------------------------------
