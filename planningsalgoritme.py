@@ -1096,8 +1096,6 @@ def respects_student_attr_rules(student, attr):
     uren = get_hours_on_attr(student, attr)
     if len(uren) > 6:
         return False
-    if max_consecutive_hours(uren) > 4:
-        return False
     return True
 
 def can_swap_exact_block(student_a, attr_a, block_hours, student_b, attr_b):
@@ -8385,9 +8383,6 @@ def lm5_can_student_take_attr_block(ctx, student, attr, block_hours):
     totaal = sorted(set(bestaande) | set(block_hours))
     if len(totaal) > 6:
         return False
-    if max_consecutive_hours(totaal) > 4:
-        return False
-
     return True
 
 def lm5_try_chain_swap_for_block(ctx, released_student_name, target_attr, block_hours):
@@ -8451,7 +8446,7 @@ def lm5_try_chain_swap_for_block(ctx, released_student_name, target_attr, block_
         lm5_rebuild_student_attracties(ctx, andere_student)
 
         # harde 6u/4u check op betrokken attracties
-        if len(lm5_get_hours_on_attr(ctx, released_student_name, attr_b)) > 6 or max_consecutive_hours(lm5_get_hours_on_attr(ctx, released_student_name, attr_b)) > 4:
+        if len(lm5_get_hours_on_attr(ctx, released_student_name, attr_b)) > 6:
             ctx["assigned_map"] = saved_assigned_map
             ctx["per_hour_assigned_counts"] = saved_counts
             released_student["assigned_hours"] = saved_hours_r
@@ -8461,7 +8456,7 @@ def lm5_try_chain_swap_for_block(ctx, released_student_name, target_attr, block_
             ctx["prev_attr"] = saved_prev
             continue
 
-        if len(lm5_get_hours_on_attr(ctx, andere_naam, target_attr)) > 6 or max_consecutive_hours(lm5_get_hours_on_attr(ctx, andere_naam, target_attr)) > 4:
+        if len(lm5_get_hours_on_attr(ctx, andere_naam, target_attr)) > 6:
             ctx["assigned_map"] = saved_assigned_map
             ctx["per_hour_assigned_counts"] = saved_counts
             released_student["assigned_hours"] = saved_hours_r
@@ -8658,8 +8653,6 @@ def lm5_try_fill_empty_slots_from_extras(ctx, start_uur):
                     totaal = sorted(set(bestaande) | {uur})
 
                     if len(totaal) > 6:
-                        continue
-                    if max_consecutive_hours(totaal) > 4:
                         continue
 
                     orig_attr = ctx["base_maps"]["student_hour_attr"].get((naam, uur), "")
