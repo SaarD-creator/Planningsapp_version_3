@@ -3916,7 +3916,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
 
     ws_planning = wb_arg["Planning"]
 
-    s# Bouw student_totalen vanuit de Planning-sheet van wb_arg,
+    # Bouw student_totalen vanuit de Planning-sheet van wb_arg,
     # net zoals de globale versie dat doet vanuit ws_out.
     # Dit is belangrijk voor pauzevlinders: hun pauzevlinderuren
     # staan NIET in assigned_map, maar wél in de Planning-sheet.
