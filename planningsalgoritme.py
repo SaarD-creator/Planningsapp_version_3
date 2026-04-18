@@ -2441,7 +2441,7 @@ def plaats_student(student, harde_mode=False):
             if not attr1 or not attr2:
                 continue
             for (pv, pv_row, _) in slot_order:
-                if not pv_kan_attr(pv, attr1) and not is_student_extra(naam):
+                if not pv_kan_attr(pv, attr1) and not is_student_extra(naam) and not is_pauzevlinder(naam):
                     continue
                 cel1 = ws_pauze.cell(pv_row, col1)
                 cel2 = ws_pauze.cell(pv_row, col2)
@@ -3085,7 +3085,7 @@ def _place_short_pause_for(naam):
                 continue
             if ws_pauze.cell(pv_row, col).value not in [None, ""]:
                 continue
-            if not pv_kan_attr(pv, attr) and not is_student_extra(naam):
+            if not pv_kan_attr(pv, attr) and not is_student_extra(naam) and not is_pauzevlinder(naam):
                 continue
             rows.append((pv, pv_row))
         if not rows:
@@ -3140,8 +3140,8 @@ def _place_short_pause_for(naam):
                 continue
             if ws_pauze.cell(pv_row, col).value not in [None, ""]:
                 continue
-            if not pv_kan_attr(pv, attr) and not is_student_extra(naam):
-                continue
+            if not pv_kan_attr(pv, attr) and not is_student_extra(naam) and not is_pauzevlinder(naam):
+            continue
             pairs.append((pv, pv_row, col))
     if not pairs:
         return False
