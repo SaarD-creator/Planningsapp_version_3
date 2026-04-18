@@ -3982,7 +3982,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
         return rows
     
     def pp2_get_student_work_hours(naam):
-    """
+        """
         Leest echte werkuren uit het werkblad Planning.
         Voor pauzevlinders: voeg ook required_pauze_hours toe,
         want zij zijn actief tijdens die uren maar staan niet in ws_planning.
