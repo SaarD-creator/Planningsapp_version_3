@@ -977,7 +977,7 @@ def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
         return True
     return False
 
-max_iterations = 5
+max_iterations = 10
 for _ in range(max_iterations):
     changes_made = False
     for uur in open_uren:
@@ -1243,7 +1243,7 @@ def try_swap_specific_block(student, attr, block_hours):
         new_switches_b = count_attr_switches(andere_student)
         extra_wissels = (new_switches_a - orig_switches_a) + (new_switches_b - orig_switches_b)
 
-        if extra_wissels > 1:
+        if extra_wissels > 2:
             valid = False
 
         # Problemen na swap
@@ -1340,7 +1340,7 @@ def try_swap_last_or_first_block(student, attr):
 
 
 # Iteratief toepassen tot er niets meer verandert
-max_block_swap_passes = 7
+max_block_swap_passes = 15
 for _ in range(max_block_swap_passes):
     wijziging = False
 
