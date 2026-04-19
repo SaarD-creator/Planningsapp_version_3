@@ -1906,7 +1906,10 @@ def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg):
     for uur in sorted(open_uren):
         analyse_studenten_uur = sorted(
             [s for s in st_arg if is_aanwezig(s, uur)],
-            key=lambda s: naam_tie_break_key(s["naam"])
+            key=lambda s: (
+                sum(1 for attr in actieve_analyse_attracties_op_uur(uur) if student_kan_attr_in_analyse(s, attr)),
+                naam_tie_break_key(s["naam"])
+            )
         )
         analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
         if not analyse_studenten_uur or not analyse_attracties_uur:
