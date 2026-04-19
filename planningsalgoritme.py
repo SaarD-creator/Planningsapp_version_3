@@ -9032,7 +9032,7 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
                 (lm5_pp_count_attr_switches(naam_a) - orig_sw_a) +
                 (lm5_pp_count_attr_switches(naam_b) - orig_sw_b)
             )
-            if extra_sw > 1:
+            if extra_sw > 2:
                 valid = False
 
             new_pr = lm5_pp_count_problem_attrs(naam_a) + lm5_pp_count_problem_attrs(naam_b)
