@@ -3928,13 +3928,13 @@ def maak_pp2_sheets(wb_arg, am_arg):
             if naam and str(naam).strip() != "":
                 student_totalen[naam] += 1
 
-    for sheet_name in ["PP optie 2", "Feedback optie 2"]:
+    for sheet_name in ["Pauzeplanning", "Feedback PP"]:
         if sheet_name in wb_arg.sheetnames:
             wb_arg.remove(wb_arg[sheet_name])
 
     ws_pauze_basis = wb_arg["Pauzevlinders"]
     ws_pp2 = wb_arg.copy_worksheet(ws_pauze_basis)
-    ws_pp2.title = "PP optie 2"
+    ws_pp2.title = "Pauzeplanning"
 
     # ── hierna de rest van DEEL 5 geïndenteerd ──
 
@@ -6742,7 +6742,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
     # =============================
     # FEEDBACK SHEET - OPTIE 2
     # =============================
-    ws_feedback2 = wb_arg.create_sheet("Feedback optie 2")
+    ws_feedback2 = wb_arg.create_sheet("Feedback PP")
     
     groen_fill = PatternFill(start_color="92D050", end_color="92D050", fill_type="solid")
     rood_fill = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")
