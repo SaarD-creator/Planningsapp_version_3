@@ -1,4 +1,5 @@
-# post-processing laat geen switches toe die een 1-uursblok achterlaten
+# LM: afkappingen is in orde
+# post-processing laat geen switches toe die een 1-uursblok achterlaten (ook niet in LM)
 # max van vier uur aaneensluitend is weg, maar lossere regels in post-processing (wel vaak vier uursblokken)
 # last minute afwezigen ziet er al goed uit!
 # uitschakelen pauzevlinderuren werkt!
@@ -7804,8 +7805,15 @@ def lm5_pick_pv_replacements(absent_pv_names, start_uur, base_maps, absentees_se
 def lm5_active_pv_assignment_for_hour(ctx, uur):
     if uur not in required_pauze_hours:
         return {}
+
+    vrijgegeven_uren = ctx.get("vrijgegeven_pv_uren", set())
+    vrijgegeven_pv   = ctx.get("vrijgegeven_pv_naam", None)
+
     result = {}
     for pvnaam in lm5_pv_names():
+        # Vrijgegeven uren van de laatste PV niet als "bezet" beschouwen
+        if uur in vrijgegeven_uren and pvnaam == vrijgegeven_pv:
+            continue
         if pvnaam in ctx["abs_set"]:
             vervanger = ctx["pv_replacements"].get(pvnaam)
             if vervanger:
@@ -8077,6 +8085,8 @@ def lm5_init_context(base_maps, absentees, start_uur):
         "changes_count": defaultdict(int),
         "prev_attr": {},
     }
+
+
 
 def lm5_seed_hours_before_start(ctx, start_uur):
     for (naam, uur), attr in ctx["base_maps"]["student_hour_attr"].items():
@@ -8794,6 +8804,41 @@ def lm5_init_context(base_maps, absentees, start_uur):
     }
 
 
+def lm5_vrijgeven_afgekapte_pv_uren(ctx, start_uur):
+    """
+    Last-minute only: als de afgekapte PV-uren minstens 2 aaneensluitende
+    uren bevatten, worden die uren vrijgegeven zodat de laatste PV (of diens
+    vervanger) in die uren gewoon op de planning kan worden ingezet.
+    """
+    if not afgekapte_pv_uren or not selected:
+        return
+
+    # Alleen runs van >= 2 aaneensluitende uren vrijgeven
+    runs = contiguous_runs(sorted(afgekapte_pv_uren))
+    geschikte_uren = set()
+    for run in runs:
+        if len(run) >= 2:
+            geschikte_uren.update(run)
+
+    if not geschikte_uren:
+        return
+
+    laatste_pv_naam = str(selected[-1]["naam"]).strip()
+    # Bepaal de effectieve persoon (zelf of vervanger)
+    effectief_naam = ctx["pv_replacements"].get(laatste_pv_naam, laatste_pv_naam)
+
+    # Sla op in ctx zodat lm5_active_pv_assignment_for_hour het kan gebruiken
+    ctx["vrijgegeven_pv_uren"] = geschikte_uren
+    ctx["vrijgegeven_pv_naam"] = laatste_pv_naam   # originele PV-naam, niet vervanger
+
+    # Voeg de uren terug toe aan uren_beschikbaar van de effectieve persoon
+    if effectief_naam in ctx["student_states"]:
+        s = ctx["student_states"][effectief_naam]
+        for uur in sorted(geschikte_uren):
+            if uur >= start_uur and uur not in s["uren_beschikbaar"]:
+                s["uren_beschikbaar"].append(uur)
+
+
 def lm5_seed_hours_before_start(ctx, start_uur):
     for (naam, uur), attr in ctx["base_maps"]["student_hour_attr"].items():
         if uur >= start_uur:
@@ -9191,6 +9236,7 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
+    lm5_vrijgeven_afgekapte_pv_uren(ctx, start_uur)
     lm5_seed_hours_before_start(ctx, start_uur)
 
     capacity_actions = lm5_extract_capacity_actions()
