@@ -6749,7 +6749,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
     
     row_fb2 = 1
     
-    ws_feedback2.cell(row_fb2, 1, "Feedback PP optie 2").font = Font(bold=True)
+    ws_feedback2.cell(row_fb2, 1, "Feedback pauzeplanning").font = Font(bold=True)
     row_fb2 += 2
     
     # -----------------------------------
