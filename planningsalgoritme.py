@@ -7811,7 +7811,6 @@ def lm5_active_pv_assignment_for_hour(ctx, uur):
 
     result = {}
     for pvnaam in lm5_pv_names():
-        # Vrijgegeven uren van de laatste PV niet als "bezet" beschouwen
         if uur in vrijgegeven_uren and pvnaam == vrijgegeven_pv:
             continue
         if pvnaam in ctx["abs_set"]:
@@ -8087,19 +8086,6 @@ def lm5_init_context(base_maps, absentees, start_uur):
     }
 
 
-
-def lm5_seed_hours_before_start(ctx, start_uur):
-    for (naam, uur), attr in ctx["base_maps"]["student_hour_attr"].items():
-        if uur >= start_uur:
-            continue
-        if naam in ctx["abs_set"]:
-            continue
-
-        ctx["assigned_map"][(uur, attr)].append(naam)
-        ctx["per_hour_assigned_counts"][uur][attr] += 1
-        ctx["student_states"][naam]["assigned_hours"].append(uur)
-        ctx["student_states"][naam]["assigned_attracties"].add(attr)
-        ctx["prev_attr"][naam] = attr
 
 # ------------------------------------------------------------
 # Toewijzingshelpers
