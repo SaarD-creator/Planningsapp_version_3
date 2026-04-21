@@ -9076,11 +9076,21 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
             lm5_pp_rebuild_attrs(naam_a)
             lm5_pp_rebuild_attrs(naam_b)
 
+            # Geen geïsoleerde 1-uursblokken laten ontstaan
+            def heeft_geisoleerd_uur(naam, attr):
+                runs = lm5_pp_get_runs_on_attr(naam, attr)
+                return any(len(r) == 1 for r in runs)
+
             valid = all(
                 lm5_pp_respects_rules(n, a)
                 for n, a in [(naam_a, attr_a), (naam_a, attr_b),
                              (naam_b, attr_a), (naam_b, attr_b)]
             )
+
+            if heeft_geisoleerd_uur(naam_a, attr_a): valid = False
+            if heeft_geisoleerd_uur(naam_a, attr_b): valid = False
+            if heeft_geisoleerd_uur(naam_b, attr_a): valid = False
+            if heeft_geisoleerd_uur(naam_b, attr_b): valid = False
 
             extra_sw = (
                 (lm5_pp_count_attr_switches(naam_a) - orig_sw_a) +
@@ -9096,7 +9106,14 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
 
             if new_pr > orig_pr:
                 valid = False
-            if new_pr == orig_pr and new_ov >= orig_ov:
+            if new_pr == orig_pr and new_ov > orig_ov:
+                valid = False
+
+            verbetering = (
+                new_pr < orig_pr
+                or (new_pr == orig_pr and new_ov < orig_ov)
+            )
+            if not verbetering:
                 valid = False
 
             if valid:
@@ -9128,9 +9145,9 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
                 blokken.append(run[-3:])
             if len(run) >= 2:
                 blokken.append(run[-2:])
-            if len(run) >= 3:
+            if len(run) >= 3 and run[:3] != run[-3:]:
                 blokken.append(run[:3])
-            if len(run) >= 2:
+            if len(run) >= 2 and run[:2] != run[-2:]:
                 blokken.append(run[:2])
             return blokken
 
