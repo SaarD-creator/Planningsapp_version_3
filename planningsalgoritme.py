@@ -1,4 +1,5 @@
-# last minute afwezigen ziet er al goed uit! Enkel probleem met pauzes pauzevlinders +vervangpauzevlinders
+# max van vier uur aaneensluitend is weg, maar lossere regels in post-processing (wel vaak vier uursblokken)
+# last minute afwezigen ziet er al goed uit!
 # uitschakelen pauzevlinderuren werkt!
 # volgorde verdeling met pauzevlinders laatst!
 # pauzes kloppen!! 1h15 min pauze voor minderjarige lange werkers --> alleen nog niet top op korte dagen (mogelijks gefixt)
@@ -1173,7 +1174,8 @@ def try_swap_specific_block(student, attr, block_hours):
     - het blok 2 of 3 uur lang is
     - de andere student op exact die uren ook één blok op één attractie heeft
     - alle regels geldig blijven
-    - max 1 extra wissel ontstaat
+    - geen geïsoleerde 1-uursblokken ontstaan
+    - max 2 extra wissels in totaal
     - het totaal aantal >4u-problemen niet stijgt
     - en liefst daalt
     """
@@ -1228,6 +1230,20 @@ def try_swap_specific_block(student, attr, block_hours):
 
         valid = True
 
+        # Geen geïsoleerde 1-uursblokken laten ontstaan
+        def heeft_geisoleerd_uur(s, a):
+            runs = get_runs_on_attr(s, a)
+            return any(len(r) == 1 for r in runs)
+
+        if heeft_geisoleerd_uur(student, attr):
+            valid = False
+        if heeft_geisoleerd_uur(student, attr_b):
+            valid = False
+        if heeft_geisoleerd_uur(andere_student, attr):
+            valid = False
+        if heeft_geisoleerd_uur(andere_student, attr_b):
+            valid = False
+
         # Regels voor beide studenten / beide attracties
         for s, a in [
             (student, attr),
@@ -1238,7 +1254,7 @@ def try_swap_specific_block(student, attr, block_hours):
             if not respects_student_attr_rules(s, a):
                 valid = False
 
-        # Max 1 extra wissel in totaal
+        # Max 2 extra wissels in totaal
         new_switches_a = count_attr_switches(student)
         new_switches_b = count_attr_switches(andere_student)
         extra_wissels = (new_switches_a - orig_switches_a) + (new_switches_b - orig_switches_b)
@@ -1294,6 +1310,7 @@ def try_swap_specific_block(student, attr, block_hours):
         rebuild_student_attrs(andere_student)
 
     return False
+
 
 def try_swap_last_or_first_block(student, attr):
     """
