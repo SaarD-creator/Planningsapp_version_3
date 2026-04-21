@@ -504,6 +504,44 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
             afgekapte_pv_uren.add(uur)  # nieuw: registreer dit uur als afgeknipt
 
 
+def herbereken_afgekapte_pv_uren(absentees_set=None, base_maps=None):
+    """
+    Herleidt afgekapte_pv_uren op basis van de huidige selected-lijst.
+    Raakt extra_assignments niet aan.
+    In last-minute context: geef absentees_set en base_maps mee voor
+    correcte pauzetelling (i.p.v. stale BP2/BQ2 cellen).
+    """
+    global afgekapte_pv_uren
+    afgekapte_pv_uren = set()
+
+    _aantal_pv = len(selected)
+    _aantal_pauze_uren = len(required_pauze_hours)
+    if _aantal_pv == 0 or _aantal_pauze_uren == 0:
+        return
+
+    _plaatsen = (_aantal_pauze_uren * 4 - 1) * _aantal_pv
+
+    if absentees_set is not None and base_maps is not None:
+        _lange, _korte = lm5_bereken_pauze_counts(absentees_set, base_maps)
+    else:
+        try:
+            _lange = int(ws["BP2"].value) if ws["BP2"].value else 0
+        except:
+            _lange = 0
+        try:
+            _korte = int(ws["BQ2"].value) if ws["BQ2"].value else 0
+        except:
+            _korte = 0
+
+    _open_spots = _plaatsen - (2 * _lange + _korte)
+    _overbodige = max(0, math.floor((_open_spots - _aantal_pv * 3) / 4))
+
+    if _overbodige > 0:
+        _pv_pauze_uren = sorted(required_pauze_hours, reverse=True)
+        for uur in _pv_pauze_uren[:min(_overbodige, len(_pv_pauze_uren))]:
+            afgekapte_pv_uren.add(uur)
+
+
 
 
 MAX_CONSEC = 4
