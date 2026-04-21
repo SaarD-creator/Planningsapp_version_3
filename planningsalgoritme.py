@@ -1,4 +1,4 @@
-# LM: afkappingen is in orde
+# LM: afkappingen is in orde (automatisch op planning) Maar: lange blokken (5 uur aan een stuk) kunnen precies voorkomen...
 # post-processing laat geen switches toe die een 1-uursblok achterlaten (ook niet in LM)
 # max van vier uur aaneensluitend is weg, maar lossere regels in post-processing (wel vaak vier uursblokken)
 # last minute afwezigen ziet er al goed uit!
@@ -1885,14 +1885,16 @@ def student_kan_attr_in_analyse(student, attr):
     return all(onderdeel in student.get("attracties", []) for onderdeel in onderdelen)
 
 
-def actieve_analyse_attracties_op_uur(uur):
+def actieve_analyse_attracties_op_uur(uur, actieve_set=None):
     """
     Geeft attracties terug in de volgorde van Input!BL16:BL33,
     maar aangepast aan het specifieke uur:
     - losse attracties als ze actief zijn
     - samengevoegde attracties enkel als ze dat uur actief samengevoegd zijn
+    Optioneel: geef actieve_set mee om de globale actieve_attracties_per_uur te overschrijven.
     """
-    actieve_set = actieve_attracties_per_uur.get(uur, set())
+    if actieve_set is None:
+        actieve_set = actieve_attracties_per_uur.get(uur, set())
 
     input_volgorde_lokaal = []
     for rij_bl in range(16, 34):  # BL16 t.e.m. BL33
@@ -1915,7 +1917,6 @@ def actieve_analyse_attracties_op_uur(uur):
                 continue
             onderdelen = [x.strip() for x in str(actief_attr).split("+")]
             if attr in onderdelen and actief_attr not in gebruikte:
-                # pas invoegen na laatste onderdeel uit de inputvolgorde
                 if all(o in input_volgorde_lokaal for o in onderdelen):
                     laatst_idx = max(input_volgorde_lokaal.index(o) for o in onderdelen)
                     huidig_idx = input_volgorde_lokaal.index(attr)
@@ -1932,7 +1933,7 @@ def actieve_analyse_attracties_op_uur(uur):
     return resultaat
 
 
-def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg):
+def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg, actieve_attracties_override=None):
     # Verwijder oud sheet
     if "Analyse" in wb_arg.sheetnames:
         del wb_arg["Analyse"]
@@ -1940,6 +1941,12 @@ def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg):
     ws_analyse = wb_arg.create_sheet(title="Analyse")
     analyse_header_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
     witte_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
+
+    # Gebruik override als die meegegeven is (last-minute), anders globale data
+    def actieve_set_voor_uur(uur):
+        if actieve_attracties_override is not None:
+            return actieve_attracties_override.get(uur, set())
+        return actieve_attracties_per_uur.get(uur, set())
 
     # Herdefinieer de hulpfunctie lokaal zodat ze de juiste data gebruikt
     def is_aanwezig(student, uur):
@@ -1962,14 +1969,17 @@ def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg):
 
     start_rij = 3
     for uur in sorted(open_uren):
+        actieve_set = actieve_set_voor_uur(uur)
+        analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur, actieve_set)
+
         analyse_studenten_uur = sorted(
             [s for s in st_arg if is_aanwezig(s, uur)],
             key=lambda s: (
-                sum(1 for attr in actieve_analyse_attracties_op_uur(uur) if student_kan_attr_in_analyse(s, attr)),
+                sum(1 for attr in analyse_attracties_uur if student_kan_attr_in_analyse(s, attr)),
                 naam_tie_break_key(s["naam"])
             )
         )
-        analyse_attracties_uur = actieve_analyse_attracties_op_uur(uur)
+
         if not analyse_studenten_uur or not analyse_attracties_uur:
             continue
 
@@ -9518,8 +9528,18 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
         s["assigned_hours"] = _hours_per_student.get(str(s["naam"]).strip(), [])
 
     # Herwerk Analyse
-    maak_analyse_sheet(wb_lm, ctx["assigned_map"], ctx["extra_assignments"], studenten_lm)
-
+    # Bouw actieve attracties per uur vanuit last-minute hour_states
+    lm_actieve_attracties = {
+        uur: hstate["active"]
+        for uur, hstate in ctx["hour_states"].items()
+    }
+    maak_analyse_sheet(
+        wb_lm,
+        ctx["assigned_map"],
+        ctx["extra_assignments"],
+        studenten_lm,
+        actieve_attracties_override=lm_actieve_attracties
+    )
     # Herwerk Wisselplanning
     maak_wisselplanning_sheet(wb_lm, ctx["assigned_map"])
 
