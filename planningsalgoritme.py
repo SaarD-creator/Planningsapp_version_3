@@ -504,37 +504,6 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
             afgekapte_pv_uren.add(uur)  # nieuw: registreer dit uur als afgeknipt
 
 
-def herbereken_afgekapte_pv_uren():
-    """
-    Herleidt afgekapte_pv_uren op basis van de huidige selected-lijst.
-    Raakt extra_assignments niet aan.
-    """
-    global afgekapte_pv_uren
-    afgekapte_pv_uren = set()
-
-    _aantal_pv = len(selected)
-    _aantal_pauze_uren = len(required_pauze_hours)
-    if _aantal_pv == 0 or _aantal_pauze_uren == 0:
-        return
-
-    _plaatsen = (_aantal_pauze_uren * 4 - 1) * _aantal_pv
-    try:
-        _lange = int(ws["BP2"].value) if ws["BP2"].value else 0
-    except:
-        _lange = 0
-    try:
-        _korte = int(ws["BQ2"].value) if ws["BQ2"].value else 0
-    except:
-        _korte = 0
-
-    _open_spots = _plaatsen - (2 * _lange + _korte)
-    _overbodige = max(0, math.floor((_open_spots - _aantal_pv * 3) / 4))
-
-    if _overbodige > 0:
-        _pv_pauze_uren = sorted(required_pauze_hours, reverse=True)
-        for uur in _pv_pauze_uren[:min(_overbodige, len(_pv_pauze_uren))]:
-            afgekapte_pv_uren.add(uur)
-
 
 
 MAX_CONSEC = 4
@@ -7718,6 +7687,34 @@ def lm5_present_students_on_hour(base_maps, uur, absentees_set):
 def lm5_pv_names():
     return [str(pv["naam"]).strip() for pv in selected]
 
+def lm5_bereken_pauze_counts(absentees_set, base_maps):
+    """
+    Bereken lange_pauzes en korte_pauzes voor de last-minute planning
+    op basis van werkelijke werkuren (excl. afwezigen).
+
+    lange_pauzes = (studenten > 6u) + (minderjarige studenten >= 4u)
+    korte_pauzes = studenten >= 4u
+    """
+    uren_per_student = defaultdict(set)
+    for (naam, uur), _attr in base_maps["student_hour_attr"].items():
+        if naam not in absentees_set:
+            uren_per_student[naam].add(uur)
+
+    lange_pauzes = 0
+    korte_pauzes = 0
+    for naam, uren in uren_per_student.items():
+        n = len(uren)
+        is_minor = "-18" in str(naam)
+        if n > 6:
+            lange_pauzes += 1
+        if is_minor and n >= 4:
+            lange_pauzes += 1
+        if n >= 4:
+            korte_pauzes += 1
+
+    return lange_pauzes, korte_pauzes
+
+
 def lm5_extract_capacity_actions():
     result = []
 
@@ -9222,9 +9219,9 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
 def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
+    herbereken_afgekapte_pv_uren(absentees_set=ctx["abs_set"], base_maps=base_maps)
     lm5_vrijgeven_afgekapte_pv_uren(ctx, start_uur)
     lm5_seed_hours_before_start(ctx, start_uur)
-
     capacity_actions = lm5_extract_capacity_actions()
 
 
