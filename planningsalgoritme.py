@@ -9513,14 +9513,13 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
             selected[i]["is_pauzevlinder"] = True
             selected[i]["pv_number"]       = pv.get("pv_number", i + 1)
 
-    herbereken_afgekapte_pv_uren()   # herbereken op basis van (eventueel aangepaste) selected
+    herbereken_afgekapte_pv_uren(absentees_set=ctx["abs_set"], base_maps=base_maps)
     maak_pp2_sheets(wb_lm, ctx["assigned_map"])
 
-    # selected herstellen
     for i in range(len(selected)):
         if i < len(selected_bak):
             selected[i] = selected_bak[i]
-    herbereken_afgekapte_pv_uren()   # zet afgekapte_pv_uren terug naar originele staat
+    herbereken_afgekapte_pv_uren()  # ← zonder args: terug naar originele staat
 
     return wb_lm
     
