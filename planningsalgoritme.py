@@ -7566,21 +7566,6 @@ if ws_bron:
 
 
 
-# -----------------------------
-# Dringende heropleidingen in Planning
-# -----------------------------
-ws_plan = wb_out["Planning"]
-laatste_rij = ws_plan.max_row
-invoegrij = laatste_rij + 4
-
-for rij in ws_hero.iter_rows():
-    if rij[0].value == "Belangrijk!":
-        naam = rij[1].value or ""
-        omschrijving = rij[2].value or ""
-        ws_plan.cell(invoegrij, 1).value = f"Dringende heropleiding: {naam}: {omschrijving}"
-        invoegrij += 1
-
-
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 
@@ -7596,6 +7581,22 @@ for bladnaam in ["Pauzevlinders", "Feedback"]:
 output_lm_base = BytesIO()
 wb_out.save(output_lm_base)
 output_lm_base.seek(0)
+
+# -----------------------------
+# Dringende heropleidingen in Planning
+# -----------------------------
+ws_plan = wb_out["Planning"]
+laatste_rij = ws_plan.max_row
+invoegrij = laatste_rij + 4
+
+for rij in ws_hero.iter_rows():
+    if rij[0].value == "Belangrijk!":
+        naam = rij[1].value or ""
+        omschrijving = rij[2].value or ""
+        ws_plan.cell(invoegrij, 1).value = f"Dringende heropleiding: {naam}: {omschrijving}"
+        invoegrij += 1
+
+
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
 
