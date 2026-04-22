@@ -7542,13 +7542,25 @@ maak_wisselplanning_sheet(wb_out, assigned_map)
 # -----------------------------
 # Werkblad Heropleidingen
 # -----------------------------
-ws_hero = wb_out.create_sheet(title="Heropleidingen")
-for rij in range(42, 67):  # rijen 42 t/m 66
-    for kol in range(35, 38):  # kolommen AI (35) t/m AK (37)
-        broncel = ws.cell(rij, kol)
-        doelrij = rij - 41  # start op rij 1 in het nieuwe werkblad
-        doelkol = kol - 34  # start op kolom A (1) in het nieuwe werkblad
-        ws_hero.cell(doelrij, doelkol).value = ws.cell(rij, kol).value or ws_raw.cell(rij, kol).value
+from openpyxl.styles.proxy import StyleProxy
+from copy import copy
+
+ws_bron = wb.worksheets[[ws.title for ws in wb.worksheets].index("Heropleidingen")] if "Heropleidingen" in wb.sheetnames else None
+if ws_bron:
+    ws_hero = wb_out.create_sheet(title="Heropleidingen")
+    for rij in ws_bron.iter_rows():
+        for cel in rij:
+            nieuwe_cel = ws_hero.cell(row=cel.row, column=cel.column, value=cel.value)
+            if cel.has_style:
+                nieuwe_cel.font = copy(cel.font)
+                nieuwe_cel.fill = copy(cel.fill)
+                nieuwe_cel.border = copy(cel.border)
+                nieuwe_cel.alignment = copy(cel.alignment)
+                nieuwe_cel.number_format = cel.number_format
+    for kol, breedte in ws_bron.column_dimensions.items():
+        ws_hero.column_dimensions[kol].width = breedte.width
+    for rij, hoogte in ws_bron.row_dimensions.items():
+        ws_hero.row_dimensions[rij].height = hoogte.height
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
