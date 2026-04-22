@@ -9621,6 +9621,11 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 # ------------------------------------------------------------
 st.markdown("### Last-minute afwezigen")
 
+
+@st.cache_data
+def _cached_base_maps(base_bytes):
+    return lm5_extract_base_maps(base_bytes)
+    
 base_bytes_lm5 = st.session_state["lm_base_bytes"]
 base_maps_lm5 = _cached_base_maps(base_bytes_lm5)   # ← slaat nu WEL aan
 werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
