@@ -8979,9 +8979,9 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
     # Bepaal waar de nieuwe rijen moeten komen:
     # liefst ONDER de extra-rijen, anders onder de pauzevlinderrijen,
     # anders onder de bestaande attractierijen.
-    alle_bestaande_rijen = [row for row, _ in attr_rows] + [row for row, _ in pv_rows] + [row for row, _ in extra_rows]
-    if alle_bestaande_rijen:
-        insert_after = max(alle_bestaande_rijen)
+    attr_rijen = [row for row, _ in attr_rows]
+    if attr_rijen:
+        insert_after = max(attr_rijen)
     else:
         insert_after = 1
 
@@ -9007,12 +9007,15 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
             bestaande_attr_pos.add((attr, pos))
 
     # Voeg de nieuwe rijen toe aan attr_rows
+    if nieuwe_attr_rows:
+        verschuiving = len(nieuwe_attr_rows) + 1
+        pv_rows = [(row + verschuiving, label) for row, label in pv_rows]
+        extra_rows = [(row + verschuiving, label) for row, label in extra_rows]
+        base_maps["pv_rows"] = pv_rows
+        base_maps["extra_rows"] = extra_rows
+    
     attr_rows.extend(nieuwe_attr_rows)
-
-    # Sorteer op fysieke rij
     attr_rows.sort(key=lambda x: x[0])
-
-    # Schrijf terug naar base_maps
     base_maps["attr_rows"] = attr_rows
 
 
