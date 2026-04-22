@@ -7564,6 +7564,12 @@ if ws_bron:
     for rij, hoogte in ws_bron.row_dimensions.items():
         ws_hero.row_dimensions[rij].height = hoogte.height
 
+
+# Snapshot voor last-minute (zonder dringende heropleidingen)
+output_lm_base = BytesIO()
+wb_out.save(output_lm_base)
+output_lm_base.seek(0)
+
 # -----------------------------
 # Dringende heropleidingen in Planning
 # -----------------------------
@@ -9641,7 +9647,7 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 # ------------------------------------------------------------
 st.markdown("### Last-minute afwezigen")
 
-base_bytes_lm5 = output.getvalue()
+base_bytes_lm5 = output_lm_base.getvalue()
 base_maps_lm5 = lm5_extract_base_maps(base_bytes_lm5)
 werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
 
