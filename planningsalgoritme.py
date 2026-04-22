@@ -36,6 +36,7 @@ vandaag = datetime.date.today().strftime("%d-%m-%Y")
 uploaded_file = st.file_uploader("Upload Excel bestand", type=["xlsx"])
 
 if not uploaded_file:
+    st.session_state.pop("lm_base_bytes", None)   # ← reset bij nieuw bestand
     st.warning("Upload eerst het Excelbestand met de gegevens om verder te gaan.")
     st.stop()
 
@@ -7578,9 +7579,12 @@ for bladnaam in ["Pauzevlinders", "Feedback"]:
         ws_hide.sheet_state = "veryHidden" 
 
 # Snapshot voor last-minute (zonder dringende heropleidingen)
-output_lm_base = BytesIO()
-wb_out.save(output_lm_base)
-output_lm_base.seek(0)
+if "lm_base_bytes" not in st.session_state:
+    _buf = BytesIO()
+    wb_out.save(_buf)
+    st.session_state["lm_base_bytes"] = _buf.getvalue()
+
+output_lm_base = BytesIO(st.session_state["lm_base_bytes"])
 
 # -----------------------------
 # Dringende heropleidingen in Planning
@@ -9617,12 +9621,8 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 # ------------------------------------------------------------
 st.markdown("### Last-minute afwezigen")
 
-@st.cache_data
-def _cached_base_maps(base_bytes):
-    return lm5_extract_base_maps(base_bytes)
-
-base_bytes_lm5 = output_lm_base.getvalue()
-base_maps_lm5 = _cached_base_maps(base_bytes_lm5)  # ← wordt nu maar 1x berekend
+base_bytes_lm5 = st.session_state["lm_base_bytes"]
+base_maps_lm5 = _cached_base_maps(base_bytes_lm5)   # ← slaat nu WEL aan
 werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
 
 with st.expander("Last-minute afwezigen", expanded=False):
