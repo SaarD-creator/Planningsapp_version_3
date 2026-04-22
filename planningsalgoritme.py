@@ -1,3 +1,4 @@
+# Werkblad heropleidingen!
 # LM: afkappingen is in orde (automatisch op planning) Maar: lange blokken (5 uur aan een stuk) kunnen precies voorkomen...
 # post-processing laat geen switches toe die een 1-uursblok achterlaten (ook niet in LM)
 # max van vier uur aaneensluitend is weg, maar lossere regels in post-processing (wel vaak vier uursblokken)
@@ -7559,8 +7560,24 @@ if ws_bron:
                 nieuwe_cel.number_format = cel.number_format
     for kol, breedte in ws_bron.column_dimensions.items():
         ws_hero.column_dimensions[kol].width = breedte.width
+        ws_hero.column_dimensions["A"].width = 11
     for rij, hoogte in ws_bron.row_dimensions.items():
         ws_hero.row_dimensions[rij].height = hoogte.height
+
+# -----------------------------
+# Dringende heropleidingen in Planning
+# -----------------------------
+ws_plan = wb_out["Planning"]
+laatste_rij = ws_plan.max_row
+invoegrij = laatste_rij + 4
+
+for rij in ws_hero.iter_rows():
+    if rij[0].value == "Belangrijk!":
+        naam = rij[1].value or ""
+        omschrijving = rij[2].value or ""
+        ws_plan.cell(invoegrij, 1).value = f"Dringende heropleiding: {naam}: {omschrijving}"
+        invoegrij += 1
+
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
