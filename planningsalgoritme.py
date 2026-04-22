@@ -7565,10 +7565,6 @@ if ws_bron:
         ws_hero.row_dimensions[rij].height = hoogte.height
 
 
-# Snapshot voor last-minute (zonder dringende heropleidingen)
-output_lm_base = BytesIO()
-wb_out.save(output_lm_base)
-output_lm_base.seek(0)
 
 # -----------------------------
 # Dringende heropleidingen in Planning
@@ -7595,6 +7591,11 @@ for bladnaam in ["Pauzevlinders", "Feedback"]:
     if bladnaam in wb_out.sheetnames:
         ws_hide = wb_out[bladnaam]
         ws_hide.sheet_state = "veryHidden" 
+
+# Snapshot voor last-minute (zonder dringende heropleidingen)
+output_lm_base = BytesIO()
+wb_out.save(output_lm_base)
+output_lm_base.seek(0)
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
 
