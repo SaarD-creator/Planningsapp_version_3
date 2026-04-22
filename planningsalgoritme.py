@@ -9631,21 +9631,20 @@ base_maps_lm5 = _cached_base_maps(base_bytes_lm5)   # ← slaat nu WEL aan
 werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
 
 with st.expander("Last-minute afwezigen", expanded=False):
-    gekozen_afwezigen_lm5 = st.multiselect(
-        "Kies 1 tot 5 afwezige studenten",
-        options=werkende_studenten_vandaag_lm5,
-        default=[],
-        key="lm5_absentees"
-    )
+    with st.form("lm5_form"):
+        gekozen_afwezigen_lm5 = st.multiselect(
+            "Kies 1 tot 5 afwezige studenten",
+            options=werkende_studenten_vandaag_lm5,
+            default=[],
+        )
+        start_uur_lm5 = st.selectbox(
+            "Vanaf welk uur moet de nieuwe planning starten?",
+            options=sorted(open_uren),
+            format_func=lambda u: f"{u}:00",
+        )
+        submitted = st.form_submit_button("Maak last-minute planning")
 
-    start_uur_lm5 = st.selectbox(
-        "Vanaf welk uur moet de nieuwe planning starten?",
-        options=sorted(open_uren),
-        format_func=lambda u: f"{u}:00",
-        key="lm5_start_hour"
-    )
-
-    if st.button("Maak last-minute planning", key="lm5_make_button"):
+    if submitted:
         if not gekozen_afwezigen_lm5:
             st.warning("Kies eerst minstens 1 afwezige student.")
         elif len(gekozen_afwezigen_lm5) > 5:
@@ -9666,8 +9665,6 @@ with st.expander("Last-minute afwezigen", expanded=False):
                     absentees=gekozen_afwezigen_lm5
                 )
 
-                # Robuust: werkt zowel als de writer een Workbook teruggeeft
-                # als wanneer hij al bytes teruggeeft
                 if isinstance(lm5_result, (bytes, bytearray)):
                     lm5_file_bytes = bytes(lm5_result)
                 else:
@@ -9676,13 +9673,17 @@ with st.expander("Last-minute afwezigen", expanded=False):
                     lm5_output.seek(0)
                     lm5_file_bytes = lm5_output.getvalue()
 
-                st.success("Last-minute planning gemaakt.")
-                st.download_button(
-                    "Download last-minute planning",
-                    data=lm5_file_bytes,
-                    file_name=f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-                    key="lm5_download_button"
-                )
+                st.session_state["lm5_result_bytes"] = lm5_file_bytes
+                st.session_state["lm5_result_filename"] = f"Planning_last_minute_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
             except Exception as e:
                 st.error(f"Fout in last-minute planner: {e}")
+
+    if "lm5_result_bytes" in st.session_state:
+        st.success("Last-minute planning gemaakt.")
+        st.download_button(
+            "Download last-minute planning",
+            data=st.session_state["lm5_result_bytes"],
+            file_name=st.session_state.get("lm5_result_filename", "Planning_last_minute.xlsx"),
+            key="lm5_download_button"
+        )
