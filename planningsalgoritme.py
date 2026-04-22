@@ -7587,7 +7587,7 @@ output_lm_base.seek(0)
 # -----------------------------
 ws_plan = wb_out["Planning"]
 laatste_rij = ws_plan.max_row
-invoegrij = laatste_rij + 4
+invoegrij = laatste_rij + 2
 
 for rij in ws_hero.iter_rows():
     if rij[0].value == "Belangrijk!":
@@ -8145,38 +8145,6 @@ def lm5_rebuild_hour_state(uur, available_attraction_students, capacity_actions)
         "second_spot_blocked": second_spot_blocked_lm,
         "debug_actions": debug_actions,
     }
-# ------------------------------------------------------------
-# Context
-# ------------------------------------------------------------
-def lm5_init_context(base_maps, absentees, start_uur):
-    abs_set = {str(x).strip() for x in absentees}
-    absent_pv = [n for n in abs_set if n in set(lm5_pv_names())]
-
-    pv_replacements = lm5_pick_pv_replacements(
-        absent_pv_names=absent_pv,
-        start_uur=start_uur,
-        base_maps=base_maps,
-        absentees_set=abs_set
-    )
-
-    student_states = {}
-    for s in studenten:
-        student_states[str(s["naam"]).strip()] = lm5_copy_student_state(s)
-
-    return {
-        "base_maps": base_maps,
-        "abs_set": abs_set,
-        "absent_pv": absent_pv,
-        "pv_replacements": pv_replacements,
-        "student_states": student_states,
-        "assigned_map": defaultdict(list),       # (uur, attr) -> [namen]
-        "extra_assignments": defaultdict(list),  # uur -> [namen]
-        "per_hour_assigned_counts": {uur: defaultdict(int) for uur in open_uren},
-        "hour_states": {},
-        "changes_count": defaultdict(int),
-        "prev_attr": {},
-    }
-
 
 
 # ------------------------------------------------------------
@@ -9649,8 +9617,12 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 # ------------------------------------------------------------
 st.markdown("### Last-minute afwezigen")
 
+@st.cache_data
+def _cached_base_maps(base_bytes):
+    return lm5_extract_base_maps(base_bytes)
+
 base_bytes_lm5 = output_lm_base.getvalue()
-base_maps_lm5 = lm5_extract_base_maps(base_bytes_lm5)
+base_maps_lm5 = _cached_base_maps(base_bytes_lm5)  # ← wordt nu maar 1x berekend
 werkende_studenten_vandaag_lm5 = lm5_working_students_today(base_maps_lm5)
 
 with st.expander("Last-minute afwezigen", expanded=False):
