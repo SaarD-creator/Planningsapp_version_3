@@ -7564,6 +7564,19 @@ if ws_bron:
     for rij, hoogte in ws_bron.row_dimensions.items():
         ws_hero.row_dimensions[rij].height = hoogte.height
 
+# -----------------------------
+# Dringende heropleidingen in Planning
+# -----------------------------
+ws_plan = wb_out["Planning"]
+laatste_rij = ws_plan.max_row
+invoegrij = laatste_rij + 4
+
+for rij in ws_hero.iter_rows():
+    if rij[0].value == "Belangrijk!":
+        naam = rij[1].value or ""
+        omschrijving = rij[2].value or ""
+        ws_plan.cell(invoegrij, 1).value = f"Dringende heropleiding: {naam}: {omschrijving}"
+        invoegrij += 1
 
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
@@ -7578,20 +7591,6 @@ for bladnaam in ["Pauzevlinders", "Feedback"]:
         ws_hide.sheet_state = "veryHidden" 
 
 #ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo
-
-# -----------------------------
-# Dringende heropleidingen in Planning
-# -----------------------------
-ws_plan = wb_out["Planning"]
-laatste_rij = ws_plan.max_row
-invoegrij = laatste_rij + 3
-
-for rij in ws_hero.iter_rows():
-    if rij[0].value == "Belangrijk!":
-        naam = rij[1].value or ""
-        omschrijving = rij[2].value or ""
-        ws_plan.cell(invoegrij, 1).value = f"Dringende heropleiding: {naam}: {omschrijving}"
-        invoegrij += 1
 
 
 # -----------------------------
@@ -8979,9 +8978,9 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
     # Bepaal waar de nieuwe rijen moeten komen:
     # liefst ONDER de extra-rijen, anders onder de pauzevlinderrijen,
     # anders onder de bestaande attractierijen.
-    attr_rijen = [row for row, _ in attr_rows]
-    if attr_rijen:
-        insert_after = max(attr_rijen)
+    alle_bestaande_rijen = [row for row, _ in attr_rows] + [row for row, _ in pv_rows] + [row for row, _ in extra_rows]
+    if alle_bestaande_rijen:
+        insert_after = max(alle_bestaande_rijen)
     else:
         insert_after = 1
 
@@ -9007,15 +9006,12 @@ def lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur):
             bestaande_attr_pos.add((attr, pos))
 
     # Voeg de nieuwe rijen toe aan attr_rows
-    if nieuwe_attr_rows:
-        verschuiving = len(nieuwe_attr_rows) + 1
-        pv_rows = [(row + verschuiving, label) for row, label in pv_rows]
-        extra_rows = [(row + verschuiving, label) for row, label in extra_rows]
-        base_maps["pv_rows"] = pv_rows
-        base_maps["extra_rows"] = extra_rows
-    
     attr_rows.extend(nieuwe_attr_rows)
+
+    # Sorteer op fysieke rij
     attr_rows.sort(key=lambda x: x[0])
+
+    # Schrijf terug naar base_maps
     base_maps["attr_rows"] = attr_rows
 
 
@@ -9431,6 +9427,21 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
     attr_rows  = list(base_maps["attr_rows"])
     pv_rows    = base_maps["pv_rows"]
     extra_rows = base_maps["extra_rows"]
+    # Samengevoegde attractierijen fysiek boven pauzevlinders plaatsen
+    if pv_rows and attr_rows:
+        eerste_pv_rij = min(row for row, _ in pv_rows)
+        nieuwe_attr = [(row, label) for row, label in attr_rows if row >= eerste_pv_rij]
+        if nieuwe_attr:
+            aantal = len(nieuwe_attr)
+            ws_plan.insert_rows(eerste_pv_rij, amount=aantal + 1)
+            verschuiving = aantal + 1
+            pv_rows    = [(row + verschuiving, label) for row, label in pv_rows]
+            extra_rows = [(row + verschuiving, label) for row, label in extra_rows]
+            hernummer  = {old: eerste_pv_rij + i for i, (old, _) in enumerate(nieuwe_attr)}
+            attr_rows  = [(hernummer[row], label) if row in hernummer else (row, label) for row, label in attr_rows]
+            base_maps["pv_rows"]    = pv_rows
+            base_maps["extra_rows"] = extra_rows
+            base_maps["attr_rows"]  = attr_rows
 
     center_align = Alignment(horizontal="center", vertical="center")
     thin_border  = Border(
