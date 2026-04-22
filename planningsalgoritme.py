@@ -7539,6 +7539,17 @@ def maak_wisselplanning_sheet(wb_arg, am_arg):
 # ── oorspronkelijke aanroep (vervangt de oude losse code) ──
 maak_wisselplanning_sheet(wb_out, assigned_map)
 
+# -----------------------------
+# Werkblad Heropleidingen
+# -----------------------------
+ws_hero = wb_out.create_sheet(title="Heropleidingen")
+for rij in range(42, 67):  # rijen 42 t/m 66
+    for kol in range(35, 38):  # kolommen AI (35) t/m AK (37)
+        broncel = ws.cell(rij, kol)
+        doelrij = rij - 41  # start op rij 1 in het nieuwe werkblad
+        doelkol = kol - 34  # start op kolom A (1) in het nieuwe werkblad
+        ws_hero.cell(doelrij, doelkol).value = broncel.value
+
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
