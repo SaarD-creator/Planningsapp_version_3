@@ -7548,8 +7548,7 @@ for rij in range(42, 67):  # rijen 42 t/m 66
         broncel = ws.cell(rij, kol)
         doelrij = rij - 41  # start op rij 1 in het nieuwe werkblad
         doelkol = kol - 34  # start op kolom A (1) in het nieuwe werkblad
-        ws_hero.cell(doelrij, doelkol).value = broncel.value
-
+        ws_hero.cell(doelrij, doelkol).value = ws_raw.cell(rij, kol).value
 
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
 #NIEUWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWWW
