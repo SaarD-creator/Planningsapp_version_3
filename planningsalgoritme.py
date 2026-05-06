@@ -5800,7 +5800,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
                 continue
 
             if pp2_benodigde_korte_kwartieren(naam) > 0:
-    
+                namen.append(naam)
         return namen
     
     
