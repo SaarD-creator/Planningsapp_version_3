@@ -4683,6 +4683,122 @@ def maak_pp2_sheets(wb_arg, am_arg):
             ):
                 return True
         return False
+
+
+    def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
+        """
+        Een lange pauze mag alleen als:
+        - beide kwartieren samen exact 30 min vormen
+        - student werkt in beide kwartieren
+        - niet in eerste of laatste werkuur
+        - student op geen van beide kwartieren al elders in het pauzerooster staat
+        """
+        header1 = ws_sheet.cell(1, col1).value
+        header2 = ws_sheet.cell(1, col2).value
+    
+        mins1 = pp2_parse_kwartier_header(header1)
+        mins2 = pp2_parse_kwartier_header(header2)
+    
+        if mins1 is None or mins2 is None:
+            return False
+    
+        if mins2 - mins1 != 15:
+            return False
+    
+        werk_uren = pp2_get_student_work_hours(naam)
+        if not werk_uren:
+            return False
+    
+        uur1 = parse_header_uur(header1)
+        uur2 = parse_header_uur(header2)
+    
+        if uur1 is None or uur2 is None:
+            return False
+    
+        if uur1 not in werk_uren or uur2 not in werk_uren:
+            return False
+    
+        eerste_uur = werk_uren[0]
+        laatste_uur = werk_uren[-1]
+    
+        if uur1 == eerste_uur or uur1 == laatste_uur:
+            return False
+        if uur2 == eerste_uur or uur2 == laatste_uur:
+            return False
+    
+        if pp2_student_heeft_al_pauze_op_kolom(
+            naam=naam,
+            col=col1,
+            ws_sheet=ws_sheet,
+            pv_rows=pv_rows_pp2
+        ):
+            return False
+    
+        if pp2_student_heeft_al_pauze_op_kolom(
+            naam=naam,
+            col=col2,
+            ws_sheet=ws_sheet,
+            pv_rows=pv_rows_pp2
+        ):
+            return False
+    
+        return True
+        
+    def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam, leave_top_blank=False):
+        """
+        Schrijf een lange pauze van 2 kwartieren:
+        - normaal: attractie erboven
+        - voor pauzevlinder op eigen rij: bovenste cel leeg laten
+        - naam in beide vakjes
+        - groen kleuren
+        """
+        for col in [col1, col2]:
+            info_cel = ws_sheet.cell(pv_row - 1, col)
+            info_cel.alignment = center_align
+            info_cel.border = thin_border
+    
+            if leave_top_blank:
+                info_cel.value = ""
+            else:
+                header = ws_sheet.cell(1, col).value
+                uur = parse_header_uur(header)
+                attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
+                info_cel.value = attr if attr else ""
+    
+            naam_cel = ws_sheet.cell(pv_row, col)
+            naam_cel.value = naam
+            naam_cel.alignment = center_align
+            naam_cel.border = thin_border
+            naam_cel.fill = lichtgroen_fill
+
+    
+    def pp2_halfuur_blokken(pauze_cols, ws_sheet):
+        """
+        Geeft alle mogelijke halfuurblokken terug, van links naar rechts.
+        Flexibel:
+        - mag starten op heel uur
+        - mag ook starten op :15
+        Dus bv.:
+        (12u00, 12u15), (12u15, 12u30), (12u30, 12u45), ...
+        zolang de cellen exact 15 minuten uit elkaar liggen.
+        """
+        blokken = []
+    
+        for idx in range(len(pauze_cols) - 1):
+            col1 = pauze_cols[idx]
+            col2 = pauze_cols[idx + 1]
+    
+            mins1 = pp2_parse_kwartier_header(ws_sheet.cell(1, col1).value)
+            mins2 = pp2_parse_kwartier_header(ws_sheet.cell(1, col2).value)
+    
+            if mins1 is None or mins2 is None:
+                continue
+    
+            if mins2 - mins1 == 15:
+                blokken.append((col1, col2))
+    
+        return blokken
+    
     
     
     # -----------------------------
@@ -5332,121 +5448,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
         return None
         
     
-    
-    def pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
-        """
-        Een lange pauze mag alleen als:
-        - beide kwartieren samen exact 30 min vormen
-        - student werkt in beide kwartieren
-        - niet in eerste of laatste werkuur
-        - student op geen van beide kwartieren al elders in het pauzerooster staat
-        """
-        header1 = ws_sheet.cell(1, col1).value
-        header2 = ws_sheet.cell(1, col2).value
-    
-        mins1 = pp2_parse_kwartier_header(header1)
-        mins2 = pp2_parse_kwartier_header(header2)
-    
-        if mins1 is None or mins2 is None:
-            return False
-    
-        if mins2 - mins1 != 15:
-            return False
-    
-        werk_uren = pp2_get_student_work_hours(naam)
-        if not werk_uren:
-            return False
-    
-        uur1 = parse_header_uur(header1)
-        uur2 = parse_header_uur(header2)
-    
-        if uur1 is None or uur2 is None:
-            return False
-    
-        if uur1 not in werk_uren or uur2 not in werk_uren:
-            return False
-    
-        eerste_uur = werk_uren[0]
-        laatste_uur = werk_uren[-1]
-    
-        if uur1 == eerste_uur or uur1 == laatste_uur:
-            return False
-        if uur2 == eerste_uur or uur2 == laatste_uur:
-            return False
-    
-        if pp2_student_heeft_al_pauze_op_kolom(
-            naam=naam,
-            col=col1,
-            ws_sheet=ws_sheet,
-            pv_rows=pv_rows_pp2
-        ):
-            return False
-    
-        if pp2_student_heeft_al_pauze_op_kolom(
-            naam=naam,
-            col=col2,
-            ws_sheet=ws_sheet,
-            pv_rows=pv_rows_pp2
-        ):
-            return False
-    
-        return True
-        
-    
-    def pp2_write_long_break(ws_sheet, pv_row, col1, col2, naam, leave_top_blank=False):
-        """
-        Schrijf een lange pauze van 2 kwartieren:
-        - normaal: attractie erboven
-        - voor pauzevlinder op eigen rij: bovenste cel leeg laten
-        - naam in beide vakjes
-        - groen kleuren
-        """
-        for col in [col1, col2]:
-            info_cel = ws_sheet.cell(pv_row - 1, col)
-            info_cel.alignment = center_align
-            info_cel.border = thin_border
-    
-            if leave_top_blank:
-                info_cel.value = ""
-            else:
-                header = ws_sheet.cell(1, col).value
-                uur = parse_header_uur(header)
-                attr = vind_attractie_op_uur(naam, uur) if uur is not None else None
-                info_cel.value = attr if attr else ""
-    
-            naam_cel = ws_sheet.cell(pv_row, col)
-            naam_cel.value = naam
-            naam_cel.alignment = center_align
-            naam_cel.border = thin_border
-            naam_cel.fill = lichtgroen_fill
-    
-    
-    def pp2_halfuur_blokken(pauze_cols, ws_sheet):
-        """
-        Geeft alle mogelijke halfuurblokken terug, van links naar rechts.
-        Flexibel:
-        - mag starten op heel uur
-        - mag ook starten op :15
-        Dus bv.:
-        (12u00, 12u15), (12u15, 12u30), (12u30, 12u45), ...
-        zolang de cellen exact 15 minuten uit elkaar liggen.
-        """
-        blokken = []
-    
-        for idx in range(len(pauze_cols) - 1):
-            col1 = pauze_cols[idx]
-            col2 = pauze_cols[idx + 1]
-    
-            mins1 = pp2_parse_kwartier_header(ws_sheet.cell(1, col1).value)
-            mins2 = pp2_parse_kwartier_header(ws_sheet.cell(1, col2).value)
-    
-            if mins1 is None or mins2 is None:
-                continue
-    
-            if mins2 - mins1 == 15:
-                blokken.append((col1, col2))
-    
-        return blokken
+
     
     
     def pp2_place_long_break_for_pv_in_own_row(pv, pv_name_row, ws_sheet, pauze_cols, lange_pauze_ontvangers, lange_werkers_random):
