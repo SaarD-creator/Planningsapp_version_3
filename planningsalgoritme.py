@@ -1,3 +1,5 @@
+# nieuwe logica voor studenten die langer werken dan effectieve uren op planning (12-14u -> wel pauze) maar: pauzes liggen soms onnodig ver uit elkaar
+# & wanneer einde shift < 1,5 + einde echte shift => korte pauze ontbreekt
 # Last minute planning is vaak niet top
 # overschakeling compleettt
 # splitsing volgens ideaalmomenten
