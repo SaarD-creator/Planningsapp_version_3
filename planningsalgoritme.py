@@ -4711,6 +4711,8 @@ def maak_pp2_sheets(wb_arg, am_arg):
     
         if laatste_werkblok > 15:
             continue
+        if student_totalen.get(naam, 0) > 6:  # lange werkers horen in stap 2
+            continue
     
         item = {
             "naam": naam,
