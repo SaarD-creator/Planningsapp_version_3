@@ -1,3 +1,4 @@
+# nieuwe logica voor studenten die langer werken dan effectieve uren op planning (12-14u -> wel pauze) maar pauze valt niet ideaal
 # Last minute planning is vaak niet top
 # overschakeling compleettt
 # splitsing volgens ideaalmomenten
@@ -4725,6 +4726,167 @@ def maak_pp2_sheets(wb_arg, am_arg):
             return False
         return ws_sheet.cell(rij, col).value in [None, ""]
     
+
+    # -----------------------------
+    # STAP 0.5: helpers voor speciale meerderjarige lange werkers
+    # (theo <= 6u, echt > 6u, theo uren bevatten 12u én 13u)
+    # -----------------------------
+
+    def pp2_is_speciale_lange_werker(naam):
+        """
+        Meerderjarige student die theoretisch <= 6u werkt maar echt > 6u,
+        en waarvan de theoretische uren zowel 12u als 13u bevatten.
+        """
+        if pp2_is_minderjarig(naam):
+            return False
+        if student_totalen.get(naam, 0) > 6:
+            return False  # al een gewone lange werker
+        if werkduur_voor_pauze(naam) <= 6:
+            return False  # echt niet meer dan 6u
+        theo_uren = pp2_get_student_work_hours(naam)
+        return 12 in theo_uren and 13 in theo_uren
+
+    def pp2_speciale_groep(naam):
+        """
+        Geeft 1 of 2 terug voor speciale lange werkers:
+          1 = echte einduur - theo einduur >= 1.5u → enkel lange pauze 12-14u
+          2 = echte einduur - theo einduur < 1.5u  → lange + korte (minderjarige regeling)
+        Geeft None terug als de student niet in deze categorie valt.
+        """
+        if not pp2_is_speciale_lange_werker(naam):
+            return None
+        student = next((s for s in studenten if s["naam"] == naam), None)
+        if not student:
+            return None
+        echte_eind = student.get("eind_uur")
+        if echte_eind is None:
+            return None
+        theo_uren = pp2_get_student_work_hours(naam)
+        if not theo_uren:
+            return None
+        theo_eind = max(theo_uren)
+        return 1 if (echte_eind - theo_eind) >= 1.5 else 2
+
+    def pp2_is_valid_long_break_12_14(naam, col1, col2, ws_sheet):
+        """
+        Lange pauze geldig én verplicht gestart tussen 12u en 14u
+        (uur van col1 moet 12 of 13 zijn).
+        """
+        if not pp2_is_valid_long_break_for_student(naam, col1, col2, ws_sheet):
+            return False
+        uur1 = parse_header_uur(ws_sheet.cell(1, col1).value)
+        return uur1 in (12, 13)
+
+    # -----------------------------
+    # STAP 0.5: speciale meerderjarige lange werkers verwerken
+    # -----------------------------
+    speciale_groep1_namen = set()   # groep 1: krijgen GEEN korte pauze
+    speciale_verwerkt = set()       # iedereen die in stap 0.5 is afgehandeld
+
+    for s in studenten:
+        naam = s["naam"]
+        if naam in pauzevlinder_namen_set:
+            continue
+
+        groep = pp2_speciale_groep(naam)
+        if groep is None:
+            continue
+
+        theo_uren = pp2_get_student_work_hours(naam)
+        eerste_uur = theo_uren[0] if theo_uren else None
+        laatste_uur = theo_uren[-1] if theo_uren else None
+
+        if groep == 1:
+            # Enkel lange pauze, verplicht tussen 12u en 14u
+            geplaatst = False
+            for col1, col2 in pp2_halfuur_blokken(pauze_cols_pp2, ws_pp2):
+                if geplaatst:
+                    break
+                for _pv, pv_name_row in pv_rows_pp2:
+                    if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col1):
+                        continue
+                    if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col2):
+                        continue
+                    if not pp2_is_valid_long_break_12_14(naam, col1, col2, ws_pp2):
+                        continue
+                    pp2_write_long_break(
+                        ws_sheet=ws_pp2, pv_row=pv_name_row,
+                        col1=col1, col2=col2, naam=naam, leave_top_blank=False
+                    )
+                    speciale_groep1_namen.add(naam)
+                    speciale_verwerkt.add(naam)
+                    geplaatst = True
+                    break
+            if not geplaatst:
+                pp2_niet_geplaatst.append({
+                    "naam": naam,
+                    "reden": "groep 1 speciale lange werker: geen geldig halfuur 12-14u gevonden"
+                })
+
+        elif groep == 2:
+            # Lange pauze + korte pauze: minderjarige regeling
+            pv_index = len(speciale_verwerkt) % len(pv_rows_pp2) if pv_rows_pp2 else 0
+            _pv_g2, pv_name_row = pv_rows_pp2[pv_index] if pv_rows_pp2 else (None, None)
+
+            # Pauze 1: halfuur zo vroeg mogelijk, niet in eerste/laatste theo werkuur
+            col1_gekozen = None
+            if pv_name_row and eerste_uur is not None:
+                for i in range(len(pauze_cols_pp2) - 1):
+                    col1 = pauze_cols_pp2[i]
+                    col2 = pauze_cols_pp2[i + 1]
+                    if col2 != col1 + 1:
+                        continue
+                    uur1 = parse_header_uur(ws_pp2.cell(1, col1).value)
+                    uur2 = parse_header_uur(ws_pp2.cell(1, col2).value)
+                    if uur1 is None or uur2 is None:
+                        continue
+                    if uur1 in (eerste_uur, laatste_uur) or uur2 in (eerste_uur, laatste_uur):
+                        continue
+                    if uur1 not in theo_uren or uur2 not in theo_uren:
+                        continue
+                    if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col1):
+                        continue
+                    if not pp2_is_beschikbaar(ws_pp2, pv_name_row, col2):
+                        continue
+                    col1_gekozen = col1
+                    break
+
+            if col1_gekozen is not None:
+                pp2_write_long_break(
+                    ws_sheet=ws_pp2, pv_row=pv_name_row,
+                    col1=col1_gekozen, col2=col1_gekozen + 1,
+                    naam=naam, leave_top_blank=False
+                )
+                # Pauze 2: kwartier zo laat mogelijk, niet in eerste/laatste theo werkuur
+                kort_geplaatst = False
+                for gebruik_rij in ([pv_name_row] + [r for (_p2, r) in pv_rows_pp2 if r != pv_name_row]):
+                    for col in reversed(pauze_cols_pp2):
+                        uur = parse_header_uur(ws_pp2.cell(1, col).value)
+                        if uur is None or uur in (eerste_uur, laatste_uur):
+                            continue
+                        if uur not in theo_uren:
+                            continue
+                        if not pp2_is_beschikbaar(ws_pp2, gebruik_rij, col):
+                            continue
+                        if pp2_student_heeft_al_pauze_op_kolom(naam, col, ws_pp2, pv_rows_pp2):
+                            continue
+                        pp2_write_name(ws_pp2, gebruik_rij, col, naam)
+                        kort_geplaatst = True
+                        break
+                    if kort_geplaatst:
+                        break
+                if not kort_geplaatst:
+                    pp2_niet_geplaatst.append({
+                        "naam": naam,
+                        "reden": "groep 2 speciale lange werker: geen geldig kwartier gevonden"
+                    })
+            else:
+                pp2_niet_geplaatst.append({
+                    "naam": naam,
+                    "reden": "groep 2 speciale lange werker: geen geldig halfuur gevonden"
+                })
+
+            speciale_verwerkt.add(naam)
     
     
     # -----------------------------
@@ -5484,19 +5646,18 @@ def maak_pp2_sheets(wb_arg, am_arg):
     
     def pp2_benodigde_korte_kwartieren(naam):
         """
-        Nieuwe regel voor PP optie 2:
-        - < 4 uur gewerkt => 0 korte kwartieren
-        - >= 4 uur gewerkt => 1 kort kwartier
-    
-        Dit geldt nu ook voor minderjarigen:
-        - minderjarige 4u t.e.m. 6u => 1 kort kwartier
-        - minderjarige > 6u => ook 1 kort kwartier
+        - groep 1 speciale lange werker => 0 (enkel lange pauze)
+        - < 4 uur gewerkt => 0
+        - anders => 1
         """
+        if naam in speciale_groep1_namen:
+            return 0
+
         gewerkte_uren = werkduur_voor_pauze(naam)
-    
+
         if gewerkte_uren < 4:
             return 0
-    
+
         return 1
     
     
@@ -5628,6 +5789,9 @@ def maak_pp2_sheets(wb_arg, am_arg):
             )
     
             if is_minor_early_stopper:
+                continue
+
+            if naam in speciale_groep1_namen:
                 continue
     
             if pp2_benodigde_korte_kwartieren(naam) > 0:
