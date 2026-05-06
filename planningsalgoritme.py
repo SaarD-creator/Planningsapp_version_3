@@ -2444,7 +2444,7 @@ def werkduur_voor_pauze(naam):
 
     In alle andere gevallen: gebruik de theoretische duur (student_totalen).
     """
-    theo_duur = werkduur_voor_pauze(naam)
+    theo_duur = student_totalen.get(naam, 0)
 
     student = next((s for s in studenten if s["naam"] == naam), None)
     if student is None:
