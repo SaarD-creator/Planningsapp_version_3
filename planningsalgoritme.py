@@ -2440,14 +2440,20 @@ for pv in selected:
         pv_rows.append((pv, row_found))
 
 # Bereken totaal uren per student in Werkblad "Planning"
+# Bouw col→uur mapping vanuit de headerrij van ws_planning
+_col_uur_planning = {}
+for _c in range(2, ws_planning.max_column + 1):
+    _uur = parse_header_uur(ws_planning.cell(1, _c).value)
+    if _uur is not None:
+        _col_uur_planning[_c] = _uur
+
 student_totalen = defaultdict(float)
 for row in ws_planning.iter_rows(min_row=2):
     for cel in row[1:]:
         naam = cel.value
         if naam and str(naam).strip() != "":
-            col_uur = col_to_uur_speciaal.get(cel.column)
-            duur = blok_durations.get(col_uur, 1.0)
-            student_totalen[str(naam).strip()] += duur
+            _uur = _col_uur_planning.get(cel.column)
+            student_totalen[str(naam).strip()] += blok_durations.get(_uur, 1.0)
 
 # Loop door pauzevlinders in Werkblad "Pauzevlinders"
 
