@@ -1,3 +1,8 @@
+# Last minute planning is vaak niet top
+# overschakeling compleettt
+# splitsing volgens ideaalmomenten
+# samengevoegde attracties als 1 --> fix in plaatsing! maar nog vaak 2x drie uur bij 1 attractie
+# niet meer laden na elke verandering
 # Werkblad heropleidingen! Plus op de planning
 # LM: afkappingen is in orde (automatisch op planning) Maar: lange blokken (5 uur aan een stuk) kunnen precies voorkomen...
 # post-processing laat geen switches toe die een 1-uursblok achterlaten (ook niet in LM)
@@ -25,10 +30,6 @@ from openpyxl.utils import get_column_letter
 from io import BytesIO
 import datetime
 
-# -----------------------------
-# Datum
-# -----------------------------
-vandaag = datetime.date.today().strftime("%d-%m-%Y")
 
 # -----------------------------
 # Excelbestand uploaden
@@ -46,9 +47,94 @@ file_bytes = uploaded_file.read()
 wb = load_workbook(BytesIO(file_bytes), data_only=True)
 ws = wb["Input"]
 
-# Extra workbook met ruwe celinhoud / formules
-wb_raw = load_workbook(BytesIO(file_bytes), data_only=False)
-ws_raw = wb_raw["Input"]
+
+ws_speciaal = wb["Input_"]
+ws_aanpassingen = wb["Aanpassingen"]
+
+# -----------------------------
+# Datum op basis van W4 in Input_
+# -----------------------------
+_vandaag_datum = datetime.date.today()
+_morgen_datum = _vandaag_datum + datetime.timedelta(days=1)
+_w4 = str(ws_speciaal.cell(4, 23).value or "").strip().lower()
+if _w4 == "morgen":
+    vandaag = _morgen_datum.strftime("%d-%m-%Y")
+else:
+    vandaag = _vandaag_datum.strftime("%d-%m-%Y")
+vandaag_altijd_vandaag = _vandaag_datum.strftime("%d-%m-%Y")  # altijd vandaag, voor last-minute
+
+
+def parse_uur_waarde(val):
+    """
+    Zet een celwaarde om naar een uur als float.
+    Werkt met: int (10), float (17.5), str ('10', '17,5', '17:30'),
+               datetime.time (10:00:00 → 10.0, 17:30:00 → 17.5)
+    Geeft None terug als de waarde niet parseerbaar is.
+    """
+    if val is None:
+        return None
+    import datetime as _dt
+    if isinstance(val, _dt.time):
+        return val.hour + val.minute / 60 + val.second / 3600
+    if isinstance(val, (int, float)):
+        return float(val)
+    s = str(val).strip()
+    if ":" in s:
+        parts = s.split(":")
+        try:
+            return int(parts[0]) + int(parts[1]) / 60
+        except:
+            return None
+    s = s.replace(",", ".").replace("u", "").strip()
+    try:
+        return float(s)
+    except:
+        return None
+        
+
+def formatteer_uur(u):
+    """10 → '10u', 13.5 → '13u30', 9.25 → '9u15'"""
+    uren = int(u)
+    minuten = round((u - uren) * 60)
+    if minuten == 0:
+        return f"{uren}u"
+    return f"{uren}u{minuten:02d}"
+
+
+# Kolom→uur mapping vanuit Input_ rij 2 (I2:S2)
+# Nodig voor samenvoeg-attracties en dichte uren, die vóór open_uren gelezen worden
+col_to_uur_speciaal = {}
+for _kol in range(9, 20):
+    _uur = parse_uur_waarde(ws_speciaal.cell(2, _kol).value)
+    if _uur is not None and _uur != 0:
+        col_to_uur_speciaal[_kol] = _uur
+        
+
+def parse_blok_duur(label_str):
+    """Parst '0,5h', '0,75h', '1,5h' → float. Geeft 1.0 als niet parseerbaar."""
+    if not label_str:
+        return 1.0
+    s = str(label_str).strip().replace(",", ".").replace("h", "").strip()
+    try:
+        return float(s)
+    except ValueError:
+        return 1.0
+
+
+
+# Blokduur per uur (uit I1:S1 van Input_)
+# Kolommen zonder label krijgen standaard 1.0 uur
+blok_durations = {}
+for _kol in range(9, 20):  # kolom I t/m S
+    _uur = col_to_uur_speciaal.get(_kol)
+    if _uur is None:
+        continue
+    _label = ws_speciaal.cell(1, _kol).value
+    blok_durations[_uur] = parse_blok_duur(_label)
+
+
+ws_studenten = wb["Studenten"]
+
 
 # -----------------------------
 
@@ -64,35 +150,86 @@ def max_consecutive_hours(urenlijst):
         maxr = max(maxr, huidig)
     return maxr
 
-def partition_run_lengths(L):
-    """Flexibele blokken: prioritair 3 uur, dan 2,4,1 om shift te vullen."""
-    blocks = [3,2,4,1]
-    dp = [(10**9, [])]*(L+1)
-    dp[0] = (0, [])
-    for i in range(1, L+1):
-        best = (10**9, [])
-        for b in blocks:
-            if i-b < 0:
-                continue
-            prev_ones, prev_blocks = dp[i-b]
-            new_blocks = prev_blocks + [b]
-            ones = prev_ones + (1 if b==1 else 0)
-            if ones < best[0]:
-                best = (ones, new_blocks)
-        dp[i] = best
-    return dp[L][1]
+
+
+def compute_ideal_moments(open_uren):
+    """
+    Ideaalmomenten vallen na elke 3 blokken (op basis van positie, niet uren).
+    Als het totaal aantal blokken deelbaar is door 3, zijn er geen ideaalmomenten nodig.
+
+    Voorbeeld: 9 blokken → deelbaar door 3 → lege set
+    Voorbeeld: 8 blokken → ideaalmomenten op blok 4 en blok 7 (index 3 en 6)
+    """
+    if not open_uren:
+        return set()
+    blokken = sorted(open_uren)
+    if len(blokken) < 4:
+        return set()
+    return {blokken[i] for i in range(3, len(blokken), 3)}
+
+
+def partition_run_lengths(run_hours, ideal_moments=None):
+    """
+    Splits een run van blokken op in stukken van [3, 2, 4, 1].
+    Gebruikt blokposities (via run_hours lijst), niet uuraritmethiek.
+    """
+    L = len(run_hours)
+    blocks = [3, 2, 4, 1]
+    use_ideal = bool(ideal_moments) and L % 3 != 0
+
+    if use_ideal:
+        INF = 10 ** 9
+        dp = [(INF, INF, [])] * (L + 1)
+        dp[0] = (0, 0, [])
+        for i in range(1, L + 1):
+            best = (INF, INF, [])
+            for b in blocks:
+                if i - b < 0:
+                    continue
+                prev_neg, prev_ones, prev_blks = dp[i - b]
+                if prev_neg == INF:
+                    continue
+                # Startuur van dit blok rechtstreeks uit run_hours
+                blok_start_uur = run_hours[i - b]
+                is_ideal = (i - b > 0) and (blok_start_uur in ideal_moments)
+                cand = (
+                    prev_neg - (1 if is_ideal else 0),
+                    prev_ones + (1 if b == 1 else 0),
+                    prev_blks + [b],
+                )
+                if (cand[0], cand[1]) < (best[0], best[1]):
+                    best = cand
+            dp[i] = best
+        return dp[L][2]
+    else:
+        dp = [(10 ** 9, [])] * (L + 1)
+        dp[0] = (0, [])
+        for i in range(1, L + 1):
+            best = (10 ** 9, [])
+            for b in blocks:
+                if i - b < 0:
+                    continue
+                prev_ones, prev_blks = dp[i - b]
+                cand = (prev_ones + (1 if b == 1 else 0), prev_blks + [b])
+                if cand < best:
+                    best = cand
+            dp[i] = best
+        return dp[L][1]
+
 
 def contiguous_runs(sorted_hours):
-    runs=[]
+    runs = []
     if not sorted_hours:
         return runs
-    run=[sorted_hours[0]]
+    # Gebruik positie in open_uren, niet uur+1
+    blok_index = {u: i for i, u in enumerate(sorted(open_uren))}
+    run = [sorted_hours[0]]
     for h in sorted_hours[1:]:
-        if h==run[-1]+1:
+        if blok_index.get(h, -99) == blok_index.get(run[-1], -98) + 1:
             run.append(h)
         else:
             runs.append(run)
-            run=[h]
+            run = [h]
     runs.append(run)
     return runs
 
@@ -125,44 +262,68 @@ def parse_header_uur(header):
 # -----------------------------
 # Studenten inlezen
 # -----------------------------
-studenten=[]
-for rij in range(2,500):
-    naam = ws.cell(rij,12).value
+studenten = []
+
+# Lees attractienamen uit rij 1 van 'Studenten', kolommen G t/m X (7-24)
+attractie_namen_studenten = [
+    ws_studenten.cell(1, kol).value
+    for kol in range(7, 25)
+]
+
+for rij in range(2, 500):
+    naam = ws_studenten.cell(rij, 5).value  # kolom E
     if not naam:
         continue
-    uren_beschikbaar=[10+(kol-3) for kol in range(3,12) if ws.cell(rij,kol).value in [1,True,"WAAR","X"]]
-    attracties=[ws.cell(1,kol).value for kol in range(14,32) if ws.cell(rij,kol).value in [1,True,"WAAR","X"]]
+
+    # Werkuren uit C (beginuur) en D (einduur)
+    _begin = parse_uur_waarde(ws_studenten.cell(rij, 3).value)
+    _eind  = parse_uur_waarde(ws_studenten.cell(rij, 4).value)
+    if _begin is None or _eind is None:
+        uren_beschikbaar = []
+    else:
+        uren_beschikbaar = [
+            u for u in col_to_uur_speciaal.values()
+            if _begin <= u and u + blok_durations.get(u, 1.0) <= _eind
+        ]
+
+    # Attracties uit kolommen G-X (7-24), namen staan in rij 1
+    attracties = [
+        attractie_namen_studenten[kol - 7]
+        for kol in range(7, 25)
+        if ws_studenten.cell(rij, kol).value in [1, True, "WAAR", "X"]
+        and attractie_namen_studenten[kol - 7]
+    ]
+
+    # Aantal attracties uit kolom Z (26)
     try:
-        aantal_attracties=int(ws[f'AG{rij}'].value) if ws[f'AG{rij}'].value else len(attracties)
+        aantal_attracties = int(ws_studenten.cell(rij, 26).value) if ws_studenten.cell(rij, 26).value else len(attracties)
     except:
-        aantal_attracties=len(attracties)
+        aantal_attracties = len(attracties)
+
     studenten.append({
         "naam": naam,
         "uren_beschikbaar": sorted(uren_beschikbaar),
-        "attracties":[a for a in attracties if a],
-        "aantal_attracties":aantal_attracties,
-        "is_pauzevlinder":False,
-        "pv_number":None,
-        "assigned_attracties":set(),
-        "assigned_hours":[]
+        "attracties": attracties,
+        "aantal_attracties": aantal_attracties,
+        "is_pauzevlinder": False,
+        "pv_number": None,
+        "assigned_attracties": set(),
+        "assigned_hours": []
     })
 
-
-# Nieuwe dictionary voor uren dat een attractie DICHT is
 dichte_uren_per_attr = defaultdict(set)
-# AJ t/m AR (kolom 36 t/m 44)
-uur_kolommen = list(range(36, 45)) 
+# Input_: rijen 17 t/m 22, vakjes in I-S (kol 9-19), attractienaam in T (kol 20)
 
-for rij in range(24, 30): # Rij 24 t/m 29
-    attr_naam_raw = ws.cell(rij, 45).value # Kolom AS
+for rij in range(17, 23):  # rij 17 t/m 22
+    attr_naam_raw = ws_speciaal.cell(rij, 20).value  # kolom T
     if attr_naam_raw:
-        # Belangrijk: Gebruik normalize_attr voor een eerlijke vergelijking [3]
         attr_naam = normalize_attr(attr_naam_raw)
-        for col_idx in uur_kolommen:
-            val = ws.cell(rij, col_idx).value
+        for col_idx in range(9, 20):  # kolom I t/m S
+            val = ws_speciaal.cell(rij, col_idx).value
             if val in [1, True, "WAAR", "X"]:
-                uur = 10 + (col_idx - 36)
-                dichte_uren_per_attr[attr_naam].add(uur)
+                uur = col_to_uur_speciaal.get(col_idx)
+                if uur:
+                    dichte_uren_per_attr[attr_naam].add(uur)
 
 # -----------------------------
 # Samenvoeg-attracties (per uur)
@@ -171,21 +332,21 @@ for rij in range(24, 30): # Rij 24 t/m 29
 
 # In DEEL 1 bij "Samenvoeg-attracties (per uur)"
 uur_samenvoegingen = defaultdict(list)
-uur_kolommen = list(range(36, 45)) 
+# Input_: rijen 10 t/m 15, vakjes in I-S (kol 9-19), attractienamen in T-U-V (kol 20-22)
 
-for rij in range(14, 22):  # Rij 14 t/m 21 voor samenvoegingen
-    # Lees de groep (AS, AT, AU)
+for rij in range(10, 16):  # rij 10 t/m 15
     groep = []
-    for col in range(45, 48): 
-        val = ws.cell(rij, col).value
-        if val: groep.append(str(val).strip())
-    
+    for col in range(20, 23):  # kolom T, U, V
+        val = ws_speciaal.cell(rij, col).value
+        if val:
+            groep.append(str(val).strip())
+
     if len(groep) > 1:
-        # Check per uur of de samenvoeging actief is (AJ t/m AR)
-        for col_idx in uur_kolommen:
-            if ws.cell(rij, col_idx).value in [1, True, "WAAR", "X"]:
-                uur = 10 + (col_idx - 36)
-                uur_samenvoegingen[uur].append(groep)
+        for col_idx in range(9, 20):  # kolom I t/m S
+            if ws_speciaal.cell(rij, col_idx).value in [1, True, "WAAR", "X"]:
+                uur = col_to_uur_speciaal.get(col_idx)
+                if uur:
+                    uur_samenvoegingen[uur].append(groep)
 
 
 # -----------------------------
@@ -216,19 +377,33 @@ for s in studenten:
 # -----------------------------
 # Openingsuren
 # -----------------------------
-open_uren=[int(str(ws.cell(1,kol).value).replace("u","").strip()) for kol in range(36,45) if ws.cell(2,kol).value in [1,True,"WAAR","X"]]
+# Openingsuren lezen vanuit Input_, I2:S2 (kolommen 9-19)
+open_uren = []
+uur_labels = {}
+
+for kol in range(9, 20):
+    val = ws_speciaal.cell(2, kol).value
+    uur = parse_uur_waarde(val)
+    if uur is None or uur == 0:
+        continue
+    open_uren.append(uur)
+    label = ws_speciaal.cell(1, kol).value
+    if label and str(label).strip():
+        uur_labels[uur] = str(label).strip()
+
 if not open_uren:
-    open_uren=list(range(10,19))
-open_uren=sorted(set(open_uren))
+    open_uren = list(range(10, 19))
+open_uren = sorted(set(open_uren))
+        
 
-
+ideaalmomenten = compute_ideal_moments(open_uren)
 
 # -----------------------------
 # Sorteervolgorde studenten
 # Eerst op aantal attracties,
 # daarna op vaste tie-break regel uit BU2
 # -----------------------------
-bu2_waarde = ws["BU2"].value
+bu2_waarde = ws_speciaal.cell(3, 23).value  # W3 in Input_
 try:
     tie_break_mode = int(bu2_waarde)
 except:
@@ -270,21 +445,25 @@ def naam_tie_break_key(naam_raw):
 
 # Pauzevlinders
 # -----------------------------
-pauzevlinder_namen=[ws[f'BN{rij}'].value for rij in range(4,11) if ws[f'BN{rij}'].value]
+# Input_: C14 t/m C18 (kolom 3, rijen 14-18)
+pauzevlinder_namen = [
+    ws_speciaal.cell(rij, 3).value
+    for rij in range(14, 19)
+    if ws_speciaal.cell(rij, 3).value
+]
 
-def compute_pauze_hours(open_uren):
-    if 10 in open_uren and 18 in open_uren:
-        return [h for h in open_uren if 12 <= h <= 16]
-    elif 10 in open_uren and 17 in open_uren:
-        return [h for h in open_uren if 12 <= h <= 16]
-    elif 12 in open_uren and 18 in open_uren:
-        return [h for h in open_uren if 14 <= h <= 17]
-    elif 14 in open_uren and 18 in open_uren:
-        return [h for h in open_uren if 16 <= h <= 17]
-    else:
-        return list(open_uren)
+# Pauzevlinderuren lezen vanuit Input_, I3:S3 (kolommen 9-19)
+required_pauze_hours = []
+for kol in range(9, 20):
+    val = ws_speciaal.cell(3, kol).value
+    try:
+        uur = int(val)
+    except (TypeError, ValueError):
+        continue
+    if uur and uur in open_uren:
+        required_pauze_hours.append(uur)
+required_pauze_hours = sorted(set(required_pauze_hours))
 
-required_pauze_hours=compute_pauze_hours(open_uren)
 
 for idx,pvnaam in enumerate(pauzevlinder_namen,start=1):
     for s in studenten:
@@ -303,11 +482,11 @@ selected = sorted(selected, key=lambda s: naam_tie_break_key(s["naam"]))
 # -----------------------------
 aantallen_raw = {}
 attracties_te_plannen = []
-for kol in range(47, 65):  # AU-BL
-    naam = ws.cell(1, kol).value
+for rij in range(3, 21):  # E3:F20 in Aanpassingen
+    naam = ws_aanpassingen.cell(rij, 5).value  # kolom E
     if naam:
         try:
-            aantal = int(ws.cell(2, kol).value)
+            aantal = int(ws_aanpassingen.cell(rij, 6).value)  # kolom F
         except:
             aantal = 0
         aantallen_raw[naam] = max(0, min(2, aantal))
@@ -316,8 +495,9 @@ for kol in range(47, 65):  # AU-BL
 
 # Priority order for second spots (column BA, rows 5-11)
 second_priority_order = [
-    ws["BA" + str(rij)].value for rij in range(5, 12)
-    if ws["BA" + str(rij)].value
+    ws_aanpassingen.cell(rij, 9).value  # kolom I
+    for rij in range(3, 13)             # I3:I12
+    if ws_aanpassingen.cell(rij, 9).value
 ]
 
 
@@ -442,16 +622,14 @@ studenten_workend = [
 # -----------------------------
 student_blacklist = defaultdict(set)
 
-for rij in range(16, 80):  # BB16 t/m BG79
-    naam = ws[f'BB{rij}'].value
+for rij in range(3, 26):  # O3:P25 in Aanpassingen
+    naam = ws_aanpassingen.cell(rij, 15).value  # kolom O
     if not naam:
         continue
     naam = str(naam).strip()
-    # attracties in BC t/m BG
-    for col in range(54, 60):  # BC=54, BD=55, ..., BG=59
-        attr = ws.cell(rij, col).value
-        if attr:
-            student_blacklist[naam].add(str(attr).strip().lower())
+    attr = ws_aanpassingen.cell(rij, 16).value  # kolom P (1 attractie)
+    if attr:
+        student_blacklist[naam].add(str(attr).strip().lower())
 
 
 # Sorteer attracties op "kritieke score" (hoeveel studenten ze kunnen doen)
@@ -483,11 +661,11 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
     plaatsen_pauzeplanning = (aantal_pauze_uren * 4 - 1) * aantal_pv
 
     try:
-        lange_pauzes = int(ws["BP2"].value) if ws["BP2"].value else 0
+        lange_pauzes = int(ws_speciaal.cell(15, 6).value) if ws_speciaal.cell(15, 6).value else 0  # F15
     except:
         lange_pauzes = 0
     try:
-        korte_pauzes = int(ws["BQ2"].value) if ws["BQ2"].value else 0
+        korte_pauzes = int(ws_speciaal.cell(16, 6).value) if ws_speciaal.cell(16, 6).value else 0  # F16
     except:
         korte_pauzes = 0
 
@@ -527,11 +705,11 @@ def herbereken_afgekapte_pv_uren(absentees_set=None, base_maps=None):
         _lange, _korte = lm5_bereken_pauze_counts(absentees_set, base_maps)
     else:
         try:
-            _lange = int(ws["BP2"].value) if ws["BP2"].value else 0
+            _lange = int(ws_speciaal.cell(15, 6).value) if ws_speciaal.cell(15, 6).value else 0
         except:
             _lange = 0
         try:
-            _korte = int(ws["BQ2"].value) if ws["BQ2"].value else 0
+            _korte = int(ws_speciaal.cell(16, 6).value) if ws_speciaal.cell(16, 6).value else 0
         except:
             _korte = 0
 
@@ -556,16 +734,15 @@ MAX_PER_STUDENT_ATTR = 6
 
 vaste_plaatsingen = []  # lijst van dicts: {naam, attractie}
 
-for rij in range(5, 9):  # BG5 t.e.m. BI26
-    if ws[f"BG{rij}"].value in [1, True, "WAAR", "X"]:
-        naam = ws[f"BH{rij}"].value
-        attractie = ws[f"BI{rij}"].value
+for rij in range(3, 6):  # R3:T5 in Aanpassingen
+    if ws_aanpassingen.cell(rij, 18).value in [1, True, "WAAR", "X"]:  # kolom R
+        naam = ws_aanpassingen.cell(rij, 19).value       # kolom S
+        attractie = ws_aanpassingen.cell(rij, 20).value  # kolom T
         if naam and attractie:
             vaste_plaatsingen.append({
                 "naam": str(naam).strip(),
                 "attractie": str(attractie).strip()
             })
-
 
 # -----------------------------
 # Vaste plaatsingen toepassen
@@ -713,30 +890,47 @@ def _has_capacity(attr, uur):
     return per_hour_assigned_counts[uur][attr] < _max_spots_for(attr, uur)
 
 
-def _try_place_block_on_attr(student, block_hours, attr):
-    """Check capaciteit in alle uren en plaats dan in één keer.
-    Regels:
-    - max 6 uur totaal per attractie per dag
-    - max 4 aaneengesloten uren op dezelfde attractie
+def uren_bij_basis_attr(student, attr):
     """
+    Tel alle uren die een student bij een basisattractie heeft gestaan,
+    inclusief uren bij de samengevoegde versie of losse onderdelen.
+    - "A"   → telt ook uren bij "A+B"
+    - "A+B" → telt ook uren bij "A" en bij "B"
+    """
+    gerelateerd = {attr}
+
+    if " + " in attr:
+        for onderdeel in attr.split(" + "):
+            gerelateerd.add(onderdeel.strip())
+    else:
+        for sameng in samengevoegde_attracties:
+            onderdelen = [o.strip() for o in sameng.split(" + ")]
+            if attr.strip() in onderdelen:
+                gerelateerd.add(sameng)
+
+    uren = set()
+    for h in student["assigned_hours"]:
+        for rel_attr in gerelateerd:
+            if student["naam"] in assigned_map.get((h, rel_attr), []):
+                uren.add(h)
+                break
+    return uren
+
+
+def _try_place_block_on_attr(student, block_hours, attr):
     # Capaciteit check
     for h in block_hours:
         if not _has_capacity(attr, h):
             return False
 
-    # Verzamel alle uren waarop deze student al bij deze attractie staat
-    uren_bij_attr = set()
-    for h in student["assigned_hours"]:
-        namen = assigned_map.get((h, attr), [])
-        if student["naam"] in namen:
-            uren_bij_attr.add(h)
+    # ── AANGEPAST: tel ook uren bij verwante attracties mee ──
+    uren_bij_attr = uren_bij_basis_attr(student, attr)
 
-    # Check max 6 unieke uren per attractie per dag
+    # Check max 6 unieke uren per basisattractie per dag
     nieuwe_uren = set(block_hours)
     totaal_uren = uren_bij_attr | nieuwe_uren
     if len(totaal_uren) > 6:
         return False
-
 
     # Plaatsen
     for h in block_hours:
@@ -750,70 +944,31 @@ def _try_place_block_on_attr(student, block_hours, attr):
 
 
 def _try_place_block_any_attr(student, block_hours):
-    """Probeer dit blok te plaatsen op eender welke attractie die student kan.
-    Fairness-regel:
-    - Studenten met veel mogelijke attracties moeten minder snel naar 5e/6e uur
-      op dezelfde attractie gaan.
-    - Studenten met weinig mogelijke attracties blijven soepeler behandeld.
-    """
-
-    def uren_bij_attr(student, attr):
-        uren = set()
-        for h in student["assigned_hours"]:
-            namen = assigned_map.get((h, attr), [])
-            if student["naam"] in namen:
-                uren.add(h)
-        return uren
-
     def candidate_score(attr):
-        # Hoeveel studenten kunnen deze attractie? Lager = kritieker
         schaarste = sum(1 for s in studenten_workend if attr in s["attracties"])
 
-        bestaande_uren = uren_bij_attr(student, attr)
+        # ── AANGEPAST: tel ook uren bij verwante attracties mee ──
+        bestaande_uren = uren_bij_basis_attr(student, attr)
         totaal_na_plaatsing = len(bestaande_uren | set(block_hours))
-        reeds_gebruikt = attr in student["assigned_attracties"]
+        reeds_gebruikt = attr in student["assigned_attracties"] or bool(bestaande_uren)
 
-        # Hoe breed is deze student inzetbaar?
-        # We nemen aantal_attracties als hoofdsignaal, met fallback op echte lijstlengte
         breedte_profiel = student.get("aantal_attracties", len(student.get("attracties", [])))
 
-        # Fairness-straf:
-        # - Studenten met veel attracties krijgen zware straf als ze naar uur 5/6
-        #   op dezelfde attractie gaan.
-        # - Studenten met weinig attracties krijgen weinig of geen straf.
         fairness_straf = 0
-
         if totaal_na_plaatsing > 4:
-            if breedte_profiel >= 6:
-                fairness_straf = 100
-            elif breedte_profiel >= 5:
-                fairness_straf = 60
-            elif breedte_profiel >= 4:
-                fairness_straf = 25
-            else:
-                fairness_straf = 0
+            if breedte_profiel >= 6:    fairness_straf = 100
+            elif breedte_profiel >= 5:  fairness_straf = 60
+            elif breedte_profiel >= 4:  fairness_straf = 25
 
-        # Lichte voorkeur om eerst nieuwe attracties te gebruiken,
-        # maar minder belangrijk dan fairness boven 4 uur.
         hergebruik_straf = 1 if reeds_gebruikt else 0
-
-        # Eventueel nog mini-voorkeur voor attracties waar student nog 0 uur stond
-        # en pas daarna voor attracties met al wat uren.
         huidige_uren_op_attr = len(bestaande_uren)
 
-        return (
-            fairness_straf,
-            hergebruik_straf,
-            huidige_uren_op_attr,
-            schaarste,
-            attr
-        )
+        return (fairness_straf, hergebruik_straf, huidige_uren_op_attr, schaarste, attr)
 
     candidate_attrs = [
         a for a in attracties_te_plannen
         if student_kan_attr(student, a)
     ]
-
     candidate_attrs.sort(key=candidate_score)
 
     for attr in candidate_attrs:
@@ -823,41 +978,204 @@ def _try_place_block_any_attr(student, block_hours):
     return False
     
 
-def _place_block_with_fallback(student, hours_seq, preferred_sizes=None):
-    """
-    Probeer een reeks opeenvolgende uren te plaatsen.
-    - Standaard: eerst 3, dan 2, dan 1.
-    - Via preferred_sizes kan je lokaal een andere voorkeur afdwingen.
-    - Als niets lukt aan het begin van de reeks, schuif 1 uur op (dat uur gaat voorlopig naar extra),
-      en probeer verder; tweede pass zal het later alsnog proberen op te vullen.
-    Retourneert: lijst 'unplaced' uren die (voorlopig) niet geplaatst raakten.
-    """
+
+def _try_place_block_samenvoeging_transitie(student, block_hours, respecteer_fairness=True):
+    if len(block_hours) < 2:
+        return False
+
+    breedte_profiel = student.get("aantal_attracties", len(student.get("attracties", [])))
+
+    def fairness_ok(basis_attr, nieuwe_uren):
+        if not respecteer_fairness:
+            return True
+        bestaande = uren_bij_basis_attr(student, basis_attr)
+        totaal = len(bestaande | set(nieuwe_uren))
+        if totaal <= 4:
+            return True
+        # Zelfde drempels als candidate_score
+        if breedte_profiel >= 6: return False
+        if breedte_profiel >= 5: return False
+        if breedte_profiel >= 4: return False
+        return True  # weinig opties → toch toestaan
+
+    # ── Geval 1: eerste uur/uren zijn samenvoeging ──
+    eerste_uur = block_hours[0]
+    for sameng_attr in actieve_attracties_per_uur.get(eerste_uur, set()):
+        if " + " not in sameng_attr:
+            continue
+        if not student_kan_attr(student, sameng_attr):
+            continue
+
+        # Hoeveel opeenvolgende uren is de samenvoeging actief vanaf het begin?
+        sameng_uren = []
+        for h in block_hours:
+            if sameng_attr in actieve_attracties_per_uur.get(h, set()):
+                sameng_uren.append(h)
+            else:
+                break
+
+        rest_uren = [h for h in block_hours if h not in sameng_uren]
+        if not rest_uren:
+            continue
+
+        if not all(_has_capacity(sameng_attr, h) for h in sameng_uren):
+            continue
+
+        onderdelen = [o.strip() for o in sameng_attr.split("+")]
+
+        for onderdeel in onderdelen:
+            if not student_kan_attr(student, onderdeel):
+                continue
+            if not all(_has_capacity(onderdeel, h) for h in rest_uren):
+                continue
+
+            if len(uren_bij_basis_attr(student, onderdeel) | set(block_hours)) > 6:
+                continue
+            if not fairness_ok(onderdeel, block_hours):
+                continue
+
+            for h in sameng_uren:
+                assigned_map[(h, sameng_attr)].append(student["naam"])
+                per_hour_assigned_counts[h][sameng_attr] += 1
+                student["assigned_hours"].append(h)
+            student["assigned_attracties"].add(sameng_attr)
+
+            for h in rest_uren:
+                assigned_map[(h, onderdeel)].append(student["naam"])
+                per_hour_assigned_counts[h][onderdeel] += 1
+                student["assigned_hours"].append(h)
+            student["assigned_attracties"].add(onderdeel)
+
+            return True
+
+    # ── Geval 2: laatste uur/uren zijn samenvoeging ──
+    laatste_uur = block_hours[-1]
+    for sameng_attr in actieve_attracties_per_uur.get(laatste_uur, set()):
+        if " + " not in sameng_attr:
+            continue
+        if not student_kan_attr(student, sameng_attr):
+            continue
+
+        sameng_uren = []
+        for h in reversed(block_hours):
+            if sameng_attr in actieve_attracties_per_uur.get(h, set()):
+                sameng_uren.insert(0, h)
+            else:
+                break
+
+        vroege_uren = [h for h in block_hours if h not in sameng_uren]
+        if not vroege_uren:
+            continue
+
+        if not all(_has_capacity(sameng_attr, h) for h in sameng_uren):
+            continue
+
+        onderdelen = [o.strip() for o in sameng_attr.split("+")]
+
+        for onderdeel in onderdelen:
+            if not student_kan_attr(student, onderdeel):
+                continue
+            if not all(_has_capacity(onderdeel, h) for h in vroege_uren):
+                continue
+
+            # ── AANGEPAST: gebruik uren_bij_basis_attr + fairness check ──
+            if len(uren_bij_basis_attr(student, onderdeel) | set(block_hours)) > 6:
+                continue
+            if not fairness_ok(onderdeel, block_hours):
+                continue
+
+            for h in vroege_uren:
+                assigned_map[(h, onderdeel)].append(student["naam"])
+                per_hour_assigned_counts[h][onderdeel] += 1
+                student["assigned_hours"].append(h)
+            student["assigned_attracties"].add(onderdeel)
+
+            for h in sameng_uren:
+                assigned_map[(h, sameng_attr)].append(student["naam"])
+                per_hour_assigned_counts[h][sameng_attr] += 1
+                student["assigned_hours"].append(h)
+            student["assigned_attracties"].add(sameng_attr)
+
+            return True
+
+    return False
+
+
+def _place_block_with_fallback(student, hours_seq, preferred_sizes=None, reset_sizes=None):
     if not hours_seq:
         return []
 
     if preferred_sizes is None:
-        preferred_sizes = [3, 2, 1]
+        preferred_sizes = [3, 2, 4, 1]
 
-    # Probeer blok aan de voorkant volgens voorkeur
+    # Na het eerste blok terugvallen op reset_sizes (of gewone volgorde als geen reset opgegeven)
+    next_sizes = reset_sizes if reset_sizes is not None else preferred_sizes
+
     for size in preferred_sizes:
-        if len(hours_seq) >= size:
-            first_block = hours_seq[:size]
-            if _try_place_block_any_attr(student, first_block):
-                return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes)
+        if len(hours_seq) < size:
+            continue
+        block = hours_seq[:size]
 
-    # Helemaal niks paste aan de voorkant: markeer eerste uur tijdelijk als 'unplaced' en schuif door
-    return [hours_seq[0]] + _place_block_with_fallback(student, hours_seq[1:], preferred_sizes)
+        eerste_uur = block[0]
+        laatste_uur = block[-1]
+
+        heeft_samenvoeging = size > 1 and (
+            any(" + " in attr and student_kan_attr(student, attr)
+                for attr in actieve_attracties_per_uur.get(eerste_uur, set()))
+            or any(" + " in attr and student_kan_attr(student, attr)
+                   for attr in actieve_attracties_per_uur.get(laatste_uur, set()))
+        )
+
+        if heeft_samenvoeging:
+            sameng_kandidaten = [
+                attr
+                for uur in [eerste_uur, laatste_uur]
+                for attr in actieve_attracties_per_uur.get(uur, set())
+                if " + " in attr and student_kan_attr(student, attr)
+            ]
+            beste_sameng_score = (
+                min(kritieke_score(a, studenten_workend) for a in sameng_kandidaten)
+                if sameng_kandidaten else float("inf")
+            )
+            reguliere_kandidaten = [
+                a for a in attracties_te_plannen
+                if student_kan_attr(student, a)
+                and all(_has_capacity(a, h) for h in block)
+            ]
+            beste_regulier_score = (
+                min(kritieke_score(a, studenten_workend) for a in reguliere_kandidaten)
+                if reguliere_kandidaten else float("inf")
+            )
+
+            if beste_sameng_score <= beste_regulier_score:
+                # Stap 1: transitie mét fairness
+                if _try_place_block_samenvoeging_transitie(student, block):
+                    return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+                # Stap 2: normaal mét fairness
+                if _try_place_block_any_attr(student, block):
+                    return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+                # Stap 3: transitie zónder fairness (laatste redmiddel voor deze size)
+                if _try_place_block_samenvoeging_transitie(student, block, respecteer_fairness=False):
+                    return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+            else:
+                # Stap 1: normaal mét fairness
+                if _try_place_block_any_attr(student, block):
+                    return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+                # Stap 2: transitie mét fairness
+                if _try_place_block_samenvoeging_transitie(student, block):
+                    return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+                # Stap 3: transitie zónder fairness (laatste redmiddel voor deze size)
+                if _try_place_block_samenvoeging_transitie(student, block, respecteer_fairness=False):
+                    return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+        else:
+            # Stap 1: normaal mét fairness
+            if _try_place_block_any_attr(student, block):
+                return _place_block_with_fallback(student, hours_seq[size:], preferred_sizes=next_sizes)
+
+    # Noodventiel: eerste uur tijdelijk overslaan
+    return [hours_seq[0]] + _place_block_with_fallback(student, hours_seq[1:], preferred_sizes=next_sizes)
 
 
-# -----------------------------
-# Vinkjes uitlezen voor bloklogica
-# AR = kolom 44, AS = kolom 45, rij 2
-# -----------------------------
-ar2_vinkje = ws.cell(2, 44).value
-as2_vinkje = ws.cell(2, 45).value
-
-laatste_blok_is_anderhalf_uur = ar2_vinkje in [1, True, "WAAR", "X"]
-eerste_blok_is_anderhalf_uur = as2_vinkje in [1, True, "WAAR", "X"]
 
     
 # -----------------------------
@@ -866,25 +1184,6 @@ eerste_blok_is_anderhalf_uur = as2_vinkje in [1, True, "WAAR", "X"]
 
 
 def assign_student(s):
-    """
-    Plaats één student in de planning volgens alle regels:
-    - Alleen uren waar de student beschikbaar is én open_uren zijn.
-    - Geen overlap met pauzevlinder-uren.
-    - Alleen attracties die de student kan.
-    - Standaard voorkeur: 3 uur, dan 2, dan 1.
-    - Speciaal geval begin van de dag:
-      * student met exact 4 effectieve werkuren
-      * én AS2 aangevinkt
-      * én run start op het eerste open uur
-      => probeer expliciet 1 + 3
-    - Speciaal geval einde van de dag:
-      * student met exact 4 effectieve werkuren
-      * én AR2 aangevinkt
-      * én run eindigt op het laatste open uur
-      => probeer expliciet 2 + 2
-    - Blokken die niet passen, gaan voorlopig naar extra_assignments.
-    """
-    # Filter op effectieve inzetbare uren
     uren = sorted(u for u in s["uren_beschikbaar"] if u in open_uren)
     if s["is_pauzevlinder"]:
         uren = [u for u in uren if u not in required_pauze_hours]
@@ -893,71 +1192,30 @@ def assign_student(s):
         return
 
     runs = contiguous_runs(uren)
-    eerste_open_uur = min(open_uren) if open_uren else None
-    laatste_open_uur = max(open_uren) if open_uren else None
 
     for run in runs:
-        # -----------------------------
-        # Speciaal geval einde van de dag:
-        # bij AR2 aangevinkt willen we voor een run van exact 4 uren
-        # die eindigt op het laatste open uur liever 2 + 2
-        # -----------------------------
-        if (
-            laatste_blok_is_anderhalf_uur
-            and len(run) == 4
-            and laatste_open_uur is not None
-            and run[-1] == laatste_open_uur
-        ):
-            eerste_blok = run[:2]
-            tweede_blok = run[2:]
-
-            if _try_place_block_any_attr(s, eerste_blok):
-                if _try_place_block_any_attr(s, tweede_blok):
-                    unplaced = []
-                else:
-                    # Eerste 2 uur zijn al geplaatst, rest valt terug op normale logica
-                    unplaced = _place_block_with_fallback(s, tweede_blok)
-            else:
-                # Als 2+2 niet lukt, val volledig terug op normale logica
-                unplaced = _place_block_with_fallback(s, run)
-
-        # -----------------------------
-        # Speciaal geval begin van de dag:
-        # bij AS2 aangevinkt telt het eerste blok als 1,5 uur (9u30-11u),
-        # dus voor een run van exact 4 uren die start op het eerste open uur
-        # proberen we eerst expliciet 1 + 3
-        # -----------------------------
-        elif (
-            eerste_blok_is_anderhalf_uur
-            and len(run) == 4
-            and eerste_open_uur is not None
-            and run[0] == eerste_open_uur
-        ):
-            eerste_blok = [run[0]]
-            rest_blok = run[1:]
-
-            if _try_place_block_any_attr(s, eerste_blok):
-                if _try_place_block_any_attr(s, rest_blok):
-                    unplaced = []
-                else:
-                    # Eerste uur is al geplaatst, rest valt terug op normale logica
-                    unplaced = _place_block_with_fallback(s, rest_blok)
-            else:
-                # Als 1+3 niet lukt, val volledig terug op normale logica
-                unplaced = _place_block_with_fallback(s, run)
-
+        L = len(run)
+        if L % 3 != 0 and ideaalmomenten:
+            blokken = partition_run_lengths(run, ideal_moments=ideaalmomenten)
+            seen = []
+            for b in blokken:
+                if b not in seen:
+                    seen.append(b)
+            for b in [3, 2, 4, 1]:
+                if b not in seen:
+                    seen.append(b)
+            preferred_sizes = seen
         else:
-            # Normale logica
-            unplaced = _place_block_with_fallback(s, run)
+            preferred_sizes = [3, 2, 4, 1]
+        unplaced = _place_block_with_fallback(s, run, preferred_sizes=preferred_sizes, reset_sizes=[3, 2, 4, 1])
 
         for h in unplaced:
             extra_assignments[h].append(s["naam"])
 
 
-
 for s in studenten_sorted:
     assign_student(s)
-
+    
 # -----------------------------
 # Post-processing: lege plekken opvullen door doorschuiven
 # -----------------------------
@@ -1431,8 +1689,8 @@ for _ in range(max_block_swap_passes):
 # Volgorde attracties uit Input!BL16:BL33
 # -----------------------------
 input_volgorde = []
-for rij in range(16, 34):  # 16 t.e.m. 33
-    waarde = ws[f"BL{rij}"].value
+for rij in range(3, 21):  # C3:C20 in Aanpassingen
+    waarde = ws_aanpassingen.cell(rij, 3).value  # kolom C
     if waarde:
         input_volgorde.append(str(waarde).strip())
 
@@ -1675,21 +1933,15 @@ student_kleuren = dict(zip(alle_namen, unique_colors))
 ws_out.cell(1, 1, vandaag).font = Font(bold=True)
 ws_out.cell(1, 1).fill = white_fill
 
+
 for col_idx, uur in enumerate(sorted(open_uren), start=2):
-    ws_out.cell(1, col_idx, f"{uur}:00").font = Font(bold=True)
+    label = uur_labels.get(uur)
+    header_text = f"{formatteer_uur(uur)} ({label})" if label else formatteer_uur(uur)
+    ws_out.cell(1, col_idx, header_text).font = Font(bold=True)
     ws_out.cell(1, col_idx).fill = white_fill
     ws_out.cell(1, col_idx).alignment = center_align
     ws_out.cell(1, col_idx).border = thin_border
 
-# --- NIEUWE LOGICA VOOR AS2 VINKJE ---
-# AS is de 45e kolom in de Input-sheet (ws)
-as2_vinkje = ws.cell(2, 45).value 
-if as2_vinkje in [1, True, "WAAR", "X"]:
-    # Cel B1 is kolom 2, rij 1
-    ws_out.cell(1, 2).value = "9u30-11u"
-    # Cel J1 is kolom 10, rij 1
-    ws_out.cell(1, 10).value = "18u-19u30"
-# -------------------------------------
     
 
 rij_out = 2
@@ -1804,11 +2056,20 @@ for col in range(1, len(open_uren) + 2):
 
 # ---- student_totalen beschikbaar maken voor volgende delen ----
 from collections import defaultdict
-student_totalen = defaultdict(int)
-for row in ws_out.iter_rows(min_row=2, values_only=True):
-    for naam in row[1:]:
+# Bouw col→uur mapping vanuit de headerrij van ws_out
+_col_uur_out = {}
+for _c in range(2, ws_out.max_column + 1):
+    _uur = parse_header_uur(ws_out.cell(1, _c).value)
+    if _uur is not None:
+        _col_uur_out[_c] = _uur
+
+student_totalen = defaultdict(float)
+for row in ws_out.iter_rows(min_row=2):
+    for cel in row[1:]:
+        naam = cel.value
         if naam and str(naam).strip() != "":
-            student_totalen[naam] += 1
+            _uur = _col_uur_out.get(cel.column)
+            student_totalen[str(naam).strip()] += blok_durations.get(_uur, 1.0)
 
 
 # -----------------------------
@@ -1985,7 +2246,7 @@ def maak_analyse_sheet(wb_arg, am_arg, ea_arg, st_arg, actieve_attracties_overri
         if not analyse_studenten_uur or not analyse_attracties_uur:
             continue
 
-        ws_analyse.cell(start_rij, 1, f"{uur}:00").font = Font(bold=True)
+        ws_analyse.cell(start_rij, 1, formatteer_uur(uur)).font = Font(bold=True)
         ws_analyse.cell(start_rij, 1).fill = analyse_header_fill
         ws_analyse.cell(start_rij, 1).alignment = center_align
         ws_analyse.cell(start_rij, 1).border = thin_border
@@ -2068,7 +2329,7 @@ if required_pauze_hours:
 else:
     # fallback: gebruik open_uren
     for uur in sorted(open_uren):
-        uren_rij1.append(f"{uur}u")
+        uren_rij1.append(formatteer_uur(uur))
 
 # Schrijf uren in rij 1, start in kolom B
 for col_idx, uur in enumerate(uren_rij1, start=2):
@@ -2179,11 +2440,14 @@ for pv in selected:
         pv_rows.append((pv, row_found))
 
 # Bereken totaal uren per student in Werkblad "Planning"
-student_totalen = defaultdict(int)
-for row in ws_planning.iter_rows(min_row=2, values_only=True):
-    for naam in row[1:]:
+student_totalen = defaultdict(float)
+for row in ws_planning.iter_rows(min_row=2):
+    for cel in row[1:]:
+        naam = cel.value
         if naam and str(naam).strip() != "":
-            student_totalen[naam] += 1
+            col_uur = col_to_uur_speciaal.get(cel.column)
+            duur = blok_durations.get(col_uur, 1.0)
+            student_totalen[str(naam).strip()] += duur
 
 # Loop door pauzevlinders in Werkblad "Pauzevlinders"
 
@@ -3944,31 +4208,23 @@ else:
 
 ##### EXTRA INFO TOEVOEGEN AAN PAUZEPLANNING (A12 e.v.)
 ##### -------------------------------------------------------------
-### We gebruiken de 'Input' sheet van het geüploade bestand
-### en de 'Pauzevlinders' sheet van het resultaat
-ws_input_data = wb["Input"]
 ws_pauze_sheet = wb_out["Pauzevlinders"]
-
-### Definieer de witte achtergrond
 witte_fill = PatternFill(start_color="FFFFFF", fill_type="solid")
 
-# --- NIEUWE LOGICA VOOR BN15 VINKJE ---
-# BN is de 66e kolom in Excel. We controleren cel BN15.
-bn15_vinkje = ws_input_data.cell(row=15, column=66).value
+# --- VINKJE V3 + TEKST W3 in Aanpassingen ---
+vinkje_aanpassingen = ws_aanpassingen.cell(row=3, column=22).value  # V3
 
-if bn15_vinkje in [1, True, "WAAR", "X"]:
-    # Loop door de rijen 15 tot en met 30 van de Input-sheet
-    for i, input_rij in enumerate(range(15, 31)):
-        # Kolom BO is de 67e kolom in Excel
-        waarde = ws_input_data.cell(row=input_rij, column=67).value
-        
-        if waarde:
-            # Schrijf de waarde naar kolom A van de pauzeplanning, beginnend bij rij 14
-            target_rij = 14 + i
-            cel = ws_pauze_sheet.cell(row=target_rij, column=1, value=waarde)
-            cel.fill = witte_fill
-            cel.border = thin_border
-            cel.alignment = Alignment(horizontal="left", vertical="center")
+if vinkje_aanpassingen in [1, True, "WAAR", "X"]:
+    waarde = ws_aanpassingen.cell(row=3, column=23).value  # W3 (samengevoegde cel)
+    if waarde:
+        regels = str(waarde).split("\n")
+        for i, regel in enumerate(regels):
+            regel = regel.strip()
+            if regel:
+                cel = ws_pauze_sheet.cell(row=14 + i, column=1, value=regel)
+                cel.fill = witte_fill
+                cel.border = thin_border
+                cel.alignment = Alignment(horizontal="left", vertical="center")
 # -------------------------------------
 
 
@@ -3995,12 +4251,22 @@ def maak_pp2_sheets(wb_arg, am_arg):
     # net zoals de globale versie dat doet vanuit ws_out.
     # Dit is belangrijk voor pauzevlinders: hun pauzevlinderuren
     # staan NIET in assigned_map, maar wél in de Planning-sheet.
-    student_totalen = defaultdict(int)
     _ws_plan_tmp = wb_arg["Planning"]
-    for row in _ws_plan_tmp.iter_rows(min_row=2, values_only=True):
-        for naam in row[1:]:
+
+    # Bouw col→uur mapping vanuit de headerrij van _ws_plan_tmp
+    _col_uur_tmp = {}
+    for _c in range(2, _ws_plan_tmp.max_column + 1):
+        _uur = parse_header_uur(_ws_plan_tmp.cell(1, _c).value)
+        if _uur is not None:
+            _col_uur_tmp[_c] = _uur
+    
+    student_totalen = defaultdict(float)
+    for row in _ws_plan_tmp.iter_rows(min_row=2):
+        for cel in row[1:]:
+            naam = cel.value
             if naam and str(naam).strip() != "":
-                student_totalen[naam] += 1
+                _uur = _col_uur_tmp.get(cel.column)
+                student_totalen[str(naam).strip()] += blok_durations.get(_uur, 1.0)
 
     for sheet_name in ["Pauzeplanning", "Feedback PP"]:
         if sheet_name in wb_arg.sheetnames:
@@ -6258,17 +6524,37 @@ def maak_pp2_sheets(wb_arg, am_arg):
             # ---------------------------------------------------
             if toegewezen_naam is None:
                 for kandidaat in pp2_students_before_end_pending:
+                    is_minor_lw_p2 = (
+                        pp2_is_minderjarig(kandidaat)
+                        and student_totalen.get(kandidaat, 0) > 6
+                    )
+
+                    ankercol_p2 = None
+                    if is_minor_lw_p2:
+                        for _pv2, pv_row2 in pv_rows_pp2:
+                            for idx in range(len(pauze_cols_pp2) - 1):
+                                col1 = pauze_cols_pp2[idx]
+                                col2 = pauze_cols_pp2[idx + 1]
+                                if (
+                                    ws_pp2.cell(pv_row2, col1).value == kandidaat
+                                    and ws_pp2.cell(pv_row2, col2).value == kandidaat
+                                ):
+                                    if ankercol_p2 is None or col2 > ankercol_p2:
+                                        ankercol_p2 = col2
+
                     cols = pp2_find_needed_short_cols_for_student_on_row(
                         naam=kandidaat,
                         pv_row=pv_row,
                         ws_sheet=ws_pp2,
                         pauze_cols=pauze_cols_pp2,
-                        open_spots_set=pp2_open_spots
+                        open_spots_set=pp2_open_spots,
+                        min_col_exclusive=ankercol_p2,
+                        zoek_zo_laat_mogelijk=is_minor_lw_p2
                     )
-    
+
                     if not cols:
                         continue
-    
+
                     toegewezen_naam = kandidaat
                     toegewezen_cols = cols
                     break
@@ -6578,7 +6864,69 @@ def maak_pp2_sheets(wb_arg, am_arg):
         naam for naam in pp2_other_pending_short_breaks
         if naam not in pp2_late_start_minors_handled
     ]
-    
+
+    # -----------------------------------             
+    # 1C) Speciale behandeling:
+    #     minderjarigen >6u die tot het einduur werken
+    #     => korte pauze zo laat mogelijk, na het tweede halfuur
+    # -----------------------------------
+    pp2_minor_long_end_handled = set()
+
+    for naam in list(pp2_other_pending_short_breaks):
+        if not pp2_is_minderjarig(naam):
+            continue
+        if student_totalen.get(naam, 0) <= 6:
+            continue
+        if not pp2_student_works_until_day_end(naam):
+            continue
+
+        # Zoek ankercol = einde van het LAATSTE halfuur over alle rijen
+        ankercol = None
+        laatste_lange_rij = None
+        for _pv, pv_row in pv_rows_pp2:
+            for idx in range(len(pauze_cols_pp2) - 1):
+                col1 = pauze_cols_pp2[idx]
+                col2 = pauze_cols_pp2[idx + 1]
+                if (
+                    ws_pp2.cell(pv_row, col1).value == naam
+                    and ws_pp2.cell(pv_row, col2).value == naam
+                ):
+                    if ankercol is None or col2 > ankercol:
+                        ankercol = col2
+                        laatste_lange_rij = pv_row
+
+        # PV-rij volgorde: eerst rij van laatste halfuur, dan de rest
+        pv_volgorde = (
+            [(pv, pv_row) for pv, pv_row in pv_rows_pp2 if pv_row == laatste_lange_rij]
+            + [(pv, pv_row) for pv, pv_row in pv_rows_pp2 if pv_row != laatste_lange_rij]
+        )
+
+        geplaatst = False
+        for col in reversed(pauze_cols_pp2):
+            if ankercol is not None and col <= ankercol:
+                continue
+            for pv, pv_row in pv_volgorde:
+                if (pv_row, col) in pp2_open_spots:
+                    continue
+                if not pp2_is_beschikbaar(ws_pp2, pv_row, col):
+                    continue
+                if not pp2_is_valid_short_break_for_student(naam, col, ws_pp2):
+                    continue
+
+                pp2_place_short_break_cols_on_row(naam=naam, pv=pv, pv_row=pv_row, cols=[col])
+                pp2_minor_long_end_handled.add(naam)
+                geplaatst = True
+                break
+            if geplaatst:
+                break
+
+    # Verwijder uit de algemene pending lijst
+    pp2_other_pending_short_breaks = [
+        naam for naam in pp2_other_pending_short_breaks
+        if naam not in pp2_minor_long_end_handled
+    ]
+
+  
     # -----------------------------------
     # 2) Eerst alle "gewone" resterende korte kwartieren invullen
     #    inclusief:
@@ -6971,7 +7319,10 @@ def extract_hourly_changes(student_per_uur, open_uren):
         all_attrs.update(aantallen.get(uur2, {}).keys())
 
     for uur in sorted(open_uren):
-        prev_uur = uur - 1
+        # VERVANGEN DOOR:
+        _sorted_open = sorted(open_uren)
+        _idx = _sorted_open.index(uur)
+        prev_uur = _sorted_open[_idx - 1] if _idx > 0 else None
 
         prev_students = {}
         curr_students = {}
@@ -7011,7 +7362,7 @@ def extract_hourly_changes(student_per_uur, open_uren):
                 })
 
         disappearing_sources = []
-        if prev_uur in open_uren:
+        if prev_uur is not None and prev_uur in open_uren:
             for attr in sorted(all_attrs):
                 prev_cap = capaciteit_op_uur(prev_uur, attr)
                 curr_cap = capaciteit_op_uur(uur, attr)
@@ -7496,7 +7847,7 @@ def maak_wisselplanning_sheet(wb_arg, am_arg):
     current_row = 1
     for uur in sorted(wissels_per_uur.keys()):
         # Titelrij per uur
-        title_cell = ws_wissels.cell(current_row, 1, f"Wissels om {uur}:00")
+        title_cell = ws_wissels.cell(current_row, 1, f"Wissels om {formatteer_uur(uur)}")
         title_cell.font      = Font(bold=True)
         title_cell.alignment = _center
         current_row += 1
@@ -7662,7 +8013,28 @@ def lm5_parse_output_hour(header):
         return min(open_uren) if open_uren else 10
     if s == "18u-19u30":
         return max(open_uren) if open_uren else 18
-    return parse_header_uur(header)
+    # Strip label-gedeelte tussen haakjes, bv. "9u30 (0,5h)" → "9u30"
+    kern = s.split("(")[0].strip()
+    if "u" in kern:
+        delen = kern.split("u")
+        try:
+            uren = int(delen[0])
+            min_str = delen[1].strip() if len(delen) > 1 else ""
+            minuten = int(min_str) if min_str.isdigit() else 0
+            return uren + minuten / 60
+        except:
+            return None
+    if ":" in kern:
+        delen = kern.split(":")
+        try:
+            return int(delen[0]) + int(delen[1]) / 60
+        except:
+            return None
+    try:
+        return float(kern)
+    except:
+        return None
+        
 
 def lm5_student_lookup():
     return {str(s["naam"]).strip(): s for s in studenten}
@@ -7817,10 +8189,10 @@ def lm5_bereken_pauze_counts(absentees_set, base_maps):
 def lm5_extract_capacity_actions():
     result = []
 
-    # CD = 82, CE = 83
-    for rij in range(2, ws_raw.max_row + 1):
-        left_source = ws_raw.cell(rij, 82).value
-        right_source = ws_raw.cell(rij, 83).value
+    # L3:M12 in Aanpassingen
+    for rij in range(3, 13):
+        left_source = ws_aanpassingen.cell(rij, 12).value   # kolom L
+        right_source = ws_aanpassingen.cell(rij, 13).value  # kolom M
 
         left = str(left_source).strip() if left_source is not None and str(left_source).strip() != "" else ""
         right = str(right_source).strip() if right_source is not None and str(right_source).strip() != "" else ""
@@ -9399,6 +9771,10 @@ def lm5_reconstruct_studenten(ctx_assigned_map):
 def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absentees):
     wb_lm = load_workbook(BytesIO(base_bytes))
     ws_plan = wb_lm["Planning"]
+    # Last-minute planning toont altijd datum van vandaag, ongeacht W4
+    ws_plan.cell(1, 1).value = vandaag_altijd_vandaag
+    ws_pauze_lm = wb_lm["Pauzevlinders"]
+    ws_pauze_lm.cell(1, 1).value = vandaag_altijd_vandaag
 
     gray_fill  = PatternFill(start_color="808080", end_color="808080", fill_type="solid")
     white_fill = PatternFill(start_color="FFFFFF", end_color="FFFFFF", fill_type="solid")
@@ -9563,10 +9939,12 @@ def lm5_write_lastminute_workbook(base_bytes, ctx, base_maps, start_uur, absente
 
     # Herwerk Analyse
     # Bouw actieve attracties per uur vanuit last-minute hour_states
-    lm_actieve_attracties = {
-        uur: hstate["active"]
-        for uur, hstate in ctx["hour_states"].items()
-    }
+    lm_actieve_attracties = {}
+    for uur in open_uren:
+        if uur in ctx["hour_states"]:
+            lm_actieve_attracties[uur] = ctx["hour_states"][uur]["active"]
+        else:
+            lm_actieve_attracties[uur] = actieve_attracties_per_uur.get(uur, set())
     maak_analyse_sheet(
         wb_lm,
         ctx["assigned_map"],
@@ -9640,7 +10018,7 @@ with st.expander("Last-minute afwezigen", expanded=False):
         start_uur_lm5 = st.selectbox(
             "Vanaf welk uur moet de nieuwe planning starten?",
             options=sorted(open_uren),
-            format_func=lambda u: f"{u}:00",
+            format_func=formatteer_uur,
         )
         submitted = st.form_submit_button("Maak last-minute planning")
 
