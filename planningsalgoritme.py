@@ -4731,7 +4731,8 @@ def maak_pp2_sheets(wb_arg, am_arg):
     # STAP 0.5: helpers voor speciale meerderjarige lange werkers
     # (theo <= 6u, echt > 6u, theo uren bevatten 12u én 13u)
     # -----------------------------
-
+    pauzevlinder_namen_set = {pv["naam"] for pv in selected}
+    
     def pp2_is_speciale_lange_werker(naam):
         """
         Meerderjarige student die theoretisch <= 6u werkt maar echt > 6u,
@@ -4897,7 +4898,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
     # - gewone vroege stoppers: duo-logica zoals voorheen
     # Excl. pauzevlinders zelf
     # -----------------------------
-    pauzevlinder_namen_set = {pv["naam"] for pv in selected}
+    
     
     vroege_stoppers_gewoon = []
     vroege_stoppers_minderjarig = []
