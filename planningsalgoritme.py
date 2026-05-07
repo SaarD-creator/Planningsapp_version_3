@@ -4756,7 +4756,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
         startuur = min(werk_uren)
         aantal_uren = len(werk_uren)
     
-        einduur_dag = pp2_get_day_end_hour()
+        einduur_dag = max(open_uren) if open_uren else None
         if einduur_dag is None or einduur_dag > 17:
             if laatste_werkblok > 15:
                 continue
