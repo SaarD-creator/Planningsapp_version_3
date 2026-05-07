@@ -4756,8 +4756,10 @@ def maak_pp2_sheets(wb_arg, am_arg):
         startuur = min(werk_uren)
         aantal_uren = len(werk_uren)
     
-        if laatste_werkblok > 15:
-            continue
+        einduur_dag = pp2_get_day_end_hour()
+        if einduur_dag is None or einduur_dag > 17:
+            if laatste_werkblok > 15:
+                continue
         if werkduur_voor_pauze(naam) > 6:  # lange werkers horen in stap 2
             continue
     
