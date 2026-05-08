@@ -4779,6 +4779,12 @@ def maak_pp2_sheets(wb_arg, am_arg):
     # Sorteervolgorde: vroegst stoppend, vroegst beginnend, alfabetisch
     vroege_stoppers_minderjarig.sort(key=lambda x: (x["einduur"], x["startuur"], x["naam"]))
     vroege_stoppers_gewoon.sort(key=lambda x: (x["einduur"], x["startuur"], x["naam"]))
+
+    # Op korte dagen (einduur <= 17u) zijn er geen gewone vroege stoppers:
+    # iedereen valt door naar stap 3 voor een beter gespreide verdeling.
+    # Minderjarigen (stap 1a) blijven wel hun halfuur krijgen via de eigen logica.
+    if open_uren and max(open_uren) <= 17:
+        vroege_stoppers_gewoon = []
     
     pp2_geplaatste_pauzes = []
     pp2_niet_geplaatst = []
