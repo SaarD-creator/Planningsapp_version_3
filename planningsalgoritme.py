@@ -6145,6 +6145,39 @@ def maak_pp2_sheets(wb_arg, am_arg):
             })
     
     
+    # ---------------------------------------------------
+    # KORTE DAG: open spots verdelen vóór stap 4
+    # Op een korte dag worden open spots niet in het
+    # pauzevlinder-blok hierboven verdeeld.
+    # We doen dat hier alsnog, vóór stap 4 korte pauzes
+    # plaatst, zodat die cellen correct worden overgeslagen.
+    # pp2_open_spots_count = remaining_empty - needed_short,
+    # al berekend op basis van wat er na stap 1/2/2b over is.
+    # ---------------------------------------------------
+    if pp2_is_korte_dag:
+        ronde_nummer = 0
+        while len(pp2_open_spots) < pp2_open_spots_count:
+            iets_geplaatst_deze_ronde = False
+            vooraan = (ronde_nummer % 2 == 0)
+            for _pv, pv_row in pv_rows_pp2:
+                if len(pp2_open_spots) >= pp2_open_spots_count:
+                    break
+                lege_cols = pp2_get_empty_cols_for_pv_row(
+                    ws_sheet=ws_pp2,
+                    pv_row=pv_row,
+                    pauze_cols=pauze_cols_pp2,
+                    open_spots_set=pp2_open_spots
+                )
+                if not lege_cols:
+                    continue
+                gekozen_col = lege_cols[0] if vooraan else lege_cols[-1]
+                pp2_open_spots.add((pv_row, gekozen_col))
+                pp2_mark_open_spot(ws_pp2, pv_row, gekozen_col)
+                iets_geplaatst_deze_ronde = True
+            if not iets_geplaatst_deze_ronde:
+                break
+            ronde_nummer += 1
+
     #STAP 4 44444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444444
     
     
@@ -6851,41 +6884,6 @@ def maak_pp2_sheets(wb_arg, am_arg):
     
     # STAP 5 55555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555555
 
-
-    # ---------------------------------------------------
-    # KORTE DAG: open spots verdelen NA korte pauzes
-    # Op een korte dag worden open spots niet vooraf
-    # gereserveerd. Na stap 4 verdelen we de resterende
-    # lege cellen alsnog gelijkmatig als open spots.
-    # ---------------------------------------------------
-    if pp2_is_korte_dag:
-        pp2_open_spots_count_na = pp2_count_remaining_empty_quarters(
-            ws_sheet=ws_pp2,
-            pv_rows=pv_rows_pp2,
-            pauze_cols=pauze_cols_pp2
-        )
-        ronde_nummer = 0
-        while len(pp2_open_spots) < pp2_open_spots_count_na:
-            iets_geplaatst_deze_ronde = False
-            vooraan = (ronde_nummer % 2 == 0)
-            for _pv, pv_row in pv_rows_pp2:
-                if len(pp2_open_spots) >= pp2_open_spots_count_na:
-                    break
-                lege_cols = pp2_get_empty_cols_for_pv_row(
-                    ws_sheet=ws_pp2,
-                    pv_row=pv_row,
-                    pauze_cols=pauze_cols_pp2,
-                    open_spots_set=pp2_open_spots
-                )
-                if not lege_cols:
-                    continue
-                gekozen_col = lege_cols[0] if vooraan else lege_cols[-1]
-                pp2_open_spots.add((pv_row, gekozen_col))
-                pp2_mark_open_spot(ws_pp2, pv_row, gekozen_col)
-                iets_geplaatst_deze_ronde = True
-            if not iets_geplaatst_deze_ronde:
-                break
-            ronde_nummer += 1
     
     
     # -----------------------------------
