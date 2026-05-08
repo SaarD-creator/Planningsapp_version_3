@@ -5372,7 +5372,8 @@ def maak_pp2_sheets(wb_arg, am_arg):
         theo_uren = pp2_get_student_work_hours(naam)
         if not theo_uren:
             return None
-        theo_eind = max(theo_uren)
+        theo_eind_slot = max(theo_uren)
+        theo_eind = theo_eind_slot + blok_durations.get(theo_eind_slot, 1.0)
         return 1 if (echte_eind - theo_eind) >= 1.5 else 2
 
     def pp2_is_valid_long_break_12_14(naam, col1, col2, ws_sheet):
