@@ -673,8 +673,12 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
 
     pauze_kwartieren = 2 * lange_pauzes + korte_pauzes
     open_spots = plaatsen_pauzeplanning - pauze_kwartieren
-    min_open_spots_per_pv = 1 if len(open_uren) <= 6 else 3
-    overbodige_uren = max(0, math.floor((open_spots - aantal_pv * min_open_spots_per_pv) / 4))
+    _min_open_spots_per_pv = 0 if len(open_uren) <= 6 else 3
+    _beschikbaar = _open_spots - _aantal_pv * _min_open_spots_per_pv
+    if len(open_uren) <= 6 and _beschikbaar >= 3:
+        _overbodige = 1 + max(0, math.floor((_beschikbaar - 3) / 4))
+    else:
+        _overbodige = max(0, math.floor(_beschikbaar / 4))
 
     if overbodige_uren > 0:
         laatste_pv = selected[-1]
@@ -718,7 +722,11 @@ def herbereken_afgekapte_pv_uren(absentees_set=None, base_maps=None):
 
     _open_spots = _plaatsen - (2 * _lange + _korte)
     _min_open_spots_per_pv = 1 if len(open_uren) <= 6 else 3
-    _overbodige = max(0, math.floor((_open_spots - _aantal_pv * _min_open_spots_per_pv) / 4))
+    _beschikbaar = _open_spots - _aantal_pv * _min_open_spots_per_pv
+    if len(open_uren) <= 6 and _beschikbaar >= 3:
+        _overbodige = 1 + max(0, math.floor((_beschikbaar - 3) / 4))
+    else:
+        _overbodige = max(0, math.floor(_beschikbaar / 4))
 
     if _overbodige > 0:
         _pv_pauze_uren = sorted(required_pauze_hours, reverse=True)
