@@ -674,11 +674,11 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
     pauze_kwartieren = 2 * lange_pauzes + korte_pauzes
     open_spots = plaatsen_pauzeplanning - pauze_kwartieren
     _min_open_spots_per_pv = 0 if len(open_uren) <= 6 else 3
-    _beschikbaar = _open_spots - _aantal_pv * _min_open_spots_per_pv
-    if len(open_uren) <= 6 and _beschikbaar >= 3:
-        _overbodige = 1 + max(0, math.floor((_beschikbaar - 3) / 4))
+    beschikbaar = open_spots - aantal_pv * min_open_spots_per_pv
+    if len(open_uren) <= 6 and beschikbaar >= 3:
+        overbodige_uren = 1 + max(0, math.floor((beschikbaar - 3) / 4))
     else:
-        _overbodige = max(0, math.floor(_beschikbaar / 4))
+        overbodige_uren = max(0, math.floor(beschikbaar / 4))
 
     if overbodige_uren > 0:
         laatste_pv = selected[-1]
