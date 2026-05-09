@@ -673,7 +673,7 @@ if aantal_pv > 0 and aantal_pauze_uren > 0:
 
     pauze_kwartieren = 2 * lange_pauzes + korte_pauzes
     open_spots = plaatsen_pauzeplanning - pauze_kwartieren
-    _min_open_spots_per_pv = 0 if len(open_uren) <= 6 else 3
+    min_open_spots_per_pv = 1 if len(open_uren) <= 6 else 3
     beschikbaar = open_spots - aantal_pv * min_open_spots_per_pv
     if len(open_uren) <= 6 and beschikbaar >= 3:
         overbodige_uren = 1 + max(0, math.floor((beschikbaar - 3) / 4))
