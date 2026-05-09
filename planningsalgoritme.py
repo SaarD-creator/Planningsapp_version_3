@@ -6155,25 +6155,39 @@ def maak_pp2_sheets(wb_arg, am_arg):
     # al berekend op basis van wat er na stap 1/2/2b over is.
     # ---------------------------------------------------
     if pp2_is_korte_dag:
+        def pp2_laatste_gevulde_col(pv_row):
+            """Geeft de index in pauze_cols_pp2 van de laatste gevulde kolom op deze rij."""
+            laatste_idx = -1
+            for idx, col in enumerate(pauze_cols_pp2):
+                if ws_pp2.cell(pv_row, col).value not in (None, ""):
+                    laatste_idx = idx
+            return laatste_idx
+
         ronde_nummer = 0
         while len(pp2_open_spots) < pp2_open_spots_count:
             iets_geplaatst_deze_ronde = False
-            vooraan = (ronde_nummer % 2 == 0)
             for _pv, pv_row in pv_rows_pp2:
                 if len(pp2_open_spots) >= pp2_open_spots_count:
                     break
-                lege_cols = pp2_get_empty_cols_for_pv_row(
-                    ws_sheet=ws_pp2,
-                    pv_row=pv_row,
-                    pauze_cols=pauze_cols_pp2,
-                    open_spots_set=pp2_open_spots
-                )
-                if not lege_cols:
+
+                # Enkel kolommen NA de laatste pauze
+                laatste_idx = pp2_laatste_gevulde_col(pv_row)
+                kandidaat_cols = [
+                    col for idx, col in enumerate(pauze_cols_pp2)
+                    if idx > laatste_idx
+                    and ws_pp2.cell(pv_row, col).value in (None, "")
+                    and (pv_row, col) not in pp2_open_spots
+                ]
+
+                if not kandidaat_cols:
                     continue
-                gekozen_col = lege_cols[0] if vooraan else lege_cols[-1]
+
+                # Neem de eerst beschikbare kolom na de laatste pauze
+                gekozen_col = kandidaat_cols[0]
                 pp2_open_spots.add((pv_row, gekozen_col))
                 pp2_mark_open_spot(ws_pp2, pv_row, gekozen_col)
                 iets_geplaatst_deze_ronde = True
+
             if not iets_geplaatst_deze_ronde:
                 break
             ronde_nummer += 1
