@@ -4447,31 +4447,27 @@ def maak_pp2_sheets(wb_arg, am_arg):
     
     def pp2_choose_middle_col(naam, ws_sheet, pauze_cols):
         """
-        Kies een kwartier zo goed mogelijk in het midden van de shift,
-        rekening houdend met de toegelaten kwartieren.
+        Geef een gerangschikte lijst van geldige kwartierkolommen terug,
+        gesorteerd op afstand tot het midden van de shift (dichtst eerst).
+        Lege lijst als er niets gevonden wordt.
         """
         candidates = pp2_candidate_cols_for_student(naam, ws_sheet, pauze_cols)
         if not candidates:
-            return None
-    
+            return []
+
         werk_uren = pp2_get_student_work_hours(naam)
         shift_start = min(werk_uren) * 60
-        shift_end = (max(werk_uren) + 1) * 60
-        midpoint = (shift_start + shift_end) / 2
-    
-        best_col = None
-        best_score = None
-    
+        shift_end   = (max(werk_uren) + 1) * 60
+        midpoint    = (shift_start + shift_end) / 2
+
+        scored = []
         for col in candidates:
             mins = pp2_parse_kwartier_header(ws_sheet.cell(1, col).value)
-            if mins is None:
-                continue
-            score = abs(mins - midpoint)
-            if best_score is None or score < best_score:
-                best_score = score
-                best_col = col
-    
-        return best_col
+            if mins is not None:
+                scored.append((abs(mins - midpoint), col))
+
+        scored.sort(key=lambda x: x[0])
+        return [col for _, col in scored]
     
     def pp2_is_valid_short_break_for_student(naam, col, ws_sheet):
         """
@@ -4942,43 +4938,48 @@ def maak_pp2_sheets(wb_arg, am_arg):
     
             # Eerste van het duo
             if idx % 2 == 0:
-                gekozen_col = pp2_choose_middle_col(naam, ws_pp2, pauze_cols_pp2)
-    
-                if gekozen_col is None:
+                gekozen_col_kandidaten = pp2_choose_middle_col(naam, ws_pp2, pauze_cols_pp2)
+
+                if not gekozen_col_kandidaten:
                     pp2_niet_geplaatst.append({
                         "naam": naam,
                         "reden": "geen geldige middenplek gevonden voor eerste van duo"
                     })
                     continue
-    
-                # Probeer eerst voorkeurs-PV-rij, daarna de rest
+
+                # Probeer elke kandidaatkolom (dichtst bij midden eerst),
+                # en per kolom: eerst voorkeurs-PV-rij, daarna de rest.
                 pv_volgorde = (
                     [pv_rows_pp2[pv_index_voorkeur]]
                     + [r for i, r in enumerate(pv_rows_pp2) if i != pv_index_voorkeur]
                 )
-    
+
                 geplaatst_eerste = False
-                for pv, pv_name_row in pv_volgorde:
-                    if not pp2_is_beschikbaar(ws_pp2, pv_name_row, gekozen_col):
-                        continue
-    
-                    pp2_write_name(ws_pp2, pv_name_row, gekozen_col, naam)
-                    duo_basis_col[duo_nummer] = gekozen_col
-                    duo_basis_pv_row[duo_nummer] = pv_name_row
-    
-                    pp2_geplaatste_pauzes.append({
-                        "naam": naam,
-                        "pauzevlinder": pv["naam"],
-                        "tijd": ws_pp2.cell(1, gekozen_col).value,
-                        "type": "eerste van duo"
-                    })
-                    geplaatst_eerste = True
-                    break
-    
+                for gekozen_col in gekozen_col_kandidaten:
+                    for pv, pv_name_row in pv_volgorde:
+                        if not pp2_is_beschikbaar(ws_pp2, pv_name_row, gekozen_col):
+                            continue
+
+                        pp2_write_name(ws_pp2, pv_name_row, gekozen_col, naam)
+                        duo_basis_col[duo_nummer]    = gekozen_col
+                        duo_basis_pv_row[duo_nummer] = pv_name_row
+
+                        pp2_geplaatste_pauzes.append({
+                            "naam": naam,
+                            "pauzevlinder": pv["naam"],
+                            "tijd": ws_pp2.cell(1, gekozen_col).value,
+                            "type": "eerste van duo"
+                        })
+                        geplaatst_eerste = True
+                        break
+
+                    if geplaatst_eerste:
+                        break
+
                 if not geplaatst_eerste:
                     pp2_niet_geplaatst.append({
                         "naam": naam,
-                        "reden": "geen geldige middenplek gevonden voor eerste van duo (alle rijen bezet)"
+                        "reden": "geen vrije plek gevonden voor eerste van duo (alle rijen/kolommen bezet)"
                     })
     
             # Tweede van het duo
