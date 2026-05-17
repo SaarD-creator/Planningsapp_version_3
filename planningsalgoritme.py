@@ -1,3 +1,4 @@
+# kleine fix bij last minute qua layout + ontdekt dat afkapping uren niet altijd top werkt (PV staat niet bij extra of op planning)
 # nieuwe logica voor studenten die langer werken dan effectieve uren op planning
 # Last minute planning is vaak niet top
 # overschakeling compleettt
