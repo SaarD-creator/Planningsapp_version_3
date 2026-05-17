@@ -620,10 +620,6 @@ studenten_workend = [
 ]
 
 
-studenten_by_naam = {s["naam"]: s for s in studenten}
-studenten_workend_by_naam = {s["naam"]: s for s in studenten_workend}
-
-
 # -----------------------------
 # Blacklist van attracties per student (BB16:BG79)
 # -----------------------------
@@ -766,7 +762,7 @@ for rij in range(3, 6):  # R3:T5 in Aanpassingen
 # -----------------------------
 
 for vp in vaste_plaatsingen:
-    student = studenten_by_naam.get(vp["naam"])
+    student = next((s for s in studenten if s["naam"] == vp["naam"]), None)
     if not student:
         continue
 
@@ -1251,14 +1247,14 @@ def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
         for b_pos, b_naam in enumerate(b_namen):
             if not b_naam or b_naam == student_naam:
                 continue
-            cand_student = studenten_workend_by_naam.get(student_naam)
+            cand_student = next((s for s in studenten_workend if s["naam"] == b_naam), None)
             if not cand_student:
                 continue
             # Mag deze student de lege attractie doen?
             if attr not in cand_student["attracties"]:
                 continue
             # Mag de extra de vrijgekomen plek doen?
-            extra_student = studenten_workend_by_naam.get(student_naam)
+            extra_student = next((s for s in studenten_workend if s["naam"] == student_naam), None)
             if not extra_student:
                 continue
             if b_attr not in extra_student["attracties"]:
@@ -1276,7 +1272,7 @@ def doorschuif_leegplek(uur, attr, pos_idx, student_naam, stap, max_stappen=5):
     kandidaten.sort()
 
     for score, b_attr, b_pos, b_naam, cand_student in kandidaten:
-        extra_student = studenten_workend_by_naam.get(student_naam)
+        extra_student = next((s for s in studenten_workend if s["naam"] == student_naam), None)
         if not extra_student:
             continue
         # Voer de swap uit
@@ -1312,7 +1308,7 @@ for _ in range(max_iterations):
                 # Probeer voor alle extra's op dit uur
                 extras_op_uur = list(extra_assignments[uur])  # kopie ivm mutatie
                 for extra_naam in extras_op_uur:
-                    extra_student = studenten_workend_by_naam.get(extra_naam)
+                    extra_student = next((s for s in studenten_workend if s["naam"] == extra_naam), None)
                     if not extra_student:
                         continue
                     if attr in extra_student["attracties"]:
@@ -1336,7 +1332,7 @@ for _ in range(max_iterations):
 vaste_studenten = {vp["naam"] for vp in vaste_plaatsingen}
 
 def get_student_by_name(naam):
-    return studenten_workend_by_naam.get(naam)
+    return next((s for s in studenten_workend if s["naam"] == naam), None)
 
 def get_student_attr_on_hour(student_naam, uur):
     for attr in actieve_attracties_per_uur.get(uur, set()):
@@ -2462,7 +2458,7 @@ def werkduur_voor_pauze(naam):
     """
     theo_duur = student_totalen.get(naam, 0)
 
-    student = studenten_by_naam.get(naam)
+    student = next((s for s in studenten if s["naam"] == naam), None)
     if student is None:
         return theo_duur
 
@@ -3682,6 +3678,7 @@ def korte_pauze_toewijzen(studenten_lijst):
 
 korte_pauze_toewijzen(studenten_zonder_lange_pauze)
 # Daarna: de rest
+korte_pauze_toewijzen([s for s in studenten if s not in studenten_zonder_lange_pauze])
 korte_pauze_toewijzen([s for s in studenten if s not in studenten_zonder_lange_pauze])
 
 # --- Iteratief wisselen: studenten zonder korte pauze proberen te ruilen met anderen (geen pauzevlinders) ---
@@ -5377,7 +5374,7 @@ def maak_pp2_sheets(wb_arg, am_arg):
         """
         if not pp2_is_speciale_lange_werker(naam):
             return None
-        student = studenten_by_naam.get(naam)
+        student = next((s for s in studenten if s["naam"] == naam), None)
         if not student:
             return None
         echte_eind = student.get("eind_uur")
@@ -9933,9 +9930,8 @@ def lm5_postprocess_long_blocks(ctx, start_uur):
 
 
 
-def lm5_build_lastminute_context(base_maps_input, absentees, start_uur):
-    import copy
-    base_maps = copy.deepcopy(base_maps_input)
+def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
+    base_maps = lm5_extract_base_maps(base_bytes)
     ctx = lm5_init_context(base_maps, absentees, start_uur)
     herbereken_afgekapte_pv_uren(absentees_set=ctx["abs_set"], base_maps=base_maps)
     lm5_vrijgeven_afgekapte_pv_uren(ctx, start_uur)
@@ -10307,7 +10303,7 @@ with st.expander("Last-minute afwezigen", expanded=False):
         else:
             try:
                 ctx_lm5, base_maps_lm5_build = lm5_build_lastminute_context(
-                    base_maps_input=base_maps_lm5,
+                    base_bytes=base_bytes_lm5,
                     absentees=gekozen_afwezigen_lm5,
                     start_uur=start_uur_lm5
                 )
