@@ -9952,10 +9952,6 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
         )
 
         ctx["hour_states"][uur] = hour_state
-
-    # NIEUW: zorg dat nieuw samengestelde attracties ook echte rijen krijgen
-    lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
-
   
 
     # STAP 2: eerst zoveel mogelijk exact dezelfde plek houden
@@ -10021,6 +10017,7 @@ def lm5_build_lastminute_context(base_bytes, absentees, start_uur):
     lm5_postprocess_long_blocks(ctx, start_uur)
 
     lm5_extend_extra_rows_if_needed(base_maps, ctx)
+    lm5_extend_attr_rows_with_dynamic_merges(base_maps, ctx, start_uur)
 
     return ctx, base_maps
 
