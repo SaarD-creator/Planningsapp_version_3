@@ -250,7 +250,7 @@ def compute_ideal_moments():
     # stap 1: kandidaten = drukste shift + elke shift met >= 65% van die telling.
     # Onder die kandidaten kiezen we diegene wiens rooster de minste 1-uursblokken
     # (dan minste wissels) geeft; bij gelijke kwaliteit de drukste, dan langste, dan vroegste.
-    DREMPEL = 0.65
+    DREMPEL = 0.60
     top_count = max(shifts.values())
     kandidaten = [se for se in shifts if shifts[se] >= DREMPEL * top_count]
 
