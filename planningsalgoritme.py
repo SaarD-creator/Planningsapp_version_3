@@ -1249,8 +1249,9 @@ def assign_student(s):
         for b in blokken:
             block_hours = run[idx: idx + b]
             idx += b
+            degr = list(range(b, 0, -1))          # b=3 -> [3, 2, 1]
             unplaced = _place_block_with_fallback(
-                s, block_hours, preferred_sizes=[b], reset_sizes=[b]
+                s, block_hours, preferred_sizes=degr, reset_sizes=degr
             )
             for h in unplaced:
                 extra_assignments[h].append(s["naam"])
