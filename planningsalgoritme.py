@@ -216,23 +216,50 @@ def compute_ideal_moments():
                 beste, beste_sleutel = cuts, sleutel
         return beste
 
-    # stap 1: drukste shift (count, dan langste, dan vroegste)
-    s1 = max(shifts, key=lambda se: (shifts[se], se[1] - se[0], -se[0]))
-    grid = {open_start, open_end}
-    grid |= _kies_cuts(s1[0], s1[1])
+    # Stap 1
+    # -- volledig grid bouwen vanuit één sturende shift --
+    def _bouw_grid(sturende):
+        grid = {open_start, open_end}
+        grid |= _kies_cuts(sturende[0], sturende[1])
+        veranderd = True
+        while veranderd:
+            veranderd = False
+            for g1, g2 in zip(sorted(grid), sorted(grid)[1:]):
+                if g2 - g1 > 3:
+                    grid |= _kies_cuts(g1, g2)
+                    veranderd = True
+                    break
+        return grid
 
-    # recursie: splits elk gat > 3 verder op
-    veranderd = True
-    while veranderd:
-        veranderd = False
-        for g1, g2 in zip(sorted(grid), sorted(grid)[1:]):
-            if g2 - g1 > 3:
-                grid |= _kies_cuts(g1, g2)
-                veranderd = True
-                break
+    # -- kwaliteit van een grid over de hele populatie --
+    def _kwaliteit(grid):
+        enen = wissels = 0
+        for (a, b), aantal in shifts.items():
+            run = [h for h in open_uren if a <= h < b]
+            bl, huidig = [], 1
+            for i in range(1, len(run)):
+                if run[i] in grid:
+                    bl.append(huidig); huidig = 1
+                else:
+                    huidig += 1
+            bl.append(huidig)
+            enen += aantal * sum(1 for x in bl if x == 1)
+            wissels += aantal * (len(bl) - 1)
+        return (enen, wissels)
 
-    return grid
+    # stap 1: kandidaten = drukste shift + elke shift met >= 65% van die telling.
+    # Onder die kandidaten kiezen we diegene wiens rooster de minste 1-uursblokken
+    # (dan minste wissels) geeft; bij gelijke kwaliteit de drukste, dan langste, dan vroegste.
+    DREMPEL = 0.65
+    top_count = max(shifts.values())
+    kandidaten = [se for se in shifts if shifts[se] >= DREMPEL * top_count]
 
+    def _selectie_sleutel(se):
+        enen, wissels = _kwaliteit(_bouw_grid(se))
+        return (enen, wissels, -shifts[se], -(se[1] - se[0]), se[0])
+
+    s1 = min(kandidaten, key=_selectie_sleutel)
+    return _bouw_grid(s1)
 
 def partition_run_lengths(run_hours, ideal_moments=None):
     """
