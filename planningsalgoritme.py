@@ -154,69 +154,103 @@ def max_consecutive_hours(urenlijst):
 
 
 
-def compute_ideal_moments(open_uren):
+def compute_ideal_moments():
     """
-    Ideaalmomenten vallen na elke 3 blokken (op basis van positie, niet uren).
-    Als het totaal aantal blokken deelbaar is door 3, zijn er geen ideaalmomenten nodig.
+    Nieuwe ideaalmomenten o.b.v. de echte shiften van de studenten.
+    - shift = aaneensluitend werkinterval (PV-uren eruit geknipt)
+    - stap 1: split de drukste shift in blokken van <= 3 uur
+    - stap 2/3: kies per span de opsplitsing met de meeste begin/eind-dekking
+    - recursie: elk overgebleven stuk > 3u wordt opnieuw opgesplitst
+    """
+    # shiften verzamelen (zelfde uren-filter als assign_student)
+    shifts = defaultdict(int)
+    for s in studenten_workend:
+        uren = sorted(u for u in s["uren_beschikbaar"] if u in open_uren)
+        if s["is_pauzevlinder"]:
+            uren = [u for u in uren if u not in required_pauze_hours]
+        for run in contiguous_runs(uren):
+            shifts[(run[0], run[-1] + 1)] += 1   # (start, eind-marker)
 
-    Voorbeeld: 9 blokken → deelbaar door 3 → lege set
-    Voorbeeld: 8 blokken → ideaalmomenten op blok 4 en blok 7 (index 3 en 6)
-    """
-    if not open_uren:
+    if not shifts:
         return set()
-    blokken = sorted(open_uren)
-    if len(blokken) < 4:
-        return set()
-    return {blokken[i] for i in range(3, len(blokken), 3)}
+
+    open_start = min(open_uren)
+    open_end = max(open_uren) + 1
+
+    # begin/eind-histogram (geteld in #studenten)
+    hist = defaultdict(int)
+    for (start, eind), aantal in shifts.items():
+        hist[start] += aantal
+        hist[eind] += aantal
+
+    # alle geordende opsplitsingen van n in exact k delen, elk 1..3
+    def _composities(n, k):
+        if k == 1:
+            if 1 <= n <= 3:
+                yield (n,)
+            return
+        for eerste in range(1, 4):
+            rest = n - eerste
+            if rest < k - 1:
+                break
+            if rest > (k - 1) * 3:
+                continue
+            for staart in _composities(rest, k - 1):
+                yield (eerste,) + staart
+
+    def _kies_cuts(a, b):
+        n = b - a
+        k = -(-n // 3)                            # ceil(n/3)
+        beste, beste_sleutel = None, None
+        for comp in _composities(n, k):
+            cuts, u = set(), a
+            for L in comp:
+                cuts.add(u); u += L
+            cuts.add(b)
+            sleutel = (
+                sum(hist.get(h, 0) for h in cuts),     # stap 3: begin/eind-dekking
+                -sum(1 for L in comp if L == 1),        # minste 1-uursblokken
+                comp,                                   # zoveel mogelijk 3-blokken vooraan
+            )
+            if beste_sleutel is None or sleutel > beste_sleutel:
+                beste, beste_sleutel = cuts, sleutel
+        return beste
+
+    # stap 1: drukste shift (count, dan langste, dan vroegste)
+    s1 = max(shifts, key=lambda se: (shifts[se], se[1] - se[0], -se[0]))
+    grid = {open_start, open_end}
+    grid |= _kies_cuts(s1[0], s1[1])
+
+    # recursie: splits elk gat > 3 verder op
+    veranderd = True
+    while veranderd:
+        veranderd = False
+        for g1, g2 in zip(sorted(grid), sorted(grid)[1:]):
+            if g2 - g1 > 3:
+                grid |= _kies_cuts(g1, g2)
+                veranderd = True
+                break
+
+    return grid
 
 
 def partition_run_lengths(run_hours, ideal_moments=None):
     """
-    Splits een run van blokken op in stukken van [3, 2, 4, 1].
-    Gebruikt blokposities (via run_hours lijst), niet uuraritmethiek.
+    Knipt de run van een student op de ideaalmomenten.
+    Een nieuw blok begint telkens als een uur een ideaalmoment is (behalve het eerste uur).
     """
-    L = len(run_hours)
-    blocks = [3, 2, 4, 1]
-    use_ideal = bool(ideal_moments) and L % 3 != 0
-
-    if use_ideal:
-        INF = 10 ** 9
-        dp = [(INF, INF, [])] * (L + 1)
-        dp[0] = (0, 0, [])
-        for i in range(1, L + 1):
-            best = (INF, INF, [])
-            for b in blocks:
-                if i - b < 0:
-                    continue
-                prev_neg, prev_ones, prev_blks = dp[i - b]
-                if prev_neg == INF:
-                    continue
-                # Startuur van dit blok rechtstreeks uit run_hours
-                blok_start_uur = run_hours[i - b]
-                is_ideal = (i - b > 0) and (blok_start_uur in ideal_moments)
-                cand = (
-                    prev_neg - (1 if is_ideal else 0),
-                    prev_ones + (1 if b == 1 else 0),
-                    prev_blks + [b],
-                )
-                if (cand[0], cand[1]) < (best[0], best[1]):
-                    best = cand
-            dp[i] = best
-        return dp[L][2]
-    else:
-        dp = [(10 ** 9, [])] * (L + 1)
-        dp[0] = (0, [])
-        for i in range(1, L + 1):
-            best = (10 ** 9, [])
-            for b in blocks:
-                if i - b < 0:
-                    continue
-                prev_ones, prev_blks = dp[i - b]
-                cand = (prev_ones + (1 if b == 1 else 0), prev_blks + [b])
-                if cand < best:
-                    best = cand
-            dp[i] = best
-        return dp[L][1]
+    if not run_hours:
+        return []
+    ideal = ideal_moments or set()
+    blokken, huidig = [], 1
+    for i in range(1, len(run_hours)):
+        if run_hours[i] in ideal:
+            blokken.append(huidig)
+            huidig = 1
+        else:
+            huidig += 1
+    blokken.append(huidig)
+    return blokken
 
 
 def contiguous_runs(sorted_hours):
@@ -399,7 +433,6 @@ if not open_uren:
 open_uren = sorted(set(open_uren))
         
 
-ideaalmomenten = compute_ideal_moments(open_uren)
 
 # -----------------------------
 # Sorteervolgorde studenten
@@ -618,6 +651,9 @@ for uur in open_uren:
 studenten_workend = [
     s for s in studenten if any(u in open_uren for u in s["uren_beschikbaar"])
 ]
+
+
+ideaalmomenten = compute_ideal_moments()  
 
 
 # -----------------------------
@@ -1207,23 +1243,17 @@ def assign_student(s):
     runs = contiguous_runs(uren)
 
     for run in runs:
-        L = len(run)
-        if L % 3 != 0 and ideaalmomenten:
-            blokken = partition_run_lengths(run, ideal_moments=ideaalmomenten)
-            seen = []
-            for b in blokken:
-                if b not in seen:
-                    seen.append(b)
-            for b in [3, 2, 4, 1]:
-                if b not in seen:
-                    seen.append(b)
-            preferred_sizes = seen
-        else:
-            preferred_sizes = [3, 2, 4, 1]
-        unplaced = _place_block_with_fallback(s, run, preferred_sizes=preferred_sizes, reset_sizes=[3, 2, 4, 1])
+        blokken = partition_run_lengths(run, ideal_moments=ideaalmomenten)
 
-        for h in unplaced:
-            extra_assignments[h].append(s["naam"])
+        idx = 0
+        for b in blokken:
+            block_hours = run[idx: idx + b]
+            idx += b
+            unplaced = _place_block_with_fallback(
+                s, block_hours, preferred_sizes=[b], reset_sizes=[b]
+            )
+            for h in unplaced:
+                extra_assignments[h].append(s["naam"])
 
 
 for s in studenten_sorted:
