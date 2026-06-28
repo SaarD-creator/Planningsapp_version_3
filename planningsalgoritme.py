@@ -182,6 +182,9 @@ def compute_ideal_moments():
     for (start, eind), aantal in shifts.items():
         hist[start] += aantal
         hist[eind] += aantal
+        
+    top_count = max(shifts.values())
+    DEKKING_DREMPEL = 0.18   # een begin/eind-moment telt pas mee als >= 18% van de drukste shift het deelt
 
     # alle geordende opsplitsingen van n in exact k delen, elk 1..3
     def _composities(n, k):
@@ -208,7 +211,7 @@ def compute_ideal_moments():
                 cuts.add(u); u += L
             cuts.add(b)
             sleutel = (
-                sum(hist.get(h, 0) for h in cuts),     # stap 3: begin/eind-dekking
+                sum(hist.get(h, 0) for h in cuts if hist.get(h, 0) >= DEKKING_DREMPEL * top_count),     # stap 3: begin/eind-dekking
                 -sum(1 for L in comp if L == 1),        # minste 1-uursblokken
                 comp,                                   # zoveel mogelijk 3-blokken vooraan
             )
