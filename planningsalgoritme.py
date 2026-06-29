@@ -184,7 +184,7 @@ def compute_ideal_moments():
         hist[eind] += aantal
         
     top_count = max(shifts.values())
-    DEKKING_DREMPEL = 0.18   # een begin/eind-moment telt pas mee als >= 18% van de drukste shift het deelt
+    DEKKING_DREMPEL = 0.23   # een begin/eind-moment telt pas mee als >= 23% van de drukste shift het deelt
 
     # alle geordende opsplitsingen van n in exact k delen, elk 1..3
     def _composities(n, k):
